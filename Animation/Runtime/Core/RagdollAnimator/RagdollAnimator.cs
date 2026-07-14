@@ -37,6 +37,13 @@ namespace Hairibar.Ragdoll.Animation
 
         public RagdollSettings RagdollSettings { get; private set; }
         public RagdollDefinitionBindings Bindings => _ragdollBindings;
+        public RagdollTargetBindings TargetBindings => _targetBindings;
+
+        /// <summary>
+        /// True when this instance had to build a temporary name-based binding table for
+        /// backwards compatibility. Migrate the component to explicit target bindings.
+        /// </summary>
+        public bool UsesLegacyTargetBindingFallback { get; private set; }
 
         public float MasterAlpha
         {
@@ -54,6 +61,7 @@ namespace Hairibar.Ragdoll.Animation
 
         #region Serialized Fields
         [SerializeField] RagdollDefinitionBindings _ragdollBindings;
+        [SerializeField] RagdollTargetBindings _targetBindings;
 
         [SerializeField, UsePropertySetter("Profile")] RagdollAnimationProfile currentProfile;
 

@@ -109,21 +109,87 @@ namespace Hairibar.Ragdoll.Animation.Editor
             EditorGUI.BeginChangeCheck();
 
             SerializedProperty bindings = serializedObject.FindProperty("_ragdollBindings");
+            SerializedProperty targetBindings = serializedObject.FindProperty("_targetBindings");
             EditorGUILayout.PropertyField(bindings);
+            EditorGUILayout.PropertyField(
+                targetBindings,
+                new GUIContent("Target Bindings"));
 
             bool bindingChanged = EditorGUI.EndChangeCheck();
 
-            if (!bindings.objectReferenceValue)
+            RagdollDefinitionBindings ragdollBindings =
+                bindings.objectReferenceValue as RagdollDefinitionBindings;
+            RagdollTargetBindings explicitTargetBindings =
+                targetBindings.objectReferenceValue as RagdollTargetBindings;
+
+            if (!ragdollBindings)
             {
                 bindingDefinition = null;
-                NaughtyEditorGUI.HelpBox_Layout("A RagdollDefinitionBindings must be assigned to the RagdollAnimator.", MessageType.Error);
+                NaughtyEditorGUI.HelpBox_Layout(
+                    "A RagdollDefinitionBindings must be assigned to the RagdollAnimator.",
+                    MessageType.Error);
             }
-            else if (bindingChanged || bindingDefinition == null)
+            else
             {
-                bindingDefinition = new SerializedObject((bindings.objectReferenceValue as RagdollDefinitionBindings)).FindProperty("_definition");
+                if (bindingChanged || bindingDefinition == null)
+                {
+                    bindingDefinition = new SerializedObject(ragdollBindings)
+                        .FindProperty("_definition");
+                }
+
+                if (!explicitTargetBindings)
+                {
+                    EditorGUILayout.HelpBox(
+                        "This component will use the legacy name-based Target lookup at runtime. "
+                        + "Create explicit bindings so Target and ragdoll bone names and local axes can differ.",
+                        MessageType.Warning);
+
+                    EditorGUI.BeginDisabledGroup(serializedObject.isEditingMultipleObjects);
+                    if (GUILayout.Button("Create Explicit Target Bindings"))
+                    {
+                        CreateExplicitTargetBindings(
+                            ragdollBindings,
+                            targetBindings);
+                    }
+                    EditorGUI.EndDisabledGroup();
+                }
+                else if (explicitTargetBindings.RagdollBindings != ragdollBindings)
+                {
+                    EditorGUILayout.HelpBox(
+                        "The assigned Target Bindings reference a different ragdoll.",
+                        MessageType.Error);
+                }
             }
 
             EditorGUI.EndDisabledGroup();
+        }
+
+        void CreateExplicitTargetBindings(
+            RagdollDefinitionBindings ragdollBindings,
+            SerializedProperty targetBindingsProperty)
+        {
+            RagdollAnimator ragdollAnimator = (RagdollAnimator) target;
+            RagdollTargetBindings explicitBindings =
+                ragdollAnimator.GetComponent<RagdollTargetBindings>();
+
+            if (!explicitBindings)
+            {
+                explicitBindings = Undo.AddComponent<RagdollTargetBindings>(
+                    ragdollAnimator.gameObject);
+            }
+
+            Undo.RecordObject(explicitBindings, "Create explicit Target bindings");
+            explicitBindings.SetRagdollBindings(ragdollBindings);
+
+            string error;
+            if (!explicitBindings.TryAutoBindByName(out error))
+            {
+                Debug.LogError(error, explicitBindings);
+                return;
+            }
+
+            targetBindingsProperty.objectReferenceValue = explicitBindings;
+            EditorUtility.SetDirty(explicitBindings);
         }
 
         void DrawProfileField()

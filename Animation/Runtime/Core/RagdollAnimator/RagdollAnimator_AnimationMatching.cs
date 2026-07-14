@@ -172,10 +172,44 @@ namespace Hairibar.Ragdoll.Animation
         {
             float sampleTime = GetAnimationSampleTime();
 
+            // animatedPairs are sorted parent-first. This allows local joint rotations to
+            // be reconstructed from the desired ragdoll world poses even when the Target
+            // hierarchy uses different local bone axes.
             foreach (AnimatedPair pair in animatedPairs)
             {
-                pair.SampleAnimatedPose(AnimatedPose.Read(pair.TargetBone), sampleTime);
+                AnimatedPose targetPose = AnimatedPose.Read(pair.TargetBone);
+                AnimatedPose ragdollPose = pair.ConvertTargetPoseToRagdoll(targetPose);
+                ragdollPose.localRotation = CalculateRagdollLocalRotation(
+                    pair,
+                    ragdollPose.worldRotation);
+
+                pair.SampleAnimatedPose(
+                    targetPose,
+                    ragdollPose,
+                    sampleTime);
             }
+        }
+
+        Quaternion CalculateRagdollLocalRotation(
+            AnimatedPair pair,
+            Quaternion ragdollWorldRotation)
+        {
+            RagdollBoneHandle parentHandle;
+            if (Bindings.Topology.TryGetParent(pair.Handle, out parentHandle))
+            {
+                AnimatedPair parentPair = animatedPairsByHandleIndex[parentHandle.Index];
+                Quaternion parentWorldRotation = parentPair != null
+                    ? parentPair.currentPose.worldRotation
+                    : Bindings.GetBone(parentHandle).Transform.rotation;
+
+                return Quaternion.Inverse(parentWorldRotation)
+                    * ragdollWorldRotation;
+            }
+
+            Transform ragdollParent = pair.RagdollBone.Transform.parent;
+            return ragdollParent
+                ? Quaternion.Inverse(ragdollParent.rotation) * ragdollWorldRotation
+                : ragdollWorldRotation;
         }
 
         float GetAnimationSampleTime()
@@ -223,9 +257,11 @@ namespace Hairibar.Ragdoll.Animation
             foreach (AnimatedPair pair in animatedPairs)
             {
                 Rigidbody rb = pair.RagdollBone.Rigidbody;
+                AnimatedPose targetPose = AnimatedPose.Read(pair.TargetBone);
+                AnimatedPose ragdollPose = pair.ConvertTargetPoseToRagdoll(targetPose);
 
-                rb.position = pair.TargetBone.position;
-                rb.rotation = pair.TargetBone.rotation;
+                rb.position = ragdollPose.worldPosition;
+                rb.rotation = ragdollPose.worldRotation;
 
                 rb.velocity = Vector3.zero;
                 rb.angularVelocity = Vector3.zero;

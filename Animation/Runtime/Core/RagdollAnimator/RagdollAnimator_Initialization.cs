@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using UnityEngine;
 
 namespace Hairibar.Ragdoll.Animation
 {
@@ -8,7 +9,44 @@ namespace Hairibar.Ragdoll.Animation
     {
         void CreateRagdollToTargetMapper()
         {
-            mapper = new RagdollToTargetMapper(_ragdollBindings, transform);
+            RagdollTargetBinding[] resolvedBindings;
+            string error;
+
+            if (_targetBindings)
+            {
+                if (!_targetBindings.TryGetOrderedBindings(
+                    _ragdollBindings,
+                    out resolvedBindings,
+                    out error))
+                {
+                    throw new InvalidOperationException(
+                        "The explicit target bindings are invalid: " + error);
+                }
+
+                UsesLegacyTargetBindingFallback = false;
+            }
+            else
+            {
+                if (!RagdollTargetBindingUtility.TryCreateByUniqueName(
+                    _ragdollBindings,
+                    transform,
+                    out resolvedBindings,
+                    out error))
+                {
+                    throw new InvalidOperationException(
+                        "Could not create legacy target bindings: " + error);
+                }
+
+                UsesLegacyTargetBindingFallback = true;
+                Debug.LogWarning(
+                    "RagdollAnimator is using the legacy name-based Target binding fallback. "
+                    + "Create and assign a RagdollTargetBindings component to make the dual-rig references explicit.",
+                    this);
+            }
+
+            mapper = new RagdollToTargetMapper(
+                _ragdollBindings,
+                resolvedBindings);
         }
 
         void CreateAnimatedPairs(IReadOnlyCollection<RagdollBoneTargetBonePair> bonePairs)

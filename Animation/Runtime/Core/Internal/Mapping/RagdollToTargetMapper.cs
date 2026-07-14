@@ -5,8 +5,8 @@ using UnityEngine;
 namespace Hairibar.Ragdoll.Animation
 {
     /// <summary>
-    /// Creates target/ragdoll pairs and maps the simulated ragdoll pose back to the
-    /// animated target hierarchy using independent position and rotation weights.
+    /// Maps the simulated ragdoll pose back to explicitly bound Target Transforms using
+    /// independent position and rotation weights.
     /// </summary>
     internal sealed class RagdollToTargetMapper
     {
@@ -21,8 +21,8 @@ namespace Hairibar.Ragdoll.Animation
         {
             if (pairs == null) throw new ArgumentNullException(nameof(pairs));
 
-            // Restore the exact sampled animation first. This prevents additive drift when
-            // the target contains bones that are not overwritten by its Animator every frame.
+            // Restore the exact sampled visual animation first. This prevents additive
+            // drift when a Target bone is not overwritten by its Animator every frame.
             for (int i = 0; i < pairs.Count; i++)
             {
                 pairs[i].RestoreSampledPoseToTarget();
@@ -52,13 +52,16 @@ namespace Hairibar.Ragdoll.Animation
             RagdollAnimator.AnimatedPair pair,
             RagdollMappingWeights weights)
         {
-            Transform target = pair.TargetBone;
-            Transform simulated = pair.RagdollBone.Transform;
+            Vector3 targetWorldPosition;
+            Quaternion targetWorldRotation;
+            pair.GetMappedTargetWorldPose(
+                out targetWorldPosition,
+                out targetWorldRotation);
 
             MapTransform(
-                target,
-                simulated.position,
-                simulated.rotation,
+                pair.TargetBone,
+                targetWorldPosition,
+                targetWorldRotation,
                 weights);
         }
 
@@ -115,104 +118,50 @@ namespace Hairibar.Ragdoll.Animation
         #region Initialization
         public RagdollToTargetMapper(
             RagdollDefinitionBindings bindings,
-            Transform targetParent)
+            IReadOnlyList<RagdollTargetBinding> targetBindings)
         {
             if (!bindings) throw new ArgumentNullException(nameof(bindings));
-            if (!targetParent) throw new ArgumentNullException(nameof(targetParent));
+            if (targetBindings == null) throw new ArgumentNullException(nameof(targetBindings));
 
-            bonePairs = CreateBonePairs(bindings, targetParent);
+            bonePairs = CreateBonePairs(bindings, targetBindings);
         }
 
         static RagdollBoneTargetBonePair[] CreateBonePairs(
             RagdollDefinitionBindings bindings,
-            Transform targetParent)
+            IReadOnlyList<RagdollTargetBinding> targetBindings)
         {
-            List<RagdollBoneTargetBonePair> pairs = new List<RagdollBoneTargetBonePair>();
-            Transform targetRoot = FindCorrespondingBone(
-                bindings.Root.Transform,
-                targetParent);
-
-            if (!targetRoot)
+            if (targetBindings.Count != bindings.BoneCount)
             {
                 throw new InvalidOperationException(
-                    "The target hierarchy does not contain a transform matching the registered ragdoll root '" +
-                    bindings.Root.Transform.name + "'.");
+                    "The target binding count does not match the registered ragdoll bone count.");
             }
 
-            CreateBonePairsRecursively(targetRoot, pairs, bindings.transform, bindings);
-            return pairs.ToArray();
-        }
+            RagdollBoneTargetBonePair[] pairs =
+                new RagdollBoneTargetBonePair[targetBindings.Count];
 
-        static void CreateBonePairsRecursively(
-            Transform targetBoneTransform,
-            List<RagdollBoneTargetBonePair> pairs,
-            Transform ragdollParentTransform,
-            RagdollDefinitionBindings bindings)
-        {
-            Transform ragdollBoneTransform = FindCorrespondingBone(
-                targetBoneTransform,
-                ragdollParentTransform);
-
-            if (ragdollBoneTransform)
+            for (int index = 0; index < targetBindings.Count; index++)
             {
-                RagdollBone ragdollBone = GetRagdollBoneForRagdollBoneTransform(
-                    ragdollBoneTransform,
-                    bindings);
-
-                if (ragdollBone != null)
+                RagdollTargetBinding targetBinding = targetBindings[index];
+                if (targetBinding == null)
                 {
-                    pairs.Add(new RagdollBoneTargetBonePair(
-                        ragdollBone,
-                        targetBoneTransform));
-                }
-            }
-
-            for (int i = 0; i < targetBoneTransform.childCount; i++)
-            {
-                CreateBonePairsRecursively(
-                    targetBoneTransform.GetChild(i),
-                    pairs,
-                    ragdollParentTransform,
-                    bindings);
-            }
-        }
-
-        static Transform FindCorrespondingBone(
-            Transform originalBone,
-            Transform equivalentBoneParent)
-        {
-            if (!originalBone || !equivalentBoneParent) return null;
-
-            for (int i = 0; i < equivalentBoneParent.childCount; i++)
-            {
-                Transform child = equivalentBoneParent.GetChild(i);
-
-                if (child.name == originalBone.name)
-                {
-                    return child;
+                    throw new InvalidOperationException(
+                        "The target binding at index " + index + " is null.");
                 }
 
-                Transform nestedResult = FindCorrespondingBone(originalBone, child);
-                if (nestedResult) return nestedResult;
+                RagdollBone ragdollBone;
+                if (!bindings.TryGetBone(targetBinding.Bone, out ragdollBone))
+                {
+                    throw new InvalidOperationException(
+                        "The explicit target binding references an unknown ragdoll bone '"
+                        + targetBinding.Bone + "'.");
+                }
+
+                pairs[index] = new RagdollBoneTargetBonePair(
+                    ragdollBone,
+                    targetBinding);
             }
 
-            return null;
-        }
-
-        static RagdollBone GetRagdollBoneForRagdollBoneTransform(
-            Transform ragdollBoneTransform,
-            RagdollDefinitionBindings bindings)
-        {
-            ConfigurableJoint joint = ragdollBoneTransform.GetComponent<ConfigurableJoint>();
-            if (!joint) return null;
-
-            if (!bindings.TryGetBoundBoneName(joint, out BoneName boneName))
-            {
-                return null;
-            }
-
-            bindings.TryGetBone(boneName, out RagdollBone bone);
-            return bone;
+            return pairs;
         }
         #endregion
     }

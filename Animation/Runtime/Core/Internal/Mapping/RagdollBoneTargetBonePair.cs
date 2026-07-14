@@ -6,13 +6,16 @@ namespace Hairibar.Ragdoll.Animation
     {
         #region Public API
         public RagdollBone RagdollBone { get; }
-        public Transform TargetBone { get; }
+        public RagdollTargetBinding TargetBinding { get; }
+        public Transform TargetBone => TargetBinding.Target;
         #endregion
 
-        internal RagdollBoneTargetBonePair(RagdollBone ragdollBone, Transform targetBone)
+        internal RagdollBoneTargetBonePair(
+            RagdollBone ragdollBone,
+            RagdollTargetBinding targetBinding)
         {
             RagdollBone = ragdollBone;
-            TargetBone = targetBone;
+            TargetBinding = targetBinding;
         }
     }
 }

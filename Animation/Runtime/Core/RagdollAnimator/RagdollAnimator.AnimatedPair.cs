@@ -8,15 +8,22 @@ namespace Hairibar.Ragdoll.Animation
         {
             public BoneName Name => bonePair.RagdollBone.Name;
             public RagdollBone RagdollBone => bonePair.RagdollBone;
+            public RagdollTargetBinding TargetBinding => bonePair.TargetBinding;
             public Transform TargetBone => bonePair.TargetBone;
             public RagdollBoneHandle Handle { get; }
             public RagdollMappingWeights MappingWeights { get; internal set; }
 
             /// <summary>
-            /// The latest unmodified animation sample. Target pose modifiers operate on
-            /// currentPose and never overwrite this sampled value.
+            /// Latest unmodified animation sample converted into the ragdoll bone's pose
+            /// space. Target pose modifiers operate on currentPose and never overwrite it.
             /// </summary>
             public AnimatedPose SampledPose => poseSampler.Pose;
+
+            /// <summary>
+            /// Latest unmodified world pose read directly from the visual Target Transform.
+            /// It is restored before mapping so the simulation never accumulates drift.
+            /// </summary>
+            public AnimatedPose SampledTargetPose { get; private set; }
 
             public AnimatedPose currentPose;
 
@@ -27,13 +34,34 @@ namespace Hairibar.Ragdoll.Animation
             AnimatedPoseSampler poseSampler;
 
 
-            internal void SampleAnimatedPose(AnimatedPose pose, float sampleTime)
+            internal void SampleAnimatedPose(
+                AnimatedPose targetPose,
+                AnimatedPose ragdollPose,
+                float sampleTime)
             {
-                poseSampler.Push(pose, sampleTime);
+                SampledTargetPose = targetPose;
+                poseSampler.Push(ragdollPose, sampleTime);
                 RestoreAnimatedPose();
 
                 poseLinearVelocity = poseSampler.LinearVelocity;
                 poseAngularVelocity = poseSampler.AngularVelocity;
+            }
+
+            internal AnimatedPose ConvertTargetPoseToRagdoll(AnimatedPose targetPose)
+            {
+                return TargetBinding.ConvertTargetPoseToRagdoll(
+                    targetPose,
+                    RagdollBone.Transform);
+            }
+
+            internal void GetMappedTargetWorldPose(
+                out Vector3 targetWorldPosition,
+                out Quaternion targetWorldRotation)
+            {
+                TargetBinding.GetTargetWorldPose(
+                    RagdollBone.Transform,
+                    out targetWorldPosition,
+                    out targetWorldRotation);
             }
 
             internal void RestoreAnimatedPose()
@@ -48,10 +76,9 @@ namespace Hairibar.Ragdoll.Animation
             {
                 if (!poseSampler.IsInitialized) return;
 
-                AnimatedPose sampledPose = poseSampler.Pose;
                 TargetBone.SetPositionAndRotation(
-                    sampledPose.worldPosition,
-                    sampledPose.worldRotation);
+                    SampledTargetPose.worldPosition,
+                    SampledTargetPose.worldRotation);
             }
 
 

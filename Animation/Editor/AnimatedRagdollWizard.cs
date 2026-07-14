@@ -14,6 +14,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
         internal class Data
         {
             public RagdollDefinitionBindings bindings;
+            public RagdollTargetBindings targetBindings;
             public GameObject modelGameObject;
 
             public RagdollDefinition definition;
@@ -690,6 +691,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 Undo.SetCurrentGroupName("Add components to Ragdoll.");
 
                 SetUpBindings(data);
+                AddTargetBindings(data);
                 AddRagdollSettings(data);
                 AddCollisionIgnorer(data);
 
@@ -715,6 +717,22 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 }
 
                 so.ApplyModifiedProperties();
+            }
+
+            static void AddTargetBindings(Data data)
+            {
+                data.targetBindings = Undo.AddComponent<RagdollTargetBindings>(
+                    data.modelGameObject);
+                data.targetBindings.SetRagdollBindings(data.bindings);
+
+                string error;
+                if (!data.targetBindings.TryAutoBindByName(out error))
+                {
+                    throw new System.InvalidOperationException(
+                        "Could not create explicit Target bindings: " + error);
+                }
+
+                EditorUtility.SetDirty(data.targetBindings);
             }
 
             static void AutoFillBindings(SerializedObject bindings, Data data)
@@ -762,6 +780,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 SerializedObject so = new SerializedObject(animator);
 
                 so.FindProperty("_ragdollBindings").objectReferenceValue = data.bindings;
+                so.FindProperty("_targetBindings").objectReferenceValue = data.targetBindings;
                 so.FindProperty("currentProfile").objectReferenceValue = data.animationProfile;
 
                 so.ApplyModifiedProperties();
