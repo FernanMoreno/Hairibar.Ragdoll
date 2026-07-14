@@ -67,7 +67,7 @@ namespace Hairibar.Ragdoll
             get
             {
                 ThrowExceptionIfNotInitialized();
-                return indexedBones ?? Array.Empty<RagdollBone>();
+                return indexedBonesView;
             }
         }
 
@@ -79,8 +79,22 @@ namespace Hairibar.Ragdoll
             get
             {
                 ThrowExceptionIfNotInitialized();
-                return indexedBones;
+                return indexedBonesView;
             }
+        }
+
+        public RagdollBone GetBoneAt(int index)
+        {
+            ThrowExceptionIfNotInitialized();
+            ValidateBoneIndex(index);
+            return indexedBones[index];
+        }
+
+        public RagdollBoneHandle GetHandleAt(int index)
+        {
+            ThrowExceptionIfNotInitialized();
+            ValidateBoneIndex(index);
+            return CreateHandle(index);
         }
 
         public bool TryGetBone(BoneName boneName, out RagdollBone bone)
@@ -114,6 +128,18 @@ namespace Hairibar.Ragdoll
                 bone = indexedBones[index];
                 return true;
             }
+
+            bone = null;
+            return false;
+        }
+
+        /// <summary>
+        /// Resolves a collider through its attached Rigidbody, even when the collider itself was not
+        /// registered as part of the ragdoll bone during initialization.
+        /// </summary>
+        public bool TryGetBoneFromAttachedRigidbody(Collider collider, out RagdollBone bone)
+        {
+            ThrowExceptionIfNotInitialized();
 
             if (collider != null)
             {
@@ -205,6 +231,18 @@ namespace Hairibar.Ragdoll
                 return true;
             }
 
+            handle = RagdollBoneHandle.Invalid;
+            return false;
+        }
+
+        /// <summary>
+        /// Resolves a collider through its attached Rigidbody, even when the collider itself was not
+        /// registered as part of the ragdoll bone during initialization.
+        /// </summary>
+        public bool TryGetBoneHandleFromAttachedRigidbody(Collider collider, out RagdollBoneHandle handle)
+        {
+            ThrowExceptionIfNotInitialized();
+
             if (collider != null)
             {
                 return TryGetBoneHandle(collider.attachedRigidbody, out handle);
@@ -278,6 +316,7 @@ namespace Hairibar.Ragdoll
         #region Private State
         Dictionary<BoneName, RagdollBone> bones;
         RagdollBone[] indexedBones;
+        IReadOnlyList<RagdollBone> indexedBonesView;
 
         Dictionary<BoneName, int> indexByName;
         Dictionary<Rigidbody, int> indexByRigidbody;
@@ -311,15 +350,19 @@ namespace Hairibar.Ragdoll
         {
             get
             {
-                if (bones == null || indexedBones == null || topology == null) return false;
+                if (bones == null || indexedBones == null || indexedBonesView == null || topology == null) return false;
+                if (indexedBones.Length != _definition.BoneCount) return false;
 
+                int index = 0;
                 foreach (BoneName boneName in _definition.Bones)
                 {
-                    RagdollBone bone;
-                    if (!bones.TryGetValue(boneName, out bone) || bone.Joint != GetBindingJoint(boneName))
+                    RagdollBone bone = indexedBones[index];
+                    if (bone.Name != boneName || bone.Joint != GetBindingJoint(boneName))
                     {
                         return false;
                     }
+
+                    index++;
                 }
 
                 return true;
@@ -407,11 +450,25 @@ namespace Hairibar.Ragdoll
                         joint);
                 }
 
+                if (indexByName.ContainsKey(boneName))
+                {
+                    return FailInitialization(
+                        "A BoneName cannot appear more than once in a RagdollDefinition.",
+                        _definition);
+                }
+
                 if (indexByRigidbody.ContainsKey(rigidbody))
                 {
                     return FailInitialization(
                         "A Rigidbody cannot belong to more than one ragdoll bone.",
                         rigidbody);
+                }
+
+                if (indexByJoint.ContainsKey(joint))
+                {
+                    return FailInitialization(
+                        "A ConfigurableJoint cannot belong to more than one ragdoll bone.",
+                        joint);
                 }
 
                 RagdollBone bone = new RagdollBone(
@@ -469,6 +526,7 @@ namespace Hairibar.Ragdoll
                 return FailInitialization(topologyError, this);
             }
 
+            indexedBonesView = Array.AsReadOnly(indexedBones);
             topology = createdTopology;
             registryGeneration = nextGeneration;
 
@@ -479,6 +537,7 @@ namespace Hairibar.Ragdoll
         {
             bones = null;
             indexedBones = null;
+            indexedBonesView = null;
 
             indexByName = null;
             indexByRigidbody = null;
@@ -497,14 +556,21 @@ namespace Hairibar.Ragdoll
         {
             return handle.RegistryId == GetInstanceID()
                 && handle.Generation == registryGeneration
-                && handle.Index >= 0
-                && handle.Index < indexedBones.Length;
+                && (uint)handle.Index < (uint)indexedBones.Length;
         }
 
         int GetNextGeneration()
         {
             int nextGeneration = unchecked(registryGeneration + 1);
             return nextGeneration == 0 ? 1 : nextGeneration;
+        }
+
+        void ValidateBoneIndex(int index)
+        {
+            if ((uint)index >= (uint)indexedBones.Length)
+            {
+                throw new ArgumentOutOfRangeException(nameof(index));
+            }
         }
 
         bool FailInitialization(string message, UnityEngine.Object context)
