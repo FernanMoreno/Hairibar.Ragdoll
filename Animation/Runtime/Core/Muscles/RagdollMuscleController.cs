@@ -5,13 +5,15 @@ using UnityEngine;
 namespace Hairibar.Ragdoll.Animation
 {
     /// <summary>
-    /// Stores persistent per-bone animation authority and temporary impact suppression.
-    /// The controller composes with authored BoneProfiles through IBoneProfileModifier.
+    /// Stores persistent per-bone animation and mapping authority plus temporary impact suppression.
+    /// The controller composes with authored values instead of replacing them.
     /// </summary>
     [AddComponentMenu("Ragdoll/Ragdoll Muscle Controller")]
     [DisallowMultipleComponent]
     [RequireComponent(typeof(RagdollAnimator))]
-    public sealed class RagdollMuscleController : MonoBehaviour, IBoneProfileModifier
+    public sealed class RagdollMuscleController : MonoBehaviour,
+        IBoneProfileModifier,
+        IRagdollMappingModifier
     {
         [SerializeField, Min(0f)] float positionSuppressionRecoveryRate = 2f;
         [SerializeField, Min(0f)] float rotationSuppressionRecoveryRate = 2f;
@@ -69,6 +71,15 @@ namespace Hairibar.Ragdoll.Animation
             states[index].ApplyTo(ref boneProfile);
         }
 
+        public void ModifyMapping(
+            ref RagdollMappingWeights mappingWeights,
+            RagdollAnimator.AnimatedPair pair)
+        {
+            if (!enabled || states == null) return;
+
+            states[pair.Handle.Index].ApplyTo(ref mappingWeights);
+        }
+
         public MuscleRuntimeState GetState(RagdollBoneHandle bone)
         {
             int index = ValidateHandle(bone);
@@ -81,6 +92,17 @@ namespace Hairibar.Ragdoll.Animation
             int index = ValidateHandle(bone);
             AdvanceRecovery(index, CurrentTime);
             states[index].SetAuthorities(positionAuthority, rotationAuthority);
+        }
+
+        public void SetMappingAuthorities(
+            RagdollBoneHandle bone,
+            float positionMappingAuthority,
+            float rotationMappingAuthority)
+        {
+            int index = ValidateHandle(bone);
+            states[index].SetMappingAuthorities(
+                positionMappingAuthority,
+                rotationMappingAuthority);
         }
 
         public void SetDriveMultipliers(

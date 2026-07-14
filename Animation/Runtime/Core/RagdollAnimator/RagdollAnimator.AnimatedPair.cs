@@ -10,6 +10,13 @@ namespace Hairibar.Ragdoll.Animation
             public RagdollBone RagdollBone => bonePair.RagdollBone;
             public Transform TargetBone => bonePair.TargetBone;
             public RagdollBoneHandle Handle { get; }
+            public RagdollMappingWeights MappingWeights { get; internal set; }
+
+            /// <summary>
+            /// The latest unmodified animation sample. Target pose modifiers operate on
+            /// currentPose and never overwrite this sampled value.
+            /// </summary>
+            public AnimatedPose SampledPose => poseSampler.Pose;
 
             public AnimatedPose currentPose;
 
@@ -37,11 +44,25 @@ namespace Hairibar.Ragdoll.Animation
                 }
             }
 
+            internal void RestoreSampledPoseToTarget()
+            {
+                if (!poseSampler.IsInitialized) return;
 
-            internal AnimatedPair(RagdollBoneTargetBonePair bonePair, RagdollBoneHandle handle)
+                AnimatedPose sampledPose = poseSampler.Pose;
+                TargetBone.SetPositionAndRotation(
+                    sampledPose.worldPosition,
+                    sampledPose.worldRotation);
+            }
+
+
+            internal AnimatedPair(
+                RagdollBoneTargetBonePair bonePair,
+                RagdollBoneHandle handle,
+                RagdollMappingWeights mappingWeights)
             {
                 this.bonePair = bonePair;
                 Handle = handle;
+                MappingWeights = mappingWeights;
             }
         }
     }
