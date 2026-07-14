@@ -55,6 +55,26 @@ namespace Hairibar.Ragdoll.Tests
         }
 
         [Test]
+        public void GetKinshipDistance_ReturnsShortestEdgeDistance()
+        {
+            RagdollBoneTopology topology = CreateTopology(new[] { -1, 0, 0, 1, 3 });
+
+            Assert.That(topology.GetKinshipDistance(Handle(0), Handle(0)), Is.EqualTo(0));
+            Assert.That(topology.GetKinshipDistance(Handle(0), Handle(1)), Is.EqualTo(1));
+            Assert.That(topology.GetKinshipDistance(Handle(1), Handle(2)), Is.EqualTo(2));
+            Assert.That(topology.GetKinshipDistance(Handle(4), Handle(2)), Is.EqualTo(4));
+            Assert.That(topology.GetKinshipDistance(Handle(2), Handle(4)), Is.EqualTo(4));
+        }
+
+        [Test]
+        public void GetKinshipDistance_ReturnsMinusOneForDisconnectedTrees()
+        {
+            RagdollBoneTopology topology = CreateTopology(new[] { -1, 0, -1, 2 });
+
+            Assert.That(topology.GetKinshipDistance(Handle(1), Handle(3)), Is.EqualTo(-1));
+        }
+
+        [Test]
         public void HandlesFromAnotherGeneration_AreRejected()
         {
             RagdollBoneTopology topology = CreateTopology(new[] { -1, 0 });

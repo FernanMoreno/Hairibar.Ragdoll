@@ -110,6 +110,55 @@ namespace Hairibar.Ragdoll
             return false;
         }
 
+        /// <summary>
+        /// Returns the number of parent-child edges in the shortest path between two bones.
+        /// Returns -1 when the bones belong to disconnected trees in the same registry.
+        /// </summary>
+        public int GetKinshipDistance(RagdollBoneHandle first, RagdollBoneHandle second)
+        {
+            ValidateHandle(first, nameof(first));
+            ValidateHandle(second, nameof(second));
+
+            int firstIndex = first.Index;
+            int secondIndex = second.Index;
+            if (firstIndex == secondIndex)
+            {
+                return 0;
+            }
+
+            int firstDepth = depths[firstIndex];
+            int secondDepth = depths[secondIndex];
+            int distance = 0;
+
+            while (firstDepth > secondDepth)
+            {
+                firstIndex = parentIndices[firstIndex];
+                firstDepth--;
+                distance++;
+            }
+
+            while (secondDepth > firstDepth)
+            {
+                secondIndex = parentIndices[secondIndex];
+                secondDepth--;
+                distance++;
+            }
+
+            while (firstIndex != secondIndex)
+            {
+                firstIndex = firstIndex >= 0 ? parentIndices[firstIndex] : -1;
+                secondIndex = secondIndex >= 0 ? parentIndices[secondIndex] : -1;
+                distance += 2;
+
+                if (firstIndex < 0 || secondIndex < 0)
+                {
+                    return -1;
+                }
+            }
+
+            return distance;
+        }
+
         internal static bool TryCreate(
             int registryId,
             int generation,

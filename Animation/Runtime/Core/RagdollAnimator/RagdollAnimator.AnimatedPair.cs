@@ -9,6 +9,7 @@ namespace Hairibar.Ragdoll.Animation
             public BoneName Name => bonePair.RagdollBone.Name;
             public RagdollBone RagdollBone => bonePair.RagdollBone;
             public Transform TargetBone => bonePair.TargetBone;
+            public RagdollBoneHandle Handle { get; }
 
             public AnimatedPose currentPose;
             internal AnimatedPose previousPose;
@@ -47,9 +48,10 @@ namespace Hairibar.Ragdoll.Animation
             }
 
 
-            internal AnimatedPair(RagdollBoneTargetBonePair bonePair)
+            internal AnimatedPair(RagdollBoneTargetBonePair bonePair, RagdollBoneHandle handle)
             {
                 this.bonePair = bonePair;
+                Handle = handle;
             }
         }
     }
