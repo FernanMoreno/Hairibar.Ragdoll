@@ -21,6 +21,18 @@ namespace Hairibar.Ragdoll
         public RagdollDefinition Definition => _definition;
 
         /// <summary>
+        /// Precalculated parent, child and depth relationships for the current registry generation.
+        /// </summary>
+        public RagdollBoneTopology Topology
+        {
+            get
+            {
+                ThrowExceptionIfNotInitialized();
+                return topology;
+            }
+        }
+
+        /// <summary>
         /// Number of runtime bones in this ragdoll.
         /// </summary>
         public int BoneCount
@@ -271,6 +283,9 @@ namespace Hairibar.Ragdoll
         Dictionary<Rigidbody, int> indexByRigidbody;
         Dictionary<Collider, int> indexByCollider;
         Dictionary<ConfigurableJoint, int> indexByJoint;
+
+        RagdollBoneTopology topology;
+        int registryGeneration;
         #endregion
 
         #region Validation
@@ -296,7 +311,7 @@ namespace Hairibar.Ragdoll
         {
             get
             {
-                if (bones == null || indexedBones == null) return false;
+                if (bones == null || indexedBones == null || topology == null) return false;
 
                 foreach (BoneName boneName in _definition.Bones)
                 {
@@ -365,17 +380,11 @@ namespace Hairibar.Ragdoll
         {
             if (!BindingsAreValid)
             {
-                ClearRuntimeRegistry();
-
-                if (Application.isPlaying)
-                {
-                    Debug.LogError("Ragdoll Definition Bindings aren't correctly set up.", this);
-                }
-
-                return false;
+                return FailInitialization("Ragdoll Definition Bindings aren't correctly set up.", this);
             }
 
             int boneCount = _definition.BoneCount;
+            int nextGeneration = GetNextGeneration();
 
             bones = new Dictionary<BoneName, RagdollBone>(boneCount);
             indexedBones = new RagdollBone[boneCount];
@@ -393,14 +402,16 @@ namespace Hairibar.Ragdoll
 
                 if (rigidbody == null)
                 {
-                    ClearRuntimeRegistry();
+                    return FailInitialization(
+                        "Every bound ConfigurableJoint must have a Rigidbody on the same GameObject.",
+                        joint);
+                }
 
-                    if (Application.isPlaying)
-                    {
-                        Debug.LogError("Every bound ConfigurableJoint must have a Rigidbody on the same GameObject.", joint);
-                    }
-
-                    return false;
+                if (indexByRigidbody.ContainsKey(rigidbody))
+                {
+                    return FailInitialization(
+                        "A Rigidbody cannot belong to more than one ragdoll bone.",
+                        rigidbody);
                 }
 
                 RagdollBone bone = new RagdollBone(
@@ -424,14 +435,9 @@ namespace Hairibar.Ragdoll
                     int existingIndex;
                     if (indexByCollider.TryGetValue(collider, out existingIndex) && existingIndex != index)
                     {
-                        ClearRuntimeRegistry();
-
-                        if (Application.isPlaying)
-                        {
-                            Debug.LogError("A Collider cannot belong to more than one ragdoll bone.", collider);
-                        }
-
-                        return false;
+                        return FailInitialization(
+                            "A Collider cannot belong to more than one ragdoll bone.",
+                            collider);
                     }
 
                     indexByCollider[collider] = index;
@@ -439,6 +445,32 @@ namespace Hairibar.Ragdoll
 
                 index++;
             }
+
+            int[] parentIndices = new int[boneCount];
+            for (int childIndex = 0; childIndex < boneCount; childIndex++)
+            {
+                Rigidbody connectedBody = indexedBones[childIndex].Joint.connectedBody;
+                int parentIndex;
+                parentIndices[childIndex] = connectedBody != null
+                    && indexByRigidbody.TryGetValue(connectedBody, out parentIndex)
+                        ? parentIndex
+                        : -1;
+            }
+
+            RagdollBoneTopology createdTopology;
+            string topologyError;
+            if (!RagdollBoneTopology.TryCreate(
+                GetInstanceID(),
+                nextGeneration,
+                parentIndices,
+                out createdTopology,
+                out topologyError))
+            {
+                return FailInitialization(topologyError, this);
+            }
+
+            topology = createdTopology;
+            registryGeneration = nextGeneration;
 
             return true;
         }
@@ -452,18 +484,39 @@ namespace Hairibar.Ragdoll
             indexByRigidbody = null;
             indexByCollider = null;
             indexByJoint = null;
+
+            topology = null;
         }
 
         RagdollBoneHandle CreateHandle(int index)
         {
-            return new RagdollBoneHandle(GetInstanceID(), index);
+            return new RagdollBoneHandle(GetInstanceID(), registryGeneration, index);
         }
 
         bool HandleBelongsToThisRagdoll(RagdollBoneHandle handle)
         {
             return handle.RegistryId == GetInstanceID()
+                && handle.Generation == registryGeneration
                 && handle.Index >= 0
                 && handle.Index < indexedBones.Length;
+        }
+
+        int GetNextGeneration()
+        {
+            int nextGeneration = unchecked(registryGeneration + 1);
+            return nextGeneration == 0 ? 1 : nextGeneration;
+        }
+
+        bool FailInitialization(string message, UnityEngine.Object context)
+        {
+            ClearRuntimeRegistry();
+
+            if (Application.isPlaying)
+            {
+                Debug.LogError(message, context != null ? context : this);
+            }
+
+            return false;
         }
         #endregion
 
