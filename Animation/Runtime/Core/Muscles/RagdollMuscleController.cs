@@ -13,7 +13,8 @@ namespace Hairibar.Ragdoll.Animation
     [RequireComponent(typeof(RagdollAnimator))]
     public sealed class RagdollMuscleController : MonoBehaviour,
         IBoneProfileModifier,
-        IRagdollMappingModifier
+        IRagdollMappingModifier,
+        IOrderedRagdollModifier
     {
         [SerializeField, Min(0f)] float positionSuppressionRecoveryRate = 2f;
         [SerializeField, Min(0f)] float rotationSuppressionRecoveryRate = 2f;
@@ -23,6 +24,8 @@ namespace Hairibar.Ragdoll.Animation
         float[] lastRecoveryTimes;
 
         public bool IsInitialized => states != null;
+        public RagdollModifierStage Stage => RagdollModifierStage.RuntimeState;
+        public int Priority => 0;
 
         public float PositionSuppressionRecoveryRate
         {

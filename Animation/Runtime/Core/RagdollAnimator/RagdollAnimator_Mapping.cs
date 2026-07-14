@@ -66,6 +66,7 @@ namespace Hairibar.Ragdoll.Animation
         void GatherMappingModifiers()
         {
             mappingModifiers = GetComponents<IRagdollMappingModifier>();
+            RagdollModifierOrdering.StableSort(mappingModifiers);
         }
 
         internal RagdollMappingWeights GetConfiguredMappingWeights(BoneName bone)

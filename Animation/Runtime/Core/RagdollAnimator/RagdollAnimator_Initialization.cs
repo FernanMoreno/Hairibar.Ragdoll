@@ -48,7 +48,16 @@ namespace Hairibar.Ragdoll.Animation
 
         void GatherBoneProfileModifiers()
         {
+            // Runtime muscle state is part of the advanced ragdoll pipeline. Its neutral
+            // defaults preserve legacy behaviour while making collision and behaviour
+            // systems available even on upgraded prefabs that did not serialize it yet.
+            if (!GetComponent<RagdollMuscleController>())
+            {
+                gameObject.AddComponent<RagdollMuscleController>();
+            }
+
             boneProfileModifiers = GetComponents<IBoneProfileModifier>();
+            RagdollModifierOrdering.StableSort(boneProfileModifiers);
         }
 
         void InitializeBoneProfileModifiers(IBoneProfileModifier[] boneProfileModifiers, AnimatedPair[] pairs)
