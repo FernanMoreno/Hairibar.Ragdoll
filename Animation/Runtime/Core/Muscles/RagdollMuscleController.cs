@@ -16,14 +16,17 @@ namespace Hairibar.Ragdoll.Animation
         IRagdollMappingModifier,
         IOrderedRagdollModifier
     {
+        [SerializeField] RagdollMuscleProfile muscleProfile;
         [SerializeField, Min(0f)] float positionSuppressionRecoveryRate = 2f;
         [SerializeField, Min(0f)] float rotationSuppressionRecoveryRate = 2f;
 
         RagdollDefinitionBindings bindings;
+        RagdollMuscleProfileRuntime runtimeProfile;
         MuscleRuntimeState[] states;
         float[] lastRecoveryTimes;
 
         public bool IsInitialized => states != null;
+        public RagdollMuscleProfile MuscleProfile => muscleProfile;
         public RagdollModifierStage Stage => RagdollModifierStage.RuntimeState;
         public int Priority => 0;
 
@@ -43,6 +46,23 @@ namespace Hairibar.Ragdoll.Animation
         {
             RagdollAnimator animator = GetComponent<RagdollAnimator>();
             bindings = animator.Bindings;
+
+            if (muscleProfile)
+            {
+                string profileError;
+                if (!muscleProfile.TryCreateRuntime(
+                    bindings,
+                    out runtimeProfile,
+                    out profileError))
+                {
+                    throw new InvalidOperationException(
+                        "The assigned RagdollMuscleProfile is invalid: " + profileError);
+                }
+            }
+            else
+            {
+                runtimeProfile = null;
+            }
 
             int boneCount = bindings.BoneCount;
             states = new MuscleRuntimeState[boneCount];
@@ -71,7 +91,9 @@ namespace Hairibar.Ragdoll.Animation
 
             int index = pair.Handle.Index;
             AdvanceRecovery(index, CurrentTime);
-            states[index].ApplyTo(ref boneProfile);
+            states[index].ApplyTo(
+                ref boneProfile,
+                GetBehaviourSettings(index).minimumPositionAuthority);
         }
 
         public void ModifyMapping(
@@ -80,7 +102,19 @@ namespace Hairibar.Ragdoll.Animation
         {
             if (!enabled || states == null) return;
 
-            states[pair.Handle.Index].ApplyTo(ref mappingWeights);
+            int index = pair.Handle.Index;
+            AdvanceRecovery(index, CurrentTime);
+            MuscleRuntimeState state = states[index];
+            state.ApplyTo(ref mappingWeights);
+
+            if (runtimeProfile != null)
+            {
+                float behaviourMappingAuthority = GetBehaviourSettings(index)
+                    .EvaluateMappingAuthority(state.PositionSuppression);
+                mappingWeights.Multiply(
+                    behaviourMappingAuthority,
+                    behaviourMappingAuthority);
+            }
         }
 
         public MuscleRuntimeState GetState(RagdollBoneHandle bone)
@@ -88,6 +122,27 @@ namespace Hairibar.Ragdoll.Animation
             int index = ValidateHandle(bone);
             AdvanceRecovery(index, CurrentTime);
             return states[index];
+        }
+
+        public bool TryGetMuscleGroup(
+            RagdollBoneHandle bone,
+            out RagdollMuscleGroup group)
+        {
+            int index = ValidateHandle(bone);
+            if (runtimeProfile == null)
+            {
+                group = default(RagdollMuscleGroup);
+                return false;
+            }
+
+            group = runtimeProfile.GetGroup(index);
+            return true;
+        }
+
+        public RagdollMuscleBehaviourSettings GetBehaviourSettings(
+            RagdollBoneHandle bone)
+        {
+            return GetBehaviourSettings(ValidateHandle(bone));
         }
 
         public void SetAuthorities(RagdollBoneHandle bone, float positionAuthority, float rotationAuthority)
@@ -146,18 +201,41 @@ namespace Hairibar.Ragdoll.Animation
                     nameof(source));
             }
 
+            RagdollMuscleBehaviourSettings sourceSettings =
+                GetBehaviourSettings(source.Index);
+            float sourcePositionSuppression = runtimeProfile == null
+                ? Mathf.Clamp01(settings.positionSuppression)
+                : sourceSettings.ScaleCollisionSuppression(
+                    settings.positionSuppression);
+
             float now = CurrentTime;
             for (int index = 0; index < states.Length; index++)
             {
                 RagdollBoneHandle affected = bindings.GetHandleAt(index);
                 int distance = topology.GetKinshipDistance(source, affected);
-                float weight = settings.GetPropagationWeight(distance);
-                if (weight <= 0f) continue;
+                float distanceWeight = settings.GetPropagationWeight(distance);
+                if (distanceWeight <= 0f) continue;
+
+                float positionWeight = distanceWeight;
+                if (runtimeProfile != null)
+                {
+                    positionWeight *= GetSemanticPropagationMultiplier(
+                        topology,
+                        source,
+                        affected,
+                        sourceSettings);
+                }
+
+                float positionSuppression =
+                    sourcePositionSuppression * positionWeight;
+                float rotationSuppression =
+                    settings.rotationSuppression * distanceWeight;
+                if (positionSuppression <= 0f && rotationSuppression <= 0f) continue;
 
                 AdvanceRecovery(index, now);
                 states[index].AccumulateSuppression(
-                    settings.positionSuppression * weight,
-                    settings.rotationSuppression * weight);
+                    positionSuppression,
+                    rotationSuppression);
             }
         }
 
@@ -178,6 +256,45 @@ namespace Hairibar.Ragdoll.Animation
                 states[i] = MuscleRuntimeState.Default;
                 lastRecoveryTimes[i] = now;
             }
+        }
+
+        float GetSemanticPropagationMultiplier(
+            RagdollBoneTopology topology,
+            RagdollBoneHandle source,
+            RagdollBoneHandle affected,
+            RagdollMuscleBehaviourSettings sourceSettings)
+        {
+            if (source == affected) return 1f;
+
+            float multiplier = 0f;
+            if (topology.IsAncestorOf(affected, source))
+            {
+                multiplier = sourceSettings.GetPropagationMultiplier(
+                    RagdollMuscleRelation.Parent);
+            }
+            else if (topology.IsAncestorOf(source, affected))
+            {
+                multiplier = sourceSettings.GetPropagationMultiplier(
+                    RagdollMuscleRelation.Child);
+            }
+
+            if (runtimeProfile.GetGroup(source.Index)
+                == runtimeProfile.GetGroup(affected.Index))
+            {
+                multiplier = Mathf.Max(
+                    multiplier,
+                    sourceSettings.GetPropagationMultiplier(
+                        RagdollMuscleRelation.SameGroup));
+            }
+
+            return multiplier;
+        }
+
+        RagdollMuscleBehaviourSettings GetBehaviourSettings(int index)
+        {
+            return runtimeProfile != null
+                ? runtimeProfile.GetSettings(index)
+                : RagdollMuscleBehaviourSettings.Default;
         }
 
         int ValidateHandle(RagdollBoneHandle bone)
@@ -208,8 +325,11 @@ namespace Hairibar.Ragdoll.Animation
             float elapsed = Mathf.Max(0f, now - lastRecoveryTimes[index]);
             if (elapsed > 0f)
             {
+                RagdollMuscleBehaviourSettings settings =
+                    GetBehaviourSettings(index);
                 states[index].Recover(
-                    positionSuppressionRecoveryRate,
+                    positionSuppressionRecoveryRate
+                        * settings.regainPositionAuthorityMultiplier,
                     rotationSuppressionRecoveryRate,
                     elapsed);
             }

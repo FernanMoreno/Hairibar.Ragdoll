@@ -101,7 +101,20 @@ namespace Hairibar.Ragdoll.Animation
 
         internal void ApplyTo(ref BoneProfile profile)
         {
-            profile.positionAlpha *= EffectivePositionAuthority;
+            ApplyTo(ref profile, 0f);
+        }
+
+        internal void ApplyTo(
+            ref BoneProfile profile,
+            float minimumSuppressionAuthority)
+        {
+            // The minimum applies only to temporary suppression. Explicit persistent
+            // authority remains authoritative and can still disable the channel.
+            float suppressionAuthority = Mathf.Max(
+                1f - positionSuppression,
+                Mathf.Clamp01(minimumSuppressionAuthority));
+
+            profile.positionAlpha *= positionAuthority * suppressionAuthority;
             profile.rotationAlpha *= EffectiveRotationAuthority;
 
             profile.positionDampingRatio *= positionDampingMultiplier;
