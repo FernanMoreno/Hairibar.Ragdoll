@@ -66,13 +66,5 @@ namespace Hairibar.Ragdoll.Animation
             previousProfile = currentProfile;
         }
 
-
-        void InitializePreviousPosesWithCurrentPose()
-        {
-            foreach (AnimatedPair pair in animatedPairs)
-            {
-                pair.previousPose = pair.currentPose;
-            }
-        }
     }
 }
