@@ -1,0 +1,21 @@
+{
+    "name": "Hairibar.Ragdoll.Core.EditorTests",
+    "references": [
+        "Hairibar.Ragdoll.Core",
+        "Hairibar.Ragdoll.Core.Tests"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false,
+    "optionalUnityReferences": [
+        "TestAssemblies"
+    ]
+}
