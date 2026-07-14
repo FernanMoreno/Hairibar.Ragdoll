@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 
 namespace Hairibar.Ragdoll.Animation
 {
@@ -17,7 +18,14 @@ namespace Hairibar.Ragdoll.Animation
             int i = 0;
             foreach (RagdollBoneTargetBonePair bonePair in bonePairs)
             {
-                animatedPairs[i] = new AnimatedPair(bonePair);
+                RagdollBoneHandle handle;
+                if (!Bindings.TryGetBoneHandle(bonePair.RagdollBone.Rigidbody, out handle))
+                {
+                    throw new InvalidOperationException(
+                        "An animated ragdoll pair references a bone that is not registered in its bindings.");
+                }
+
+                animatedPairs[i] = new AnimatedPair(bonePair, handle);
                 i++;
             }
         }
