@@ -25,8 +25,6 @@ namespace Hairibar.Ragdoll.Animation
 
             foreach (AnimatedPair pair in animatedPairs)
             {
-                pair.UpdateVelocities(dt);
-
                 switch (pair.RagdollBone.PowerSetting)
                 {
                     case PowerSetting.Kinematic:
@@ -40,8 +38,6 @@ namespace Hairibar.Ragdoll.Animation
                         SetUnpoweredJointDrive(pair);
                         break;
                 }
-
-                pair.previousPose = pair.currentPose;
             }
         }
 
@@ -166,18 +162,47 @@ namespace Hairibar.Ragdoll.Animation
         #region Target Update
         void ForceAnimatorUpdate()
         {
-            Animator animator = GetComponent<Animator>();
-            if (animator)
+            if (targetAnimator)
             {
-                animator.Update(0);
+                targetAnimator.Update(0);
             }
         }
 
         void ReadAnimatedPose()
         {
+            float sampleTime = GetAnimationSampleTime();
+
             foreach (AnimatedPair pair in animatedPairs)
             {
-                pair.currentPose = AnimatedPose.Read(pair.TargetBone);
+                pair.SampleAnimatedPose(AnimatedPose.Read(pair.TargetBone), sampleTime);
+            }
+        }
+
+        float GetAnimationSampleTime()
+        {
+            if (UsesFixedAnimatorUpdate())
+            {
+                return Time.fixedTime;
+            }
+
+            if (targetAnimator && targetAnimator.updateMode == AnimatorUpdateMode.UnscaledTime)
+            {
+                return Time.unscaledTime;
+            }
+
+            return Time.time;
+        }
+
+        bool UsesFixedAnimatorUpdate()
+        {
+            return targetAnimator && targetAnimator.updateMode == AnimatorUpdateMode.AnimatePhysics;
+        }
+
+        void RestoreAnimatedPose()
+        {
+            foreach (AnimatedPair pair in animatedPairs)
+            {
+                pair.RestoreAnimatedPose();
             }
         }
 

@@ -68,6 +68,7 @@ namespace Hairibar.Ragdoll.Animation
 
         TargetToRagdollMapper mapper;
         AnimatedPair[] animatedPairs;
+        Animator targetAnimator;
 
         ITargetPoseModifier[] targetPoseModifiers;
         IBoneProfileModifier[] boneProfileModifiers;
@@ -78,6 +79,12 @@ namespace Hairibar.Ragdoll.Animation
         {
             if (!isActiveAndEnabled || animatedPairs is null) return;
 
+            if (UsesFixedAnimatorUpdate())
+            {
+                ReadAnimatedPose();
+            }
+
+            RestoreAnimatedPose();
             ModifyTargetPose();
             DoAnimationMatching();
         }
@@ -86,7 +93,10 @@ namespace Hairibar.Ragdoll.Animation
         {
             if (!isActiveAndEnabled || animatedPairs is null) return;
 
-            ReadAnimatedPose();
+            if (!UsesFixedAnimatorUpdate())
+            {
+                ReadAnimatedPose();
+            }
 
             if (!forceTargetPose)
             {
@@ -106,6 +116,7 @@ namespace Hairibar.Ragdoll.Animation
             RagdollProfile.ValidateAsInspectorField(currentProfile, Bindings.Definition, true, "A RagdollAnimationProfile must be assigned at RagdollAnimator.");
 
             RagdollSettings = _ragdollBindings.GetComponent<RagdollSettings>();
+            targetAnimator = GetComponent<Animator>();
 
             InitializeProfileTransitioning();
         }
@@ -117,7 +128,6 @@ namespace Hairibar.Ragdoll.Animation
 
             ForceAnimatorUpdate();
             ReadAnimatedPose();
-            InitializePreviousPosesWithCurrentPose();
 
             GatherBoneProfileModifiers();
             InitializeBoneProfileModifiers(boneProfileModifiers, animatedPairs);

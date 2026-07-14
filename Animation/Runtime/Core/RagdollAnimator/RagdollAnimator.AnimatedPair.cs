@@ -12,39 +12,29 @@ namespace Hairibar.Ragdoll.Animation
             public RagdollBoneHandle Handle { get; }
 
             public AnimatedPose currentPose;
-            internal AnimatedPose previousPose;
 
             internal Vector3 poseLinearVelocity;
             internal Vector3 poseAngularVelocity;
 
             readonly RagdollBoneTargetBonePair bonePair;
+            AnimatedPoseSampler poseSampler;
 
 
-            internal void UpdateVelocities(float dt)
+            internal void SampleAnimatedPose(AnimatedPose pose, float sampleTime)
             {
-                if (dt > 0)
-                {
-                    poseLinearVelocity = CalculateLinearVelocity(previousPose, currentPose, dt);
-                    poseAngularVelocity = CalculateAngularVelocity(previousPose, currentPose, dt);
-                }
+                poseSampler.Push(pose, sampleTime);
+                RestoreAnimatedPose();
+
+                poseLinearVelocity = poseSampler.LinearVelocity;
+                poseAngularVelocity = poseSampler.AngularVelocity;
             }
 
-            static Vector3 CalculateLinearVelocity(AnimatedPose previousPose, AnimatedPose newPose, float dt)
+            internal void RestoreAnimatedPose()
             {
-                return (newPose.worldPosition - previousPose.worldPosition) / dt;
-            }
-
-            static Vector3 CalculateAngularVelocity(AnimatedPose previousPose, AnimatedPose newPose, float dt)
-            {
-                Quaternion deltaRotation = newPose.localRotation * Quaternion.Inverse(previousPose.localRotation);
-                deltaRotation.ToAngleAxis(out float deltaAngle, out Vector3 axis);
-
-                if (deltaAngle > 180)
+                if (poseSampler.IsInitialized)
                 {
-                    deltaAngle -= 360f;
+                    currentPose = poseSampler.Pose;
                 }
-
-                return Mathf.Deg2Rad * deltaAngle / dt * axis.normalized;
             }
 
 
