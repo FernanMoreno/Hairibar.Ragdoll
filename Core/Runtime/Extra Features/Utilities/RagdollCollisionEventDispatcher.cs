@@ -1,13 +1,13 @@
-﻿using System.Collections.Generic;
-using Hairibar.EngineExtensions;
-using UnityEngine;
+﻿using UnityEngine;
 
 namespace Hairibar.Ragdoll
 {
     /// <summary>
-    /// Invokes Collision events for the Ragdoll's bones.
+    /// Backwards-compatible adapter for the original collision dispatcher API.
+    /// New code should subscribe directly to RagdollCollisionHub.
     /// </summary>
     [AddComponentMenu("Ragdoll/Ragdoll Collision Event Dispatcher")]
+    [DisallowMultipleComponent]
     [RequireComponent(typeof(RagdollDefinitionBindings))]
     public class RagdollCollisionEventDispatcher : MonoBehaviour
     {
@@ -17,71 +17,47 @@ namespace Hairibar.Ragdoll
         public event CollisionEventListener OnCollisionStay;
         public event CollisionEventListener OnCollisionExit;
 
+        RagdollDefinitionBindings bindings;
+        RagdollCollisionHub collisionHub;
 
-        Dictionary<CollisionEventDispatcher, RagdollBone> bones;
-
-
-        #region Initialization
-        void Start()
+        void OnEnable()
         {
-            RagdollDefinitionBindings bindings = GetComponent<RagdollDefinitionBindings>();
-            bindings.SubscribeToOnBonesCreated(Initialize);
-        }
-
-        void Initialize()
-        {
-            SetUpCollisionEventDispatchers();
-        }
-
-
-        void SetUpCollisionEventDispatchers()
-        {
-            RagdollDefinitionBindings bindings = GetComponent<RagdollDefinitionBindings>();
-            bones = new Dictionary<CollisionEventDispatcher, RagdollBone>();
-
-            foreach (RagdollBone bone in bindings.Bones)
+            bindings = GetComponent<RagdollDefinitionBindings>();
+            collisionHub = GetComponent<RagdollCollisionHub>();
+            if (!collisionHub)
             {
-                bones.Add(SetUpCollisionEventDispatcher(bone), bone);
+                collisionHub = gameObject.AddComponent<RagdollCollisionHub>();
+            }
+
+            collisionHub.CollisionReported += Dispatch;
+        }
+
+        void OnDisable()
+        {
+            if (collisionHub)
+            {
+                collisionHub.CollisionReported -= Dispatch;
             }
         }
 
-        CollisionEventDispatcher SetUpCollisionEventDispatcher(RagdollBone bone)
+        void Dispatch(RagdollCollisionEvent collisionEvent)
         {
-            CollisionEventDispatcher dispatcher = bone.Rigidbody.gameObject.AddComponent<CollisionEventDispatcher>();
+            if (!bindings || !bindings.IsInitialized) return;
 
-            dispatcher.OnCollisionEntered += DispatchOnCollisionEnter;
-            dispatcher.OnCollisionStayed += DispatchOnCollisionStay;
-            dispatcher.OnCollisionExited += DispatchOnCollisionExit;
+            RagdollBone bone;
+            if (!bindings.TryGetBone(collisionEvent.Bone, out bone)) return;
 
-            return dispatcher;
-        }
-        #endregion
-
-        #region Dispatchers
-        void DispatchOnCollisionEnter(Collision collision, CollisionEventDispatcher dispatcher)
-        {
-            OnCollisionEnter?.Invoke(collision, bones[dispatcher]);
-        }
-
-        void DispatchOnCollisionStay(Collision collision, CollisionEventDispatcher dispatcher)
-        {
-            OnCollisionStay?.Invoke(collision, bones[dispatcher]);
-        }
-
-        void DispatchOnCollisionExit(Collision collision, CollisionEventDispatcher dispatcher)
-        {
-            OnCollisionExit?.Invoke(collision, bones[dispatcher]);
-        }
-        #endregion
-
-
-        void OnDestroy()
-        {
-            if (bones == null) return;
-
-            foreach (CollisionEventDispatcher dispatcher in bones.Keys)
+            switch (collisionEvent.Phase)
             {
-                if (dispatcher) Destroy(dispatcher);
+                case RagdollCollisionPhase.Enter:
+                    OnCollisionEnter?.Invoke(collisionEvent.Collision, bone);
+                    break;
+                case RagdollCollisionPhase.Stay:
+                    OnCollisionStay?.Invoke(collisionEvent.Collision, bone);
+                    break;
+                case RagdollCollisionPhase.Exit:
+                    OnCollisionExit?.Invoke(collisionEvent.Collision, bone);
+                    break;
             }
         }
     }
