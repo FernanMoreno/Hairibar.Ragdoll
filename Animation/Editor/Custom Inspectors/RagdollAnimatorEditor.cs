@@ -71,7 +71,20 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 "A damping ratio of 1 will get to the target pose perfectly, with no overshooting. " +
                 "Lower values will overshoot the target pose."));
 
+            ExtraNaughtyEditorGUILayout.Header("Mapping");
+            EditorGUILayout.Slider(serializedObject.FindProperty("_masterMappingWeight"), 0, 1,
+                new GUIContent("Master Mapping Weight",
+                "Multiplies position and rotation mapping for every bone. Zero keeps the target fully animated; one uses the configured per-bone weights."));
+            EditorGUILayout.PropertyField(
+                serializedObject.FindProperty("_defaultMappingWeights"),
+                new GUIContent("Default Mapping Weights"),
+                true);
+            EditorGUILayout.PropertyField(
+                serializedObject.FindProperty("_mappingOverrides"),
+                new GUIContent("Bone Mapping Overrides"),
+                true);
             EditorGUILayout.PropertyField(serializedObject.FindProperty("forceTargetPose"));
+
             ExtraNaughtyEditorGUILayout.Header("Debug Features (Editor Only)");
             if (serializedObject.isEditingMultipleObjects)
             {

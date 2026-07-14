@@ -6,9 +6,9 @@ namespace Hairibar.Ragdoll.Animation
     //Initialization
     public partial class RagdollAnimator
     {
-        void CreateTargetToRagdollMapper()
+        void CreateRagdollToTargetMapper()
         {
-            mapper = new TargetToRagdollMapper(_ragdollBindings, transform);
+            mapper = new RagdollToTargetMapper(_ragdollBindings, transform);
         }
 
         void CreateAnimatedPairs(IReadOnlyCollection<RagdollBoneTargetBonePair> bonePairs)
@@ -25,9 +25,25 @@ namespace Hairibar.Ragdoll.Animation
                         "An animated ragdoll pair references a bone that is not registered in its bindings.");
                 }
 
-                animatedPairs[i] = new AnimatedPair(bonePair, handle);
+                animatedPairs[i] = new AnimatedPair(
+                    bonePair,
+                    handle,
+                    GetConfiguredMappingWeights(bonePair.RagdollBone.Name));
                 i++;
             }
+
+            Array.Sort(animatedPairs, CompareAnimatedPairTopologyOrder);
+            InitializeAnimatedPairLookup();
+        }
+
+        int CompareAnimatedPairTopologyOrder(AnimatedPair first, AnimatedPair second)
+        {
+            int depthComparison = Bindings.Topology.GetDepth(first.Handle)
+                .CompareTo(Bindings.Topology.GetDepth(second.Handle));
+
+            return depthComparison != 0
+                ? depthComparison
+                : first.Handle.Index.CompareTo(second.Handle.Index);
         }
 
         void GatherBoneProfileModifiers()

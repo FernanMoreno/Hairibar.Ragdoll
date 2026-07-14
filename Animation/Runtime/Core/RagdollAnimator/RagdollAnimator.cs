@@ -66,7 +66,7 @@ namespace Hairibar.Ragdoll.Animation
         ValueTransitioner profileTransitioner;
         RagdollAnimationProfile previousProfile;
 
-        TargetToRagdollMapper mapper;
+        RagdollToTargetMapper mapper;
         AnimatedPair[] animatedPairs;
         Animator targetAnimator;
 
@@ -100,7 +100,7 @@ namespace Hairibar.Ragdoll.Animation
 
             if (!forceTargetPose)
             {
-                mapper.MapTargetToRagdoll();
+                MapRagdollToTarget();
             }
         }
         #endregion
@@ -123,7 +123,7 @@ namespace Hairibar.Ragdoll.Animation
 
         void Start()
         {
-            CreateTargetToRagdollMapper();
+            CreateRagdollToTargetMapper();
             CreateAnimatedPairs(mapper.BonePairs);
 
             ForceAnimatorUpdate();
@@ -134,6 +134,8 @@ namespace Hairibar.Ragdoll.Animation
 
             GatherTargetPoseModifiers();
             InitializeTargetPoseModifiers(targetPoseModifiers, animatedPairs);
+
+            GatherMappingModifiers();
 
             SnapToTargetPose();
         }

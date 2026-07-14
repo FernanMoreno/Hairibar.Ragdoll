@@ -4,14 +4,16 @@ using UnityEngine;
 namespace Hairibar.Ragdoll.Animation
 {
     /// <summary>
-    /// Persistent per-bone state layered on top of a BoneProfile.
-    /// Neutral values preserve the authored profile exactly.
+    /// Persistent per-bone state layered on top of authored animation and mapping values.
+    /// Neutral values preserve the authored configuration exactly.
     /// </summary>
     [Serializable]
     public struct MuscleRuntimeState
     {
         [SerializeField] float positionAuthority;
         [SerializeField] float rotationAuthority;
+        [SerializeField] float positionMappingAuthority;
+        [SerializeField] float rotationMappingAuthority;
         [SerializeField] float positionSuppression;
         [SerializeField] float rotationSuppression;
         [SerializeField] float positionDampingMultiplier;
@@ -21,6 +23,8 @@ namespace Hairibar.Ragdoll.Animation
 
         public float PositionAuthority => positionAuthority;
         public float RotationAuthority => rotationAuthority;
+        public float PositionMappingAuthority => positionMappingAuthority;
+        public float RotationMappingAuthority => rotationMappingAuthority;
         public float PositionSuppression => positionSuppression;
         public float RotationSuppression => rotationSuppression;
         public float EffectivePositionAuthority => positionAuthority * (1f - positionSuppression);
@@ -38,6 +42,8 @@ namespace Hairibar.Ragdoll.Animation
                 {
                     positionAuthority = 1f,
                     rotationAuthority = 1f,
+                    positionMappingAuthority = 1f,
+                    rotationMappingAuthority = 1f,
                     positionSuppression = 0f,
                     rotationSuppression = 0f,
                     positionDampingMultiplier = 1f,
@@ -52,6 +58,12 @@ namespace Hairibar.Ragdoll.Animation
         {
             positionAuthority = Mathf.Clamp01(position);
             rotationAuthority = Mathf.Clamp01(rotation);
+        }
+
+        internal void SetMappingAuthorities(float position, float rotation)
+        {
+            positionMappingAuthority = Mathf.Clamp01(position);
+            rotationMappingAuthority = Mathf.Clamp01(rotation);
         }
 
         internal void SetDriveMultipliers(
@@ -102,6 +114,13 @@ namespace Hairibar.Ragdoll.Animation
             profile.maxAngularAcceleration = ScaleLimit(
                 profile.maxAngularAcceleration,
                 maxAngularAccelerationMultiplier);
+        }
+
+        internal void ApplyTo(ref RagdollMappingWeights mappingWeights)
+        {
+            mappingWeights.Multiply(
+                positionMappingAuthority,
+                rotationMappingAuthority);
         }
 
         internal static float Accumulate(float current, float incoming)

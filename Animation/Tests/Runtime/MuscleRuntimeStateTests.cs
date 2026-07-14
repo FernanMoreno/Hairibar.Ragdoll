@@ -22,6 +22,33 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [Test]
+        public void DefaultState_PreservesMappingWeights()
+        {
+            RagdollMappingWeights weights = new RagdollMappingWeights(0.4f, 0.7f);
+            MuscleRuntimeState state = MuscleRuntimeState.Default;
+
+            state.ApplyTo(ref weights);
+
+            Assert.That(weights.PositionWeight, Is.EqualTo(0.4f).Within(0.0001f));
+            Assert.That(weights.RotationWeight, Is.EqualTo(0.7f).Within(0.0001f));
+        }
+
+        [Test]
+        public void MappingAuthorities_AreIndependentAndClamped()
+        {
+            RagdollMappingWeights weights = RagdollMappingWeights.Full;
+            MuscleRuntimeState state = MuscleRuntimeState.Default;
+
+            state.SetMappingAuthorities(0.25f, 2f);
+            state.ApplyTo(ref weights);
+
+            Assert.That(state.PositionMappingAuthority, Is.EqualTo(0.25f));
+            Assert.That(state.RotationMappingAuthority, Is.EqualTo(1f));
+            Assert.That(weights.PositionWeight, Is.EqualTo(0.25f));
+            Assert.That(weights.RotationWeight, Is.EqualTo(1f));
+        }
+
+        [Test]
         public void Suppression_AccumulatesWithoutHealingPreviousImpact()
         {
             MuscleRuntimeState state = MuscleRuntimeState.Default;
