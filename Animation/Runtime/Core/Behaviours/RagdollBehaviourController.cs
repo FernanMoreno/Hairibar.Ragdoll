@@ -1,0 +1,316 @@
+﻿using System;
+using System.Collections.Generic;
+using UnityEngine;
+
+namespace Hairibar.Ragdoll.Animation
+{
+    /// <summary>
+    /// Owns a set of modular ragdoll behaviours and delegates the existing animation,
+    /// mapping, target-pose and collision pipelines to exactly one active behaviour.
+    /// </summary>
+    [AddComponentMenu("Ragdoll/Ragdoll Behaviour Controller")]
+    [DisallowMultipleComponent]
+    [RequireComponent(typeof(RagdollAnimator), typeof(RagdollMuscleController))]
+    public sealed class RagdollBehaviourController : MonoBehaviour,
+        IBoneProfileModifier,
+        IRagdollMappingModifier,
+        ITargetPoseModifier,
+        IOrderedRagdollModifier
+    {
+        [Tooltip("Optional root containing the behaviour components. If left empty, the RagdollAnimator hierarchy is searched.")]
+        [SerializeField] Transform behaviourRoot;
+
+        RagdollAnimator animator;
+        RagdollMuscleController muscles;
+        RagdollCollisionHub collisionHub;
+        RagdollBehaviourContext context;
+        RagdollBehaviourCollection collection;
+        bool collisionSubscribed;
+        bool isInitialized;
+        bool isChangingBehaviour;
+
+        public bool IsInitialized => isInitialized;
+        public RagdollBehaviourBase ActiveBehaviour =>
+            collection != null ? collection.Active : null;
+        public IReadOnlyList<RagdollBehaviourBase> Behaviours =>
+            collection != null
+                ? collection.Behaviours
+                : EmptyBehaviours;
+        public Transform BehaviourRoot => behaviourRoot ? behaviourRoot : transform;
+        public RagdollBehaviourContext Context => context;
+
+        public RagdollModifierStage Stage => RagdollModifierStage.Behaviour;
+        public int Priority => 0;
+
+        /// <summary>Raised after a switch with the previous and current behaviours.</summary>
+        public event Action<RagdollBehaviourBase, RagdollBehaviourBase>
+            ActiveBehaviourChanged;
+
+        static readonly RagdollBehaviourBase[] EmptyBehaviours =
+            new RagdollBehaviourBase[0];
+
+        public void SetBehaviourRoot(Transform root)
+        {
+            if (IsInitialized)
+            {
+                throw new InvalidOperationException(
+                    "The behaviour root cannot be changed after initialization.");
+            }
+
+            behaviourRoot = root;
+        }
+
+        public void Initialize(IEnumerable<RagdollAnimator.AnimatedPair> pairs)
+        {
+            // The controller implements two initialized modifier interfaces, so the
+            // RagdollAnimator can legitimately call this method more than once.
+            if (IsInitialized) return;
+            if (pairs == null) throw new ArgumentNullException(nameof(pairs));
+
+            animator = GetComponent<RagdollAnimator>();
+            muscles = GetComponent<RagdollMuscleController>();
+            if (!muscles || !muscles.IsInitialized)
+            {
+                throw new InvalidOperationException(
+                    "RagdollBehaviourController must initialize after RagdollMuscleController.");
+            }
+
+            RagdollDefinitionBindings bindings = animator.Bindings;
+            collisionHub = bindings.GetComponent<RagdollCollisionHub>();
+            if (!collisionHub)
+            {
+                collisionHub = bindings.gameObject.AddComponent<RagdollCollisionHub>();
+            }
+
+            context = new RagdollBehaviourContext(
+                this,
+                animator,
+                muscles,
+                collisionHub,
+                pairs);
+
+            RagdollBehaviourBase[] discovered =
+                BehaviourRoot.GetComponentsInChildren<RagdollBehaviourBase>(true);
+            collection = new RagdollBehaviourCollection(discovered);
+
+            for (int index = 0; index < discovered.Length; index++)
+            {
+                discovered[index].InitializeInternal(context);
+            }
+
+            isInitialized = true;
+            SubscribeCollisionEvents();
+
+            int enabledCount;
+            RagdollBehaviourBase initial =
+                collection.FindInitiallyEnabled(out enabledCount);
+            if (enabledCount > 1)
+            {
+                Debug.LogWarning(
+                    "Multiple ragdoll behaviours were enabled at initialization. "
+                    + "The first behaviour in the configured root was activated and the others were disabled.",
+                    this);
+            }
+
+            if (initial)
+            {
+                Activate(initial);
+            }
+        }
+
+        public bool Activate(RagdollBehaviourBase behaviour)
+        {
+            EnsureInitialized();
+            if (isChangingBehaviour)
+            {
+                throw new InvalidOperationException(
+                    "A ragdoll behaviour switch is already in progress.");
+            }
+
+            RagdollBehaviourBase previous;
+            if (!collection.TrySetActive(behaviour, out previous))
+            {
+                return false;
+            }
+
+            isChangingBehaviour = true;
+            try
+            {
+                if (previous)
+                {
+                    previous.SetActiveInternal(false);
+                }
+
+                IReadOnlyList<RagdollBehaviourBase> registered = collection.Behaviours;
+                for (int index = 0; index < registered.Count; index++)
+                {
+                    RagdollBehaviourBase candidate = registered[index];
+                    candidate.enabled = ReferenceEquals(candidate, behaviour);
+                }
+
+                if (behaviour)
+                {
+                    behaviour.SetActiveInternal(true);
+                }
+            }
+            finally
+            {
+                isChangingBehaviour = false;
+            }
+
+            ActiveBehaviourChanged?.Invoke(previous, behaviour);
+            return true;
+        }
+
+        public bool Activate<T>() where T : RagdollBehaviourBase
+        {
+            EnsureInitialized();
+
+            IReadOnlyList<RagdollBehaviourBase> registered = collection.Behaviours;
+            for (int index = 0; index < registered.Count; index++)
+            {
+                T behaviour = registered[index] as T;
+                if (behaviour)
+                {
+                    return Activate(behaviour);
+                }
+            }
+
+            return false;
+        }
+
+        public bool TryGetBehaviour<T>(out T behaviour)
+            where T : RagdollBehaviourBase
+        {
+            if (collection != null)
+            {
+                IReadOnlyList<RagdollBehaviourBase> registered = collection.Behaviours;
+                for (int index = 0; index < registered.Count; index++)
+                {
+                    behaviour = registered[index] as T;
+                    if (behaviour) return true;
+                }
+            }
+
+            behaviour = null;
+            return false;
+        }
+
+        public bool Deactivate(RagdollBehaviourBase behaviour)
+        {
+            EnsureInitialized();
+            return ReferenceEquals(ActiveBehaviour, behaviour)
+                && Activate(null);
+        }
+
+        public bool DeactivateActiveBehaviour()
+        {
+            EnsureInitialized();
+            return Activate(null);
+        }
+
+        public void Modify(
+            ref BoneProfile boneProfile,
+            RagdollAnimator.AnimatedPair pair,
+            float deltaTime)
+        {
+            if (!CanDispatch) return;
+
+            ActiveBehaviour.ModifyBoneProfileInternal(
+                ref boneProfile,
+                pair,
+                deltaTime);
+        }
+
+        public void ModifyMapping(
+            ref RagdollMappingWeights mappingWeights,
+            RagdollAnimator.AnimatedPair pair)
+        {
+            if (!CanDispatch) return;
+
+            ActiveBehaviour.ModifyMappingInternal(
+                ref mappingWeights,
+                pair);
+        }
+
+        public void ModifyPose(IEnumerable<RagdollAnimator.AnimatedPair> pairs)
+        {
+            if (!CanDispatch) return;
+
+            // This callback is invoked by RagdollAnimator from its own FixedUpdate,
+            // before animation matching. It avoids depending on Unity's component
+            // execution order for a separate behaviour FixedUpdate.
+            ActiveBehaviour.FixedUpdateInternal(Time.fixedDeltaTime);
+            ActiveBehaviour.ModifyTargetPoseInternal(context.Pairs);
+        }
+
+        void HandleCollision(RagdollCollisionEvent collisionEvent)
+        {
+            if (!CanDispatch) return;
+            ActiveBehaviour.CollisionInternal(collisionEvent);
+        }
+
+        bool CanDispatch =>
+            isActiveAndEnabled
+            && ActiveBehaviour
+            && ActiveBehaviour.isActiveAndEnabled;
+
+        void EnsureInitialized()
+        {
+            if (!IsInitialized)
+            {
+                throw new InvalidOperationException(
+                    "RagdollBehaviourController has not been initialized by a RagdollAnimator.");
+            }
+        }
+
+        void SubscribeCollisionEvents()
+        {
+            if (collisionSubscribed || !collisionHub || !isActiveAndEnabled) return;
+
+            collisionHub.CollisionReported += HandleCollision;
+            collisionSubscribed = true;
+        }
+
+        void UnsubscribeCollisionEvents()
+        {
+            if (!collisionSubscribed || !collisionHub) return;
+
+            collisionHub.CollisionReported -= HandleCollision;
+            collisionSubscribed = false;
+        }
+
+        void OnEnable()
+        {
+            if (IsInitialized)
+            {
+                SubscribeCollisionEvents();
+            }
+        }
+
+        void OnDisable()
+        {
+            UnsubscribeCollisionEvents();
+        }
+
+        void OnDestroy()
+        {
+            UnsubscribeCollisionEvents();
+
+            if (collection == null) return;
+
+            isInitialized = false;
+            IReadOnlyList<RagdollBehaviourBase> registered = collection.Behaviours;
+            for (int index = 0; index < registered.Count; index++)
+            {
+                if (registered[index])
+                {
+                    registered[index].ShutdownInternal();
+                }
+            }
+
+            context = null;
+            collection = null;
+        }
+    }
+}

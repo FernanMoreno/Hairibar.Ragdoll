@@ -110,6 +110,7 @@ namespace Hairibar.Ragdoll.Animation
         void GatherTargetPoseModifiers()
         {
             targetPoseModifiers = GetComponents<ITargetPoseModifier>();
+            RagdollModifierOrdering.StableSort(targetPoseModifiers);
         }
 
         void InitializeTargetPoseModifiers(ITargetPoseModifier[] targetPoseModifiers, AnimatedPair[] pairs)
