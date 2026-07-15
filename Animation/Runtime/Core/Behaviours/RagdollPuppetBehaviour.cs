@@ -17,6 +17,12 @@ namespace Hairibar.Ragdoll.Animation
         [SerializeField, Range(0f, 1f)] float pinWeightThreshold = 1f;
         [SerializeField, Range(0f, 1f)] float unpinnedMuscleWeightMultiplier = 0.3f;
 
+        [Header("Recovery")]
+        [Tooltip("Global multiplier for temporary pin-authority recovery. It composes with the RagdollMuscleController base rate and each semantic group's Regain Position Authority Multiplier.")]
+        [SerializeField, Range(0.001f, 10f)] float regainPinSpeed = 1f;
+        [Tooltip("How strongly rotational muscle authority follows effective pin authority in the normal Puppet state. Zero preserves authored muscle strength; one makes muscle strength follow pin authority completely.")]
+        [SerializeField, Range(0f, 1f)] float muscleWeightRelativeToPinWeight;
+
         [Header("Normal Mode")]
         [Tooltip("Active preserves authored simulation and mapping. Unmapped suppresses Puppet-to-Target mapping outside accepted contact. Kinematic delegates Rigidbody mode changes to RagdollSimulationModeController until an eligible accepted contact activates the Puppet.")]
         [SerializeField] RagdollPuppetNormalMode normalMode =
@@ -119,6 +125,12 @@ namespace Hairibar.Ragdoll.Animation
 
         public RagdollBoneHandle LastKnockOutBone => lastKnockOutBone;
         public RagdollGetUpOrientation GetUpOrientation => getUpOrientation;
+        public float RegainPinSpeed => regainPinSpeed;
+        public float MuscleWeightRelativeToPinWeight =>
+            muscleWeightRelativeToPinWeight;
+        public float AppliedRegainPinSpeed => IsInitialized
+            ? Context.Muscles.PositionSuppressionRecoveryMultiplier
+            : 1f;
         public RagdollPuppetNormalMode NormalMode => normalMode;
         public float MappingBlendSpeed => mappingBlendSpeed;
         public float NormalModeMappingWeight => normalModeMappingWeight;
@@ -374,11 +386,13 @@ namespace Hairibar.Ragdoll.Animation
             lastKinematicActivationImpulse = 0f;
             lastKinematicActivationFixedTime = 0f;
             kinematicActivationCount = 0L;
+            ApplyRecoveryConfiguration();
             ResetCollisionProcessing(true);
         }
 
         protected override void OnBehaviourDeactivated()
         {
+            Context.Muscles.ClearPositionSuppressionRecoveryMultiplier();
             ReleaseKinematicSimulationMode(true);
 
             if (stateMachine != null)
@@ -452,6 +466,8 @@ namespace Hairibar.Ragdoll.Animation
 
         protected override void OnBehaviourFixedUpdate(float deltaTime)
         {
+            ApplyRecoveryConfiguration();
+
             unmappedContactActive = unmappedContactTracker.IsRecent(
                 Time.fixedTime,
                 Time.fixedDeltaTime);
@@ -547,8 +563,19 @@ namespace Hairibar.Ragdoll.Animation
                     GetUpProgress,
                     unpinnedMuscleWeightMultiplier);
 
+            float rotationAuthority = weights.RotationAuthority;
+            if (State == RagdollPuppetState.Puppet)
+            {
+                float effectivePinAuthority =
+                    Context.Muscles.GetEffectivePositionAuthority(pair.Handle);
+                rotationAuthority *=
+                    RagdollMuscleRecoveryMath.ResolveRelativeMuscleWeight(
+                        effectivePinAuthority,
+                        muscleWeightRelativeToPinWeight);
+            }
+
             boneProfile.positionAlpha *= weights.PositionAuthority;
-            boneProfile.rotationAlpha *= weights.RotationAuthority;
+            boneProfile.rotationAlpha *= rotationAuthority;
         }
 
         protected override void OnModifyMapping(
@@ -1160,6 +1187,14 @@ namespace Hairibar.Ragdoll.Animation
             rejectedCollisionCount = 0L;
         }
 
+        void ApplyRecoveryConfiguration()
+        {
+            if (!IsInitialized) return;
+
+            Context.Muscles.SetPositionSuppressionRecoveryMultiplier(
+                regainPinSpeed);
+        }
+
         void NormalizeCollisionResponseConfiguration()
         {
             if (collisionResistance == null)
@@ -1201,6 +1236,12 @@ namespace Hairibar.Ragdoll.Animation
             pinWeightThreshold = Mathf.Clamp01(pinWeightThreshold);
             unpinnedMuscleWeightMultiplier =
                 Mathf.Clamp01(unpinnedMuscleWeightMultiplier);
+            regainPinSpeed = float.IsNaN(regainPinSpeed)
+                || float.IsInfinity(regainPinSpeed)
+                ? 1f
+                : Mathf.Clamp(regainPinSpeed, 0.001f, 10f);
+            muscleWeightRelativeToPinWeight =
+                Mathf.Clamp01(muscleWeightRelativeToPinWeight);
             mappingBlendSpeed = float.IsNaN(mappingBlendSpeed)
                 || float.IsInfinity(mappingBlendSpeed)
                 ? 0f

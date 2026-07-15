@@ -20,6 +20,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     "Configure Ground Layers so they include walkable geometry. "
                     + "Collision Layers filters contacts, Collision Threshold is squared impulse, and Max Collisions is the accepted-event budget. "
                     + "Collision Resistance can be constant or evaluated from sampled Target speed; layer rules use first-match order. "
+                    + "Regain Pin Speed composes with the muscle-controller base rate and semantic group multipliers; Muscle Weight Relative To Pin affects rotational authority only in Puppet state. "
                     + "Normal Mode Unmapped suppresses mapping without contact. Kinematic delegates global Rigidbody mode changes to RagdollSimulationModeController and activates only from accepted contacts that satisfy its source and impulse filters. "
                     + "Body Front Axis must point out of the chest and Body Up Axis must match character up while standing.",
                     MessageType.Info);
@@ -60,6 +61,11 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 + behaviour.NormalModeMappingWeight.ToString("P0")
                 + "\nUnmapped contact active: "
                 + behaviour.UnmappedContactActive
+                + "\nRegain pin configured / applied: "
+                + behaviour.RegainPinSpeed.ToString("F2") + " / "
+                + behaviour.AppliedRegainPinSpeed.ToString("F2")
+                + "\nMuscle relative to pin: "
+                + behaviour.MuscleWeightRelativeToPinWeight.ToString("P0")
                 + "\nState time: " + behaviour.StateElapsedTime.ToString("F2")
                 + "\nGetUp progress: " + behaviour.GetUpProgress.ToString("P0")
                 + "\nOrientation: " + behaviour.GetUpOrientation

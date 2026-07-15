@@ -20,6 +20,9 @@ namespace Hairibar.Ragdoll.Animation
         [SerializeField, Min(0f)] float positionSuppressionRecoveryRate = 2f;
         [SerializeField, Min(0f)] float rotationSuppressionRecoveryRate = 2f;
 
+        // Runtime owner multiplier. BehaviourPuppet sets this while active and restores 1 on exit.
+        float positionSuppressionRecoveryMultiplier = 1f;
+
         RagdollDefinitionBindings bindings;
         RagdollMuscleProfileRuntime runtimeProfile;
         MuscleRuntimeState[] states;
@@ -41,6 +44,9 @@ namespace Hairibar.Ragdoll.Animation
             get => rotationSuppressionRecoveryRate;
             set => rotationSuppressionRecoveryRate = Mathf.Max(0f, value);
         }
+
+        public float PositionSuppressionRecoveryMultiplier =>
+            positionSuppressionRecoveryMultiplier;
 
         public void Initialize(IEnumerable<RagdollAnimator.AnimatedPair> pairs)
         {
@@ -143,6 +149,48 @@ namespace Hairibar.Ragdoll.Animation
             RagdollBoneHandle bone)
         {
             return GetBehaviourSettings(ValidateHandle(bone));
+        }
+
+        /// <summary>
+        /// Returns the effective pin/position authority after persistent authority, temporary
+        /// suppression and the semantic group's minimum authority have been composed.
+        /// </summary>
+        public float GetEffectivePositionAuthority(RagdollBoneHandle bone)
+        {
+            int index = ValidateHandle(bone);
+            AdvanceRecovery(index, CurrentTime);
+
+            MuscleRuntimeState state = states[index];
+            return RagdollMuscleRecoveryMath.ResolveEffectivePositionAuthority(
+                state.PositionAuthority,
+                state.PositionSuppression,
+                GetBehaviourSettings(index).minimumPositionAuthority);
+        }
+
+        /// <summary>
+        /// Sets a reversible runtime multiplier for position-suppression recovery. The current
+        /// state is first advanced with the previous multiplier so rate changes are deterministic.
+        /// </summary>
+        internal void SetPositionSuppressionRecoveryMultiplier(float multiplier)
+        {
+            float sanitized =
+                RagdollMuscleRecoveryMath.SanitizeRecoveryMultiplier(
+                    multiplier,
+                    1f);
+            if (Mathf.Approximately(
+                positionSuppressionRecoveryMultiplier,
+                sanitized))
+            {
+                return;
+            }
+
+            AdvanceAllRecovery(CurrentTime);
+            positionSuppressionRecoveryMultiplier = sanitized;
+        }
+
+        internal void ClearPositionSuppressionRecoveryMultiplier()
+        {
+            SetPositionSuppressionRecoveryMultiplier(1f);
         }
 
         public void SetAuthorities(RagdollBoneHandle bone, float positionAuthority, float rotationAuthority)
@@ -351,6 +399,16 @@ namespace Hairibar.Ragdoll.Animation
             }
         }
 
+        void AdvanceAllRecovery(float now)
+        {
+            if (states == null) return;
+
+            for (int index = 0; index < states.Length; index++)
+            {
+                AdvanceRecovery(index, now);
+            }
+        }
+
         void AdvanceRecovery(int index, float now)
         {
             float elapsed = Mathf.Max(0f, now - lastRecoveryTimes[index]);
@@ -358,9 +416,13 @@ namespace Hairibar.Ragdoll.Animation
             {
                 RagdollMuscleBehaviourSettings settings =
                     GetBehaviourSettings(index);
+                float positionRecoveryRate =
+                    RagdollMuscleRecoveryMath.ResolvePositionRecoveryRate(
+                        positionSuppressionRecoveryRate,
+                        positionSuppressionRecoveryMultiplier,
+                        settings.regainPositionAuthorityMultiplier);
                 states[index].Recover(
-                    positionSuppressionRecoveryRate
-                        * settings.regainPositionAuthorityMultiplier,
+                    positionRecoveryRate,
                     rotationSuppressionRecoveryRate,
                     elapsed);
             }
