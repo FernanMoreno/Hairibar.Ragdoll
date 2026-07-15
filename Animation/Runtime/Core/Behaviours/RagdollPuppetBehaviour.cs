@@ -17,6 +17,13 @@ namespace Hairibar.Ragdoll.Animation
         [SerializeField, Range(0f, 1f)] float pinWeightThreshold = 1f;
         [SerializeField, Range(0f, 1f)] float unpinnedMuscleWeightMultiplier = 0.3f;
 
+        [Header("Normal Mode")]
+        [Tooltip("Active keeps Puppet mapping authored. Unmapped removes Puppet-to-Target mapping until an accepted collision activates it.")]
+        [SerializeField] RagdollPuppetNormalMode normalMode =
+            RagdollPuppetNormalMode.Active;
+        [Tooltip("Maximum mapping-weight change per second when entering or leaving Unmapped contact mapping. Zero pauses the blend.")]
+        [SerializeField, Min(0f)] float mappingBlendSpeed = 10f;
+
         [Header("Collision Processing")]
         [Tooltip("Only collisions with GameObjects on these layers enter the Puppet behaviour pipeline.")]
         [SerializeField] LayerMask collisionLayers = -1;
@@ -62,6 +69,7 @@ namespace Hairibar.Ragdoll.Animation
         RagdollPuppetStateMachine stateMachine;
         RagdollGroundProbe groundProbe;
         RagdollPuppetCollisionProcessor collisionProcessor;
+        RagdollPuppetUnmappedContactTracker unmappedContactTracker;
         RagdollAnimator.AnimatedPair rootPair;
         RagdollBoneHandle lastKnockOutBone = RagdollBoneHandle.Invalid;
         RagdollGetUpOrientation getUpOrientation = RagdollGetUpOrientation.Unknown;
@@ -75,6 +83,8 @@ namespace Hairibar.Ragdoll.Animation
         RagdollPuppetCollisionRejectionReason lastCollisionRejectionReason;
         RagdollPuppetCollisionResponseSnapshot lastCollisionResponse =
             RagdollPuppetCollisionResponseSnapshot.Empty;
+        float normalModeMappingWeight = 1f;
+        bool unmappedContactActive;
 
         public RagdollPuppetState State => stateMachine != null
             ? stateMachine.State
@@ -90,6 +100,10 @@ namespace Hairibar.Ragdoll.Animation
 
         public RagdollBoneHandle LastKnockOutBone => lastKnockOutBone;
         public RagdollGetUpOrientation GetUpOrientation => getUpOrientation;
+        public RagdollPuppetNormalMode NormalMode => normalMode;
+        public float MappingBlendSpeed => mappingBlendSpeed;
+        public float NormalModeMappingWeight => normalModeMappingWeight;
+        public bool UnmappedContactActive => unmappedContactActive;
         public LayerMask CollisionLayers => collisionLayers;
         public float CollisionThreshold => collisionThreshold;
         public int MaximumCollisionsPerFixedStep => maximumCollisionsPerFixedStep;
@@ -164,6 +178,24 @@ namespace Hairibar.Ragdoll.Animation
         /// </summary>
         public event Action<RagdollCollisionEvent, float> CollisionUnpinApplied;
 
+        /// <summary>
+        /// Changes the balanced Puppet mapping policy. Immediate changes skip the configured
+        /// mapping blend, while non-immediate changes preserve the current blend position.
+        /// </summary>
+        public void SetNormalMode(
+            RagdollPuppetNormalMode mode,
+            bool immediate = false)
+        {
+            normalMode = mode;
+            if (!immediate || !IsInitialized) return;
+
+            normalModeMappingWeight =
+                RagdollPuppetNormalModeMath.ResolveMappingTarget(
+                    normalMode,
+                    State,
+                    unmappedContactActive);
+        }
+
         public bool LoseBalance()
         {
             return LoseBalance(
@@ -232,6 +264,11 @@ namespace Hairibar.Ragdoll.Animation
             stateMachine = new RagdollPuppetStateMachine();
             groundProbe = new RagdollGroundProbe(Context);
             collisionProcessor.Reset();
+            unmappedContactTracker.Reset();
+            normalModeMappingWeight = normalMode == RagdollPuppetNormalMode.Active
+                ? 1f
+                : 0f;
+            unmappedContactActive = false;
             rootPair = FindRootPair();
         }
 
@@ -242,6 +279,11 @@ namespace Hairibar.Ragdoll.Animation
             lastKnockOutBone = RagdollBoneHandle.Invalid;
             getUpOrientation = RagdollGetUpOrientation.Unknown;
             targetAlignmentPending = false;
+            unmappedContactTracker.Reset();
+            unmappedContactActive = false;
+            normalModeMappingWeight = normalMode == RagdollPuppetNormalMode.Active
+                ? 1f
+                : 0f;
             ResetCollisionProcessing(true);
         }
 
@@ -260,6 +302,9 @@ namespace Hairibar.Ragdoll.Animation
             lastKnockOutBone = RagdollBoneHandle.Invalid;
             getUpOrientation = RagdollGetUpOrientation.Unknown;
             targetAlignmentPending = false;
+            unmappedContactTracker.Reset();
+            unmappedContactActive = false;
+            normalModeMappingWeight = 1f;
             ResetCollisionProcessing(false);
         }
 
@@ -288,6 +333,7 @@ namespace Hairibar.Ragdoll.Animation
                 return;
             }
 
+            unmappedContactTracker.Register(collisionEvent.FixedTime);
             acceptedCollisionCount++;
             lastCollisionRejectionReason =
                 RagdollPuppetCollisionRejectionReason.None;
@@ -309,6 +355,21 @@ namespace Hairibar.Ragdoll.Animation
 
         protected override void OnBehaviourFixedUpdate(float deltaTime)
         {
+            unmappedContactActive = unmappedContactTracker.IsRecent(
+                Time.fixedTime,
+                Time.fixedDeltaTime);
+            float normalModeTarget =
+                RagdollPuppetNormalModeMath.ResolveMappingTarget(
+                    normalMode,
+                    State,
+                    unmappedContactActive);
+            normalModeMappingWeight =
+                RagdollPuppetNormalModeMath.StepMappingWeight(
+                    normalModeMappingWeight,
+                    normalModeTarget,
+                    mappingBlendSpeed,
+                    deltaTime);
+
             groundProbe.Update(
                 deltaTime,
                 groundLayers,
@@ -387,6 +448,12 @@ namespace Hairibar.Ragdoll.Animation
             ref RagdollMappingWeights mappingWeights,
             RagdollAnimator.AnimatedPair pair)
         {
+            if (State == RagdollPuppetState.Puppet)
+            {
+                float normalMapping = Mathf.Clamp01(normalModeMappingWeight);
+                mappingWeights.Multiply(normalMapping, normalMapping);
+            }
+
             RagdollPuppetStateWeights weights =
                 RagdollPuppetStateWeights.Evaluate(
                     State,
@@ -717,6 +784,10 @@ namespace Hairibar.Ragdoll.Animation
             pinWeightThreshold = Mathf.Clamp01(pinWeightThreshold);
             unpinnedMuscleWeightMultiplier =
                 Mathf.Clamp01(unpinnedMuscleWeightMultiplier);
+            mappingBlendSpeed = float.IsNaN(mappingBlendSpeed)
+                || float.IsInfinity(mappingBlendSpeed)
+                ? 0f
+                : Mathf.Max(0f, mappingBlendSpeed);
             collisionThreshold = float.IsNaN(collisionThreshold)
                 || float.IsInfinity(collisionThreshold)
                 ? 0f

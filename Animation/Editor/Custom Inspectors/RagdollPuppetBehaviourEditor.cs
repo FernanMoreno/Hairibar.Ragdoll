@@ -20,6 +20,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     "Configure Ground Layers so they include walkable geometry. "
                     + "Collision Layers filters contacts, Collision Threshold is squared impulse, and Max Collisions is the accepted-event budget. "
                     + "Collision Resistance can be constant or evaluated from sampled Target speed; layer rules use first-match order. "
+                    + "Normal Mode Unmapped suppresses Puppet mapping until an accepted collision and Mapping Blend Speed controls both directions. "
                     + "Body Front Axis must point out of the chest and Body Up Axis must match character up while standing.",
                     MessageType.Info);
                 return;
@@ -31,6 +32,11 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 behaviour.LastCollisionResponse;
             EditorGUILayout.HelpBox(
                 "State: " + behaviour.State
+                + "\nNormal mode: " + behaviour.NormalMode
+                + "\nNormal mapping weight: "
+                + behaviour.NormalModeMappingWeight.ToString("P0")
+                + "\nUnmapped contact active: "
+                + behaviour.UnmappedContactActive
                 + "\nState time: " + behaviour.StateElapsedTime.ToString("F2")
                 + "\nGetUp progress: " + behaviour.GetUpProgress.ToString("P0")
                 + "\nOrientation: " + behaviour.GetUpOrientation
