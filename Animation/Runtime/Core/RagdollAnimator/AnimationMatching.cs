@@ -16,16 +16,19 @@ namespace Hairibar.Ragdoll.Animation
             return acceleration;
         }
 
-        public static JointDrive GetRotationMatchingJointDrive(float alpha, float dampingRatio, float mass, float dt, float maxAcceleration)
+        public static JointDrive GetRotationMatchingJointDrive(float alpha, float dampingRatio, float effectiveAngularMass, float dt, float maxAcceleration)
         {
-            float k = GetSpringStiffnessFromAlpha(alpha, mass, dt);
-            float d = GetSpringDampingFromDampingRatio(dampingRatio, k, mass);
+            float k = GetSpringStiffnessFromAlpha(alpha, effectiveAngularMass, dt);
+            float d = GetSpringDampingFromDampingRatio(
+                dampingRatio,
+                k,
+                effectiveAngularMass);
 
             return new JointDrive()
             {
                 positionSpring = k,
                 positionDamper = d,
-                maximumForce = maxAcceleration * mass
+                maximumForce = maxAcceleration * effectiveAngularMass
             };
         }
 

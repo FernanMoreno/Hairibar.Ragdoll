@@ -32,6 +32,18 @@ namespace Hairibar.Ragdoll
         public RigidbodyInterpolation interpolation = RigidbodyInterpolation.Interpolate;
         public CollisionDetectionMode collisionDetectionMode = CollisionDetectionMode.Discrete;
         public int solverIterations = 20;
+
+        [Header("Advanced Solver")]
+        [Min(1)] public int solverVelocityIterations = 1;
+        [Min(0f)] public float maxAngularVelocity = 7f;
+        [Min(0f)] public float maxDepenetrationVelocity = 10f;
+        public bool overrideSleepThreshold = false;
+        [Min(0f)] public float sleepThreshold = 0.005f;
+        public RagdollInertiaTensorMode inertiaTensorMode =
+            RagdollInertiaTensorMode.PreserveAuthored;
+        [Min(1f)] public float maximumInertiaTensorRatio = 10f;
+        public RagdollAngularDriveInertiaMode angularDriveInertiaMode =
+            RagdollAngularDriveInertiaMode.RigidbodyMass;
         #endregion
 
         [SerializeField, UsePropertySetter] RagdollPowerProfile _powerProfile;
@@ -86,6 +98,24 @@ namespace Hairibar.Ragdoll
         #region References
         RagdollDefinitionBindings bindings;
         #endregion
+
+        /// <summary>
+        /// Returns the scalar used to convert requested angular acceleration into the
+        /// SLERP drive spring, damping and maximum torque. Legacy mode uses Rigidbody.mass;
+        /// advanced modes use a rotation-invariant approximation of the inertia tensor.
+        /// </summary>
+        public float GetRotationDriveEffectiveMass(Rigidbody rigidbody)
+        {
+            if (!rigidbody)
+            {
+                throw new System.ArgumentNullException(nameof(rigidbody));
+            }
+
+            return RagdollSolverMath.ResolveAngularDriveMass(
+                rigidbody.mass,
+                rigidbody.inertiaTensor,
+                angularDriveInertiaMode);
+        }
 
         #region Value Appliance
         /// <summary>
@@ -175,7 +205,8 @@ namespace Hairibar.Ragdoll
                 rb.angularDrag = angularDrag;
                 rb.interpolation = interpolation;
 
-                rb.solverIterations = solverIterations;
+                rb.solverIterations = Mathf.Max(1, solverIterations);
+                ApplyAdvancedRigidbodySettings(rb);
 
                 SetCollisionDetectionMode(rb, collisionDetectionMode, rb.isKinematic);
 
@@ -183,6 +214,38 @@ namespace Hairibar.Ragdoll
                 {
                     collider.sharedMaterial = material;
                 }
+            }
+        }
+
+        void ApplyAdvancedRigidbodySettings(Rigidbody rb)
+        {
+            rb.solverVelocityIterations = Mathf.Max(1, solverVelocityIterations);
+            rb.maxAngularVelocity = Mathf.Max(0f, maxAngularVelocity);
+            rb.maxDepenetrationVelocity = Mathf.Max(0f, maxDepenetrationVelocity);
+
+            if (overrideSleepThreshold)
+            {
+                rb.sleepThreshold = Mathf.Max(0f, sleepThreshold);
+            }
+
+            switch (inertiaTensorMode)
+            {
+                case RagdollInertiaTensorMode.PreserveAuthored:
+                    break;
+                case RagdollInertiaTensorMode.ResetFromColliders:
+                    rb.ResetInertiaTensor();
+                    break;
+                case RagdollInertiaTensorMode.ResetAndStabilize:
+                    rb.ResetInertiaTensor();
+                    rb.inertiaTensor = RagdollSolverMath.StabilizeInertiaTensor(
+                        rb.inertiaTensor,
+                        maximumInertiaTensorRatio);
+                    break;
+                default:
+                    throw new System.ArgumentOutOfRangeException(
+                        nameof(inertiaTensorMode),
+                        inertiaTensorMode,
+                        "Unsupported ragdoll inertia tensor mode.");
             }
         }
 
@@ -250,6 +313,13 @@ namespace Hairibar.Ragdoll
         #region Auto Value Updating
         void OnValidate()
         {
+            solverIterations = Mathf.Max(1, solverIterations);
+            solverVelocityIterations = Mathf.Max(1, solverVelocityIterations);
+            maxAngularVelocity = Mathf.Max(0f, maxAngularVelocity);
+            maxDepenetrationVelocity = Mathf.Max(0f, maxDepenetrationVelocity);
+            sleepThreshold = Mathf.Max(0f, sleepThreshold);
+            maximumInertiaTensorRatio = Mathf.Max(1f, maximumInertiaTensorRatio);
+
             //There is some redundant applying here, but it doesn't really matter. OnValidate() is not used outside the editor anyway; and the redundancy makes the profiles work with Undo.
             ApplyWeightDistribution();
             ApplySettings();

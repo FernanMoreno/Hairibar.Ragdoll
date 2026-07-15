@@ -121,7 +121,16 @@ namespace Hairibar.Ragdoll.Animation
 
             SetTargetRotation(pair);
             SetTargetAngularVelocityLocal(bone.Joint, pair.poseAngularVelocity, pair.RagdollBone.StartingJointRotation);
-            bone.Joint.slerpDrive = AnimationMatching.GetRotationMatchingJointDrive(alpha, dampingRatio, rigidbody.mass, dt, boneProfile.maxAngularAcceleration);
+
+            float effectiveAngularMass = RagdollSettings
+                ? RagdollSettings.GetRotationDriveEffectiveMass(rigidbody)
+                : rigidbody.mass;
+            bone.Joint.slerpDrive = AnimationMatching.GetRotationMatchingJointDrive(
+                alpha,
+                dampingRatio,
+                effectiveAngularMass,
+                dt,
+                boneProfile.maxAngularAcceleration);
         }
 
         void SetTargetRotation(AnimatedPair pair)
