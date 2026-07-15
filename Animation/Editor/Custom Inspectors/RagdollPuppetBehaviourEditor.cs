@@ -18,12 +18,14 @@ namespace Hairibar.Ragdoll.Animation.Editor
             {
                 EditorGUILayout.HelpBox(
                     "Configure Ground Layers so they include walkable geometry. "
+                    + "Collision Layers filters BehaviourPuppet contacts, Collision Threshold is squared impulse, and Max Collisions is the accepted-event budget for one physics timestamp. "
                     + "Body Front Axis must point out of the chest and Body Up Axis must match character up while standing.",
                     MessageType.Info);
                 return;
             }
 
             RagdollGroundingSnapshot grounding = behaviour.Grounding;
+            RagdollPuppetCollisionStepSnapshot collisionStep = behaviour.CollisionStep;
             EditorGUILayout.HelpBox(
                 "State: " + behaviour.State
                 + "\nState time: " + behaviour.StateElapsedTime.ToString("F2")
@@ -32,8 +34,29 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 + "\nGrounded: " + grounding.IsGrounded
                 + "\nStable ground time: " + grounding.StableTime.ToString("F2")
                 + "\nCOM speed: " + grounding.CenterOfMassVelocity.magnitude.ToString("F2")
-                + "\nReady to get up: " + behaviour.CanBeginGetUp,
+                + "\nReady to get up: " + behaviour.CanBeginGetUp
+                + "\nAccepted collisions: " + behaviour.AcceptedCollisionCount
+                + "\nRejected collisions: " + behaviour.RejectedCollisionCount
+                + "\nLast rejection: " + behaviour.LastCollisionRejectionReason
+                + "\nCurrent physics step: "
+                + (collisionStep.HasStep ? collisionStep.FixedTime.ToString("F3") : "none")
+                + "\nStep reported / accepted / rejected: "
+                + collisionStep.ReportedCount + " / "
+                + collisionStep.AcceptedCount + " / "
+                + collisionStep.RejectedCount,
                 MessageType.Info);
+
+            int upstreamBudget = behaviour.UpstreamMaximumEventsPerFixedStep;
+            if (upstreamBudget > 0
+                && upstreamBudget < behaviour.MaximumCollisionsPerFixedStep)
+            {
+                EditorGUILayout.HelpBox(
+                    "RagdollCollisionHub is capped at " + upstreamBudget
+                    + " events per physics step, below this behaviour's budget of "
+                    + behaviour.MaximumCollisionsPerFixedStep
+                    + ". The upstream hub can therefore discard callbacks first.",
+                    MessageType.Warning);
+            }
 
             EditorGUI.BeginDisabledGroup(!behaviour.IsInitialized || !behaviour.IsActive);
             if (GUILayout.Button("Lose Balance"))
