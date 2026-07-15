@@ -16,6 +16,12 @@ namespace Hairibar.Ragdoll.Animation
         [Range(0f, 1f)] public float minimumPositionAuthority;
         [Range(0f, 1f)] public float minimumMappingAuthority;
         [Range(0f, 1f)] public float maximumMappingAuthority;
+        [Tooltip("Disable this muscle group's colliders only while BehaviourPuppet is in the balanced Puppet state.")]
+        public bool disableColliders;
+        [Tooltip("Shared PhysicMaterial used in Puppet and GetUp. Null preserves the collider's captured baseline material.")]
+        public PhysicMaterial puppetMaterial;
+        [Tooltip("Shared PhysicMaterial used while Unpinned. Null preserves the collider's captured baseline material.")]
+        public PhysicMaterial unpinnedMaterial;
         [Min(0f)] public float regainPositionAuthorityMultiplier;
         [Min(0.001f)] public float collisionResistance;
         [Min(0f)] public float knockOutDistance;
@@ -32,6 +38,9 @@ namespace Hairibar.Ragdoll.Animation
                     minimumPositionAuthority = 0f,
                     minimumMappingAuthority = 1f,
                     maximumMappingAuthority = 1f,
+                    disableColliders = false,
+                    puppetMaterial = null,
+                    unpinnedMaterial = null,
                     regainPositionAuthorityMultiplier = 1f,
                     collisionResistance = 1f,
                     knockOutDistance = 1f

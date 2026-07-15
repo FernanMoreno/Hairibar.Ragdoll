@@ -86,6 +86,9 @@ namespace Hairibar.Ragdoll.Animation
         RagdollPuppetUnmappedContactTracker kinematicContactTracker;
         RagdollPuppetKinematicActivationQueue kinematicActivationQueue;
         RagdollSimulationModeController simulationModeController;
+        RagdollPuppetColliderSurfaceController colliderSurfaceController;
+        RagdollSimulationMode lastObservedSurfaceSimulationMode;
+        bool hasObservedSurfaceSimulationMode;
         RagdollAnimator.AnimatedPair rootPair;
         RagdollBoneHandle lastKnockOutBone = RagdollBoneHandle.Invalid;
         RagdollGetUpOrientation getUpOrientation = RagdollGetUpOrientation.Unknown;
@@ -131,6 +134,22 @@ namespace Hairibar.Ragdoll.Animation
         public float AppliedRegainPinSpeed => IsInitialized
             ? Context.Muscles.PositionSuppressionRecoveryMultiplier
             : 1f;
+        public bool SurfaceBaselineCaptured => colliderSurfaceController != null
+            && colliderSurfaceController.BaselineCaptured;
+        public int SurfaceColliderCount => colliderSurfaceController != null
+            ? colliderSurfaceController.ColliderCount
+            : 0;
+        public int SurfaceDisabledColliderCount => colliderSurfaceController != null
+            ? colliderSurfaceController.DisabledColliderCount
+            : 0;
+        public int SurfaceMaterialOverrideCount => colliderSurfaceController != null
+            ? colliderSurfaceController.MaterialOverrideCount
+            : 0;
+        public RagdollPuppetColliderSurfaceState SurfaceState =>
+            colliderSurfaceController != null
+                && colliderSurfaceController.HasAppliedState
+                ? colliderSurfaceController.CurrentState
+                : RagdollPuppetColliderSurfaceState.Puppet;
         public RagdollPuppetNormalMode NormalMode => normalMode;
         public float MappingBlendSpeed => mappingBlendSpeed;
         public float NormalModeMappingWeight => normalModeMappingWeight;
@@ -346,6 +365,11 @@ namespace Hairibar.Ragdoll.Animation
                 EnsureKinematicSimulationController();
             }
 
+            colliderSurfaceController =
+                new RagdollPuppetColliderSurfaceController(
+                    Context.Bindings,
+                    Context.Muscles);
+            hasObservedSurfaceSimulationMode = false;
             stateMachine = new RagdollPuppetStateMachine();
             groundProbe = new RagdollGroundProbe(Context);
             collisionProcessor.Reset();
@@ -387,11 +411,20 @@ namespace Hairibar.Ragdoll.Animation
             lastKinematicActivationFixedTime = 0f;
             kinematicActivationCount = 0L;
             ApplyRecoveryConfiguration();
+            hasObservedSurfaceSimulationMode = false;
+            colliderSurfaceController.CaptureBaseline();
+            ObserveSurfaceSimulationMode();
+            ApplySurfaceConfiguration(true);
             ResetCollisionProcessing(true);
         }
 
         protected override void OnBehaviourDeactivated()
         {
+            if (colliderSurfaceController != null)
+            {
+                colliderSurfaceController.Restore();
+            }
+            hasObservedSurfaceSimulationMode = false;
             Context.Muscles.ClearPositionSuppressionRecoveryMultiplier();
             ReleaseKinematicSimulationMode(true);
 
@@ -467,6 +500,7 @@ namespace Hairibar.Ragdoll.Animation
         protected override void OnBehaviourFixedUpdate(float deltaTime)
         {
             ApplyRecoveryConfiguration();
+            ApplySurfaceConfiguration(false);
 
             unmappedContactActive = unmappedContactTracker.IsRecent(
                 Time.fixedTime,
@@ -504,6 +538,7 @@ namespace Hairibar.Ragdoll.Animation
                 if (stateMachine.Advance(deltaTime, blendToAnimationTime))
                 {
                     getUpOrientation = RagdollGetUpOrientation.Unknown;
+                    ApplySurfaceConfiguration(true);
                     RaiseStateChanged(
                         previous,
                         RagdollPuppetState.Puppet,
@@ -516,6 +551,7 @@ namespace Hairibar.Ragdoll.Animation
                 && TryBeginGetUp())
             {
                 UpdateKinematicSimulationMode();
+                ApplySurfaceConfiguration(false);
                 return;
             }
 
@@ -524,6 +560,7 @@ namespace Hairibar.Ragdoll.Animation
                 || targetAlignmentPending)
             {
                 UpdateKinematicSimulationMode();
+                ApplySurfaceConfiguration(false);
                 return;
             }
 
@@ -538,6 +575,7 @@ namespace Hairibar.Ragdoll.Animation
             }
 
             UpdateKinematicSimulationMode();
+            ApplySurfaceConfiguration(false);
         }
 
         protected override void OnModifyTargetPose(
@@ -1159,6 +1197,7 @@ namespace Hairibar.Ragdoll.Animation
                 return false;
             }
 
+            ApplySurfaceConfiguration(true);
             RaiseStateChanged(previous, next, reason);
             return true;
         }
@@ -1193,6 +1232,54 @@ namespace Hairibar.Ragdoll.Animation
 
             Context.Muscles.SetPositionSuppressionRecoveryMultiplier(
                 regainPinSpeed);
+        }
+
+        void ApplySurfaceConfiguration(bool force)
+        {
+            if (colliderSurfaceController == null
+                || !colliderSurfaceController.BaselineCaptured)
+            {
+                return;
+            }
+
+            if (simulationModeController
+                && simulationModeController.IsInitialized)
+            {
+                RagdollSimulationMode current =
+                    simulationModeController.CurrentMode;
+                RagdollSimulationMode target =
+                    simulationModeController.TargetMode;
+                if (current == RagdollSimulationMode.Disabled
+                    || target == RagdollSimulationMode.Disabled)
+                {
+                    return;
+                }
+
+                if (!hasObservedSurfaceSimulationMode
+                    || current != lastObservedSurfaceSimulationMode)
+                {
+                    force = true;
+                }
+
+                lastObservedSurfaceSimulationMode = current;
+                hasObservedSurfaceSimulationMode = true;
+            }
+
+            colliderSurfaceController.Apply(State, force);
+        }
+
+        void ObserveSurfaceSimulationMode()
+        {
+            if (!simulationModeController
+                || !simulationModeController.IsInitialized)
+            {
+                hasObservedSurfaceSimulationMode = false;
+                return;
+            }
+
+            lastObservedSurfaceSimulationMode =
+                simulationModeController.CurrentMode;
+            hasObservedSurfaceSimulationMode = true;
         }
 
         void NormalizeCollisionResponseConfiguration()
