@@ -18,6 +18,8 @@ namespace Hairibar.Ragdoll.Animation
                     return 1f;
                 case RagdollPuppetNormalMode.Unmapped:
                     return hasRecentContact ? 1f : 0f;
+                case RagdollPuppetNormalMode.Kinematic:
+                    return 1f;
                 default:
                     return 1f;
             }

@@ -18,11 +18,17 @@ namespace Hairibar.Ragdoll.Animation
         [SerializeField, Range(0f, 1f)] float unpinnedMuscleWeightMultiplier = 0.3f;
 
         [Header("Normal Mode")]
-        [Tooltip("Active keeps Puppet mapping authored. Unmapped removes Puppet-to-Target mapping until an accepted collision activates it.")]
+        [Tooltip("Active preserves authored simulation and mapping. Unmapped suppresses Puppet-to-Target mapping outside accepted contact. Kinematic delegates Rigidbody mode changes to RagdollSimulationModeController until an eligible accepted contact activates the Puppet.")]
         [SerializeField] RagdollPuppetNormalMode normalMode =
             RagdollPuppetNormalMode.Active;
         [Tooltip("Maximum mapping-weight change per second when entering or leaving Unmapped contact mapping. Zero pauses the blend.")]
         [SerializeField, Min(0f)] float mappingBlendSpeed = 10f;
+        [Tooltip("In Kinematic normal mode, contacts without a dynamic Rigidbody may activate the Puppet. Kinematic Rigidbodies are included in this category.")]
+        [SerializeField] bool activateOnStaticCollisions;
+        [Tooltip("In Kinematic normal mode, contacts with a non-kinematic Rigidbody may activate the Puppet.")]
+        [SerializeField] bool activateOnDynamicCollisions = true;
+        [Tooltip("Minimum accepted collision impulse magnitude required to leave Kinematic normal mode.")]
+        [SerializeField, Min(0f)] float activateOnImpulse = 0f;
 
         [Header("Collision Processing")]
         [Tooltip("Only collisions with GameObjects on these layers enter the Puppet behaviour pipeline.")]
@@ -70,6 +76,10 @@ namespace Hairibar.Ragdoll.Animation
         RagdollGroundProbe groundProbe;
         RagdollPuppetCollisionProcessor collisionProcessor;
         RagdollPuppetUnmappedContactTracker unmappedContactTracker;
+        // Kinematic mode needs contact memory filtered by its own activation policy.
+        RagdollPuppetUnmappedContactTracker kinematicContactTracker;
+        RagdollPuppetKinematicActivationQueue kinematicActivationQueue;
+        RagdollSimulationModeController simulationModeController;
         RagdollAnimator.AnimatedPair rootPair;
         RagdollBoneHandle lastKnockOutBone = RagdollBoneHandle.Invalid;
         RagdollGetUpOrientation getUpOrientation = RagdollGetUpOrientation.Unknown;
@@ -85,6 +95,15 @@ namespace Hairibar.Ragdoll.Animation
             RagdollPuppetCollisionResponseSnapshot.Empty;
         float normalModeMappingWeight = 1f;
         bool unmappedContactActive;
+        bool kinematicActivationContactActive;
+        bool kinematicModeManaged;
+        RagdollPuppetKinematicActivationSource lastKinematicActivationSource =
+            RagdollPuppetKinematicActivationSource.None;
+        float lastKinematicActivationImpulse;
+        float lastKinematicActivationFixedTime;
+        long kinematicActivationCount;
+
+        const float KinematicSuppressionEpsilon = 0.0001f;
 
         public RagdollPuppetState State => stateMachine != null
             ? stateMachine.State
@@ -104,6 +123,25 @@ namespace Hairibar.Ragdoll.Animation
         public float MappingBlendSpeed => mappingBlendSpeed;
         public float NormalModeMappingWeight => normalModeMappingWeight;
         public bool UnmappedContactActive => unmappedContactActive;
+        public bool ActivateOnStaticCollisions => activateOnStaticCollisions;
+        public bool ActivateOnDynamicCollisions => activateOnDynamicCollisions;
+        public float ActivateOnImpulse => activateOnImpulse;
+        public RagdollSimulationModeController SimulationModeController =>
+            simulationModeController;
+        public bool KinematicSimulationAvailable =>
+            simulationModeController && simulationModeController.IsInitialized;
+        public bool KinematicModeManaged => kinematicModeManaged;
+        public bool KinematicActivationContactActive =>
+            kinematicActivationContactActive;
+        public bool KinematicActivationPending =>
+            kinematicActivationQueue.HasRequest;
+        public RagdollPuppetKinematicActivationSource
+            LastKinematicActivationSource => lastKinematicActivationSource;
+        public float LastKinematicActivationImpulse =>
+            lastKinematicActivationImpulse;
+        public float LastKinematicActivationFixedTime =>
+            lastKinematicActivationFixedTime;
+        public long KinematicActivationCount => kinematicActivationCount;
         public LayerMask CollisionLayers => collisionLayers;
         public float CollisionThreshold => collisionThreshold;
         public int MaximumCollisionsPerFixedStep => maximumCollisionsPerFixedStep;
@@ -179,14 +217,36 @@ namespace Hairibar.Ragdoll.Animation
         public event Action<RagdollCollisionEvent, float> CollisionUnpinApplied;
 
         /// <summary>
-        /// Changes the balanced Puppet mapping policy. Immediate changes skip the configured
-        /// mapping blend, while non-immediate changes preserve the current blend position.
+        /// Raised after a queued Kinematic contact has safely switched the global
+        /// simulation controller back to Active.
+        /// </summary>
+        public event Action<RagdollPuppetKinematicActivationSource, float>
+            KinematicActivated;
+
+        /// <summary>
+        /// Changes the balanced Puppet policy. Immediate changes skip the mapping blend and
+        /// request the corresponding stable simulation mode immediately when possible.
         /// </summary>
         public void SetNormalMode(
             RagdollPuppetNormalMode mode,
             bool immediate = false)
         {
+            ValidateNormalMode(mode);
+            if (mode == RagdollPuppetNormalMode.Kinematic && IsInitialized)
+            {
+                EnsureKinematicSimulationController();
+            }
+
+            RagdollPuppetNormalMode previous = normalMode;
             normalMode = mode;
+            kinematicActivationQueue.Reset();
+
+            if (previous == RagdollPuppetNormalMode.Kinematic
+                && mode != RagdollPuppetNormalMode.Kinematic)
+            {
+                ReleaseKinematicSimulationMode(immediate);
+            }
+
             if (!immediate || !IsInitialized) return;
 
             normalModeMappingWeight =
@@ -194,6 +254,11 @@ namespace Hairibar.Ragdoll.Animation
                     normalMode,
                     State,
                     unmappedContactActive);
+
+            if (mode == RagdollPuppetNormalMode.Kinematic)
+            {
+                TryEnterKinematicSimulationMode(true);
+            }
         }
 
         public bool LoseBalance()
@@ -260,15 +325,29 @@ namespace Hairibar.Ragdoll.Animation
 
         protected override void OnBehaviourInitialize()
         {
+            ValidateNormalMode(normalMode);
             NormalizeCollisionResponseConfiguration();
+            simulationModeController =
+                Context.Animator.GetComponent<RagdollSimulationModeController>();
+            if (normalMode == RagdollPuppetNormalMode.Kinematic)
+            {
+                EnsureKinematicSimulationController();
+            }
+
             stateMachine = new RagdollPuppetStateMachine();
             groundProbe = new RagdollGroundProbe(Context);
             collisionProcessor.Reset();
             unmappedContactTracker.Reset();
-            normalModeMappingWeight = normalMode == RagdollPuppetNormalMode.Active
-                ? 1f
-                : 0f;
+            kinematicContactTracker.Reset();
+            kinematicActivationQueue.Reset();
+            normalModeMappingWeight =
+                RagdollPuppetNormalModeMath.ResolveMappingTarget(
+                    normalMode,
+                    RagdollPuppetState.Puppet,
+                    false);
             unmappedContactActive = false;
+            kinematicActivationContactActive = false;
+            kinematicModeManaged = false;
             rootPair = FindRootPair();
         }
 
@@ -280,15 +359,28 @@ namespace Hairibar.Ragdoll.Animation
             getUpOrientation = RagdollGetUpOrientation.Unknown;
             targetAlignmentPending = false;
             unmappedContactTracker.Reset();
+            kinematicContactTracker.Reset();
+            kinematicActivationQueue.Reset();
             unmappedContactActive = false;
-            normalModeMappingWeight = normalMode == RagdollPuppetNormalMode.Active
-                ? 1f
-                : 0f;
+            kinematicActivationContactActive = false;
+            kinematicModeManaged = false;
+            normalModeMappingWeight =
+                RagdollPuppetNormalModeMath.ResolveMappingTarget(
+                    normalMode,
+                    RagdollPuppetState.Puppet,
+                    false);
+            lastKinematicActivationSource =
+                RagdollPuppetKinematicActivationSource.None;
+            lastKinematicActivationImpulse = 0f;
+            lastKinematicActivationFixedTime = 0f;
+            kinematicActivationCount = 0L;
             ResetCollisionProcessing(true);
         }
 
         protected override void OnBehaviourDeactivated()
         {
+            ReleaseKinematicSimulationMode(true);
+
             if (stateMachine != null)
             {
                 stateMachine.Reset(RagdollPuppetState.Puppet);
@@ -303,7 +395,11 @@ namespace Hairibar.Ragdoll.Animation
             getUpOrientation = RagdollGetUpOrientation.Unknown;
             targetAlignmentPending = false;
             unmappedContactTracker.Reset();
+            kinematicContactTracker.Reset();
+            kinematicActivationQueue.Reset();
             unmappedContactActive = false;
+            kinematicActivationContactActive = false;
+            kinematicModeManaged = false;
             normalModeMappingWeight = 1f;
             ResetCollisionProcessing(false);
         }
@@ -334,6 +430,7 @@ namespace Hairibar.Ragdoll.Animation
             }
 
             unmappedContactTracker.Register(collisionEvent.FixedTime);
+            QueueKinematicActivation(collisionEvent);
             acceptedCollisionCount++;
             lastCollisionRejectionReason =
                 RagdollPuppetCollisionRejectionReason.None;
@@ -358,6 +455,12 @@ namespace Hairibar.Ragdoll.Animation
             unmappedContactActive = unmappedContactTracker.IsRecent(
                 Time.fixedTime,
                 Time.fixedDeltaTime);
+            kinematicActivationContactActive =
+                kinematicContactTracker.IsRecent(
+                    Time.fixedTime,
+                    Time.fixedDeltaTime);
+            ProcessPendingKinematicActivation();
+
             float normalModeTarget =
                 RagdollPuppetNormalModeMath.ResolveMappingTarget(
                     normalMode,
@@ -396,6 +499,7 @@ namespace Hairibar.Ragdoll.Animation
                 && State == RagdollPuppetState.Unpinned
                 && TryBeginGetUp())
             {
+                UpdateKinematicSimulationMode();
                 return;
             }
 
@@ -403,6 +507,7 @@ namespace Hairibar.Ragdoll.Animation
                 || State == RagdollPuppetState.Unpinned
                 || targetAlignmentPending)
             {
+                UpdateKinematicSimulationMode();
                 return;
             }
 
@@ -415,6 +520,8 @@ namespace Hairibar.Ragdoll.Animation
                         ? RagdollPuppetTransitionReason.GetUpInterrupted
                         : RagdollPuppetTransitionReason.TargetDrift);
             }
+
+            UpdateKinematicSimulationMode();
         }
 
         protected override void OnModifyTargetPose(
@@ -480,6 +587,315 @@ namespace Hairibar.Ragdoll.Animation
                 mappingWeights.RotationWeight,
                 maximumRotationMapping,
                 blend);
+        }
+
+        void QueueKinematicActivation(
+            RagdollCollisionEvent collisionEvent)
+        {
+            if (normalMode != RagdollPuppetNormalMode.Kinematic
+                || State != RagdollPuppetState.Puppet
+                || !KinematicSimulationAvailable
+                || !simulationModeController.isActiveAndEnabled)
+            {
+                return;
+            }
+
+            if (simulationModeController.CurrentMode
+                    == RagdollSimulationMode.Disabled
+                || simulationModeController.TargetMode
+                    == RagdollSimulationMode.Disabled)
+            {
+                return;
+            }
+
+            Rigidbody otherRigidbody = collisionEvent.OtherRigidbody;
+            RagdollPuppetKinematicActivationSource source =
+                RagdollPuppetKinematicActivationPolicy.ResolveSource(
+                    otherRigidbody != null,
+                    otherRigidbody != null && otherRigidbody.isKinematic);
+
+            if (!RagdollPuppetKinematicActivationPolicy.ShouldQueueActivation(
+                normalMode,
+                State,
+                source,
+                collisionEvent.ImpulseMagnitude,
+                activateOnImpulse,
+                activateOnStaticCollisions,
+                activateOnDynamicCollisions))
+            {
+                return;
+            }
+
+            // Eligible Stay callbacks keep an already activated Puppet Active until
+            // the contact stream ends. Activation itself is queued only while the
+            // simulation is Kinematic or is transitioning toward Kinematic.
+            kinematicContactTracker.Register(collisionEvent.FixedTime);
+            kinematicActivationContactActive = true;
+
+            if (simulationModeController.CurrentMode
+                    != RagdollSimulationMode.Kinematic
+                && simulationModeController.TargetMode
+                    != RagdollSimulationMode.Kinematic)
+            {
+                return;
+            }
+
+            kinematicActivationQueue.Request(
+                source,
+                collisionEvent.ImpulseMagnitude,
+                collisionEvent.FixedTime);
+        }
+
+        void ProcessPendingKinematicActivation()
+        {
+            RagdollPuppetKinematicActivationSource source;
+            float impulse;
+            float fixedTime;
+            if (!kinematicActivationQueue.TryConsume(
+                out source,
+                out impulse,
+                out fixedTime))
+            {
+                return;
+            }
+
+            if (normalMode != RagdollPuppetNormalMode.Kinematic
+                || State != RagdollPuppetState.Puppet
+                || !KinematicSimulationAvailable
+                || !simulationModeController.isActiveAndEnabled)
+            {
+                return;
+            }
+
+            if (simulationModeController.CurrentMode
+                    == RagdollSimulationMode.Disabled
+                || simulationModeController.TargetMode
+                    == RagdollSimulationMode.Disabled)
+            {
+                return;
+            }
+
+            if (simulationModeController.CurrentMode
+                    != RagdollSimulationMode.Kinematic
+                && simulationModeController.TargetMode
+                    != RagdollSimulationMode.Kinematic)
+            {
+                return;
+            }
+
+            if (!simulationModeController.SetModeImmediate(
+                RagdollSimulationMode.Active))
+            {
+                return;
+            }
+
+            kinematicModeManaged = true;
+            lastKinematicActivationSource = source;
+            lastKinematicActivationImpulse = impulse;
+            lastKinematicActivationFixedTime = fixedTime;
+            kinematicActivationCount++;
+            KinematicActivated?.Invoke(source, impulse);
+        }
+
+        void UpdateKinematicSimulationMode()
+        {
+            if (normalMode != RagdollPuppetNormalMode.Kinematic
+                || !KinematicSimulationAvailable
+                || !simulationModeController.isActiveAndEnabled)
+            {
+                return;
+            }
+
+            if (simulationModeController.CurrentMode
+                    == RagdollSimulationMode.Disabled
+                || simulationModeController.TargetMode
+                    == RagdollSimulationMode.Disabled)
+            {
+                return;
+            }
+
+            if (State != RagdollPuppetState.Puppet)
+            {
+                EnsureActiveForNonPuppetState();
+                return;
+            }
+
+            if (simulationModeController.CurrentMode
+                    == RagdollSimulationMode.Kinematic
+                && !simulationModeController.IsTransitioning)
+            {
+                return;
+            }
+
+            TryEnterKinematicSimulationMode(false);
+        }
+
+        bool TryEnterKinematicSimulationMode(bool immediate)
+        {
+            if (normalMode != RagdollPuppetNormalMode.Kinematic
+                || State != RagdollPuppetState.Puppet)
+            {
+                return false;
+            }
+
+            EnsureKinematicSimulationController();
+            if (!simulationModeController.IsInitialized
+                || !simulationModeController.isActiveAndEnabled)
+            {
+                return false;
+            }
+
+            if (simulationModeController.CurrentMode
+                    == RagdollSimulationMode.Disabled
+                || simulationModeController.TargetMode
+                    == RagdollSimulationMode.Disabled)
+            {
+                return false;
+            }
+
+            if (simulationModeController.CurrentMode
+                    == RagdollSimulationMode.Kinematic
+                && !simulationModeController.IsTransitioning)
+            {
+                return false;
+            }
+
+            if (!RagdollPuppetKinematicActivationPolicy
+                .ShouldReturnToKinematic(
+                    normalMode,
+                    State,
+                    simulationModeController.CurrentMode,
+                    simulationModeController.IsTransitioning,
+                    kinematicActivationContactActive,
+                    kinematicActivationQueue.HasRequest,
+                    AreTemporarySuppressionsRecovered()))
+            {
+                return false;
+            }
+
+            bool changed = immediate
+                ? simulationModeController.SetModeImmediate(
+                    RagdollSimulationMode.Kinematic)
+                : simulationModeController.SetMode(
+                    RagdollSimulationMode.Kinematic);
+            if (changed)
+            {
+                kinematicModeManaged = true;
+            }
+
+            return changed;
+        }
+
+        void EnsureActiveForNonPuppetState()
+        {
+            if (normalMode != RagdollPuppetNormalMode.Kinematic
+                || !KinematicSimulationAvailable
+                || !simulationModeController.isActiveAndEnabled)
+            {
+                return;
+            }
+
+            if (simulationModeController.CurrentMode
+                    == RagdollSimulationMode.Disabled
+                || simulationModeController.TargetMode
+                    == RagdollSimulationMode.Disabled)
+            {
+                return;
+            }
+
+            if (simulationModeController.CurrentMode
+                    == RagdollSimulationMode.Kinematic
+                || simulationModeController.TargetMode
+                    == RagdollSimulationMode.Kinematic)
+            {
+                if (simulationModeController.SetModeImmediate(
+                    RagdollSimulationMode.Active))
+                {
+                    kinematicModeManaged = true;
+                }
+            }
+        }
+
+        void ReleaseKinematicSimulationMode(bool immediate)
+        {
+            kinematicContactTracker.Reset();
+            kinematicActivationContactActive = false;
+            kinematicActivationQueue.Reset();
+            if (!kinematicModeManaged)
+            {
+                return;
+            }
+
+            if (!simulationModeController
+                || !simulationModeController.IsInitialized)
+            {
+                kinematicModeManaged = false;
+                return;
+            }
+
+            if (simulationModeController.CurrentMode
+                    == RagdollSimulationMode.Kinematic
+                || simulationModeController.TargetMode
+                    == RagdollSimulationMode.Kinematic)
+            {
+                if (immediate)
+                {
+                    simulationModeController.SetModeImmediate(
+                        RagdollSimulationMode.Active);
+                }
+                else
+                {
+                    simulationModeController.SetMode(
+                        RagdollSimulationMode.Active);
+                }
+            }
+
+            kinematicModeManaged = false;
+        }
+
+        bool AreTemporarySuppressionsRecovered()
+        {
+            for (int index = 0; index < Context.Pairs.Count; index++)
+            {
+                MuscleRuntimeState state =
+                    Context.Muscles.GetState(Context.Pairs[index].Handle);
+                if (state.PositionSuppression > KinematicSuppressionEpsilon
+                    || state.RotationSuppression > KinematicSuppressionEpsilon)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        void EnsureKinematicSimulationController()
+        {
+            if (simulationModeController && simulationModeController.enabled)
+            {
+                return;
+            }
+
+            throw new InvalidOperationException(
+                "RagdollPuppetBehaviour NormalMode.Kinematic requires an enabled "
+                + "RagdollSimulationModeController beside RagdollAnimator before "
+                + "RagdollAnimator.Start initializes its modifiers.");
+        }
+
+        static void ValidateNormalMode(RagdollPuppetNormalMode mode)
+        {
+            switch (mode)
+            {
+                case RagdollPuppetNormalMode.Active:
+                case RagdollPuppetNormalMode.Unmapped:
+                case RagdollPuppetNormalMode.Kinematic:
+                    return;
+                default:
+                    throw new ArgumentOutOfRangeException(
+                        nameof(mode),
+                        mode,
+                        "Unsupported RagdollPuppetNormalMode value.");
+            }
         }
 
         float ApplyCollisionUnpin(
@@ -692,6 +1108,7 @@ namespace Hairibar.Ragdoll.Animation
                 return false;
             }
 
+            EnsureActiveForNonPuppetState();
             if (!TransitionTo(RagdollPuppetState.Unpinned, reason))
             {
                 return false;
@@ -788,6 +1205,10 @@ namespace Hairibar.Ragdoll.Animation
                 || float.IsInfinity(mappingBlendSpeed)
                 ? 0f
                 : Mathf.Max(0f, mappingBlendSpeed);
+            activateOnImpulse = float.IsNaN(activateOnImpulse)
+                || float.IsInfinity(activateOnImpulse)
+                ? 0f
+                : Mathf.Max(0f, activateOnImpulse);
             collisionThreshold = float.IsNaN(collisionThreshold)
                 || float.IsInfinity(collisionThreshold)
                 ? 0f

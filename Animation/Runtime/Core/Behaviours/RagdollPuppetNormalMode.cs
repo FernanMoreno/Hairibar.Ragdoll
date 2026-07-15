@@ -10,6 +10,9 @@ namespace Hairibar.Ragdoll.Animation
         Active,
 
         /// <summary>Maps the physical Puppet to the Target only while accepted contact is recent.</summary>
-        Unmapped
+        Unmapped,
+
+        /// <summary>Keeps the Puppet kinematic until an accepted activation contact wakes it.</summary>
+        Kinematic
     }
 }

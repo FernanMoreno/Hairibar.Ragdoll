@@ -32,6 +32,17 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 Is.EqualTo(1f));
         }
 
+        [Test]
+        public void KinematicModeKeepsFullMappingInPuppet()
+        {
+            Assert.That(
+                RagdollPuppetNormalModeMath.ResolveMappingTarget(
+                    RagdollPuppetNormalMode.Kinematic,
+                    RagdollPuppetState.Puppet,
+                    false),
+                Is.EqualTo(1f));
+        }
+
         [TestCase(RagdollPuppetState.Unpinned)]
         [TestCase(RagdollPuppetState.GetUp)]
         public void NonPuppetStatesIgnoreNormalMode(

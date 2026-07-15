@@ -20,9 +20,32 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     "Configure Ground Layers so they include walkable geometry. "
                     + "Collision Layers filters contacts, Collision Threshold is squared impulse, and Max Collisions is the accepted-event budget. "
                     + "Collision Resistance can be constant or evaluated from sampled Target speed; layer rules use first-match order. "
-                    + "Normal Mode Unmapped suppresses Puppet mapping until an accepted collision and Mapping Blend Speed controls both directions. "
+                    + "Normal Mode Unmapped suppresses mapping without contact. Kinematic delegates global Rigidbody mode changes to RagdollSimulationModeController and activates only from accepted contacts that satisfy its source and impulse filters. "
                     + "Body Front Axis must point out of the chest and Body Up Axis must match character up while standing.",
                     MessageType.Info);
+
+                if (behaviour.NormalMode == RagdollPuppetNormalMode.Kinematic)
+                {
+                    RagdollBehaviourController controller =
+                        behaviour.GetComponentInParent<RagdollBehaviourController>();
+                    RagdollSimulationModeController simulation =
+                        controller
+                            ? controller.GetComponent<RagdollSimulationModeController>()
+                            : null;
+                    if (!simulation)
+                    {
+                        EditorGUILayout.HelpBox(
+                            "NormalMode.Kinematic requires RagdollSimulationModeController on the same GameObject as RagdollAnimator and RagdollBehaviourController. Add and enable it before entering Play Mode so RagdollAnimator can initialize the modifier.",
+                            MessageType.Error);
+                    }
+                    else if (!simulation.enabled)
+                    {
+                        EditorGUILayout.HelpBox(
+                            "RagdollSimulationModeController is disabled. Enable it before entering Play Mode.",
+                            MessageType.Error);
+                    }
+                }
+
                 return;
             }
 
@@ -65,7 +88,23 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 + "\nMatched layer rule: "
                 + (collisionResponse.HasResponse
                     ? collisionResponse.LayerRuleIndex.ToString()
-                    : "none"),
+                    : "none")
+                + "\nSimulation mode / target: "
+                + (behaviour.SimulationModeController
+                    ? behaviour.SimulationModeController.CurrentMode + " / "
+                        + behaviour.SimulationModeController.TargetMode
+                    : "missing")
+                + "\nKinematic managed / pending / contact: "
+                + behaviour.KinematicModeManaged + " / "
+                + behaviour.KinematicActivationPending + " / "
+                + behaviour.KinematicActivationContactActive
+                + "\nLast Kinematic activation: "
+                + (behaviour.KinematicActivationCount > 0
+                    ? behaviour.LastKinematicActivationSource + " @ "
+                        + behaviour.LastKinematicActivationImpulse.ToString("F2")
+                    : "none")
+                + "\nKinematic activation count: "
+                + behaviour.KinematicActivationCount,
                 MessageType.Info);
 
             int upstreamBudget = behaviour.UpstreamMaximumEventsPerFixedStep;
@@ -92,6 +131,31 @@ namespace Hairibar.Ragdoll.Animation.Editor
             }
 
             EditorGUI.BeginDisabledGroup(!behaviour.IsInitialized || !behaviour.IsActive);
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button("Normal: Active"))
+            {
+                behaviour.SetNormalMode(
+                    RagdollPuppetNormalMode.Active,
+                    true);
+            }
+
+            if (GUILayout.Button("Normal: Unmapped"))
+            {
+                behaviour.SetNormalMode(
+                    RagdollPuppetNormalMode.Unmapped,
+                    true);
+            }
+
+            EditorGUI.BeginDisabledGroup(!behaviour.KinematicSimulationAvailable);
+            if (GUILayout.Button("Normal: Kinematic"))
+            {
+                behaviour.SetNormalMode(
+                    RagdollPuppetNormalMode.Kinematic,
+                    true);
+            }
+            EditorGUI.EndDisabledGroup();
+            EditorGUILayout.EndHorizontal();
+
             if (GUILayout.Button("Lose Balance"))
             {
                 behaviour.LoseBalance();
