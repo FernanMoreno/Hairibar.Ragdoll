@@ -97,7 +97,44 @@ namespace Hairibar.Ragdoll
 
         #region References
         RagdollDefinitionBindings bindings;
+        bool hasRuntimeSolverOverride;
+        RagdollSolverQualitySettings runtimeSolverOverride;
         #endregion
+
+        /// <summary>True while a runtime quality controller owns solver values.</summary>
+        public bool HasRuntimeSolverOverride => hasRuntimeSolverOverride;
+
+        /// <summary>
+        /// Applies a reversible runtime override for solver iterations, velocity limits,
+        /// interpolation and collision detection. Authored values remain unchanged.
+        /// </summary>
+        public void SetRuntimeSolverOverride(
+            RagdollSolverQualitySettings solverSettings)
+        {
+            runtimeSolverOverride = solverSettings.Sanitized();
+            hasRuntimeSolverOverride = true;
+            ReapplyRigidbodySettings();
+        }
+
+        /// <summary>Restores the solver values authored on this component.</summary>
+        public bool ClearRuntimeSolverOverride()
+        {
+            if (!hasRuntimeSolverOverride) return false;
+
+            hasRuntimeSolverOverride = false;
+            ReapplyRigidbodySettings();
+            return true;
+        }
+
+        /// <summary>
+        /// Reapplies only Rigidbody settings. This avoids rebuilding limits or resetting
+        /// inertia tensors when simulation modes and quality tiers change at runtime.
+        /// </summary>
+        public void ReapplyRigidbodySettings()
+        {
+            if (!bindings || !bindings.IsInitialized) return;
+            ApplyRigidbodySettings(false);
+        }
 
         /// <summary>
         /// Returns the scalar used to convert requested angular acceleration into the
@@ -127,7 +164,7 @@ namespace Hairibar.Ragdoll
 
             ApplyLimitSettings();
             ApplyJointSettings();
-            ApplyRigidbodySettings();
+            ApplyRigidbodySettings(true);
         }
 
         void ApplyLimitSettings()
@@ -194,8 +231,11 @@ namespace Hairibar.Ragdoll
             }
         }
 
-        void ApplyRigidbodySettings()
+        void ApplyRigidbodySettings(bool applyInertiaTensor)
         {
+            RagdollSolverQualitySettings solverSettings =
+                GetEffectiveSolverQualitySettings();
+
             foreach (RagdollBone bone in bindings.Bones)
             {
                 Rigidbody rb = bone.Rigidbody;
@@ -203,12 +243,18 @@ namespace Hairibar.Ragdoll
                 rb.useGravity = useGravity;
                 rb.drag = drag;
                 rb.angularDrag = angularDrag;
-                rb.interpolation = interpolation;
+                rb.interpolation = solverSettings.interpolation;
 
-                rb.solverIterations = Mathf.Max(1, solverIterations);
-                ApplyAdvancedRigidbodySettings(rb);
+                rb.solverIterations = solverSettings.solverIterations;
+                ApplyAdvancedRigidbodySettings(
+                    rb,
+                    solverSettings,
+                    applyInertiaTensor);
 
-                SetCollisionDetectionMode(rb, collisionDetectionMode, rb.isKinematic);
+                SetCollisionDetectionMode(
+                    rb,
+                    solverSettings.collisionDetectionMode,
+                    rb.isKinematic);
 
                 foreach (Collider collider in bone.Colliders)
                 {
@@ -217,16 +263,21 @@ namespace Hairibar.Ragdoll
             }
         }
 
-        void ApplyAdvancedRigidbodySettings(Rigidbody rb)
+        void ApplyAdvancedRigidbodySettings(
+            Rigidbody rb,
+            RagdollSolverQualitySettings solverSettings,
+            bool applyInertiaTensor)
         {
-            rb.solverVelocityIterations = Mathf.Max(1, solverVelocityIterations);
-            rb.maxAngularVelocity = Mathf.Max(0f, maxAngularVelocity);
-            rb.maxDepenetrationVelocity = Mathf.Max(0f, maxDepenetrationVelocity);
+            rb.solverVelocityIterations = solverSettings.solverVelocityIterations;
+            rb.maxAngularVelocity = solverSettings.maxAngularVelocity;
+            rb.maxDepenetrationVelocity = solverSettings.maxDepenetrationVelocity;
 
             if (overrideSleepThreshold)
             {
                 rb.sleepThreshold = Mathf.Max(0f, sleepThreshold);
             }
+
+            if (!applyInertiaTensor) return;
 
             switch (inertiaTensorMode)
             {
@@ -247,6 +298,13 @@ namespace Hairibar.Ragdoll
                         inertiaTensorMode,
                         "Unsupported ragdoll inertia tensor mode.");
             }
+        }
+
+        RagdollSolverQualitySettings GetEffectiveSolverQualitySettings()
+        {
+            return hasRuntimeSolverOverride
+                ? runtimeSolverOverride
+                : RagdollSolverQualitySettings.FromAuthored(this);
         }
 
         void SetCollisionDetectionMode(Rigidbody rb, CollisionDetectionMode mode, bool isKinematic)
@@ -274,6 +332,9 @@ namespace Hairibar.Ragdoll
             if (!bindings || !bindings.IsInitialized) return;
             if (!PowerProfile || !PowerProfile.IsValid) return;
 
+            CollisionDetectionMode effectiveCollisionMode =
+                GetEffectiveSolverQualitySettings().collisionDetectionMode;
+
             foreach (RagdollBone bone in bindings.Bones)
             {
                 PowerSetting powerSetting = _powerProfile.GetBoneSetting(bone.Name);
@@ -281,13 +342,19 @@ namespace Hairibar.Ragdoll
                 switch (powerSetting)
                 {
                     case PowerSetting.Kinematic:
-                        SetCollisionDetectionMode(bone.Rigidbody, collisionDetectionMode, true);
+                        SetCollisionDetectionMode(
+                            bone.Rigidbody,
+                            effectiveCollisionMode,
+                            true);
                         bone.Rigidbody.isKinematic = true;
                         break;
                     case PowerSetting.Powered:
                     case PowerSetting.Unpowered:
                         bone.Rigidbody.isKinematic = false;
-                        SetCollisionDetectionMode(bone.Rigidbody, collisionDetectionMode, false);
+                        SetCollisionDetectionMode(
+                            bone.Rigidbody,
+                            effectiveCollisionMode,
+                            false);
                         break;
                 }
 

@@ -87,6 +87,7 @@ namespace Hairibar.Ragdoll.Animation
 
         RagdollAnimator animator;
         RagdollDefinitionBindings bindings;
+        RagdollSettings ragdollSettings;
         BoneSnapshot[] boneSnapshots;
         bool isInitialized;
         bool hasStarted;
@@ -136,6 +137,7 @@ namespace Hairibar.Ragdoll.Animation
                     "RagdollSimulationModeController requires RagdollDefinitionBindings.");
             }
 
+            ragdollSettings = bindings.GetComponent<RagdollSettings>();
             ValidatePuppetRootOwnership();
             CreateBoneSnapshots(pairs);
 
@@ -445,6 +447,8 @@ namespace Hairibar.Ragdoll.Animation
             {
                 suppressPowerSettingEvents = false;
             }
+
+            ReapplyRigidbodySettings();
         }
 
         void RestoreActivePowerSettings()
@@ -464,6 +468,8 @@ namespace Hairibar.Ragdoll.Animation
             {
                 suppressPowerSettingEvents = false;
             }
+
+            ReapplyRigidbodySettings();
         }
 
         void CaptureActiveConfiguration()
@@ -556,6 +562,16 @@ namespace Hairibar.Ragdoll.Animation
             finally
             {
                 suppressPowerSettingEvents = false;
+            }
+
+            ReapplyRigidbodySettings();
+        }
+
+        void ReapplyRigidbodySettings()
+        {
+            if (ragdollSettings)
+            {
+                ragdollSettings.ReapplyRigidbodySettings();
             }
         }
 
