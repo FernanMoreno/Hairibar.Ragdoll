@@ -21,6 +21,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     + "Collision Layers filters contacts, Collision Threshold is squared impulse, and Max Collisions is the accepted-event budget. "
                     + "Collision Resistance can be constant or evaluated from sampled Target speed; layer rules use first-match order. "
                     + "Regain Pin Speed composes with the muscle-controller base rate and semantic group multipliers; Muscle Weight Relative To Pin affects rotational authority only in Puppet state. "
+                    + "Max Rigidbody Velocity clamps physical and sampled Target velocity on the transition to Unpinned; Unpinned Muscle Knockout controls whether zero-configured-pin muscles may knock out the whole Puppet. "
                     + "Muscle-profile surface settings can disable colliders only in Puppet and assign shared PhysicMaterials for Puppet/GetUp or Unpinned; the captured baseline is restored when the behaviour deactivates. "
                     + "Normal Mode Unmapped suppresses mapping without contact. Kinematic delegates global Rigidbody mode changes to RagdollSimulationModeController and activates only from accepted contacts that satisfy its source and impulse filters. "
                     + "Body Front Axis must point out of the chest and Body Up Axis must match character up while standing.",
@@ -67,6 +68,10 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 + behaviour.AppliedRegainPinSpeed.ToString("F2")
                 + "\nMuscle relative to pin: "
                 + behaviour.MuscleWeightRelativeToPinWeight.ToString("P0")
+                + "\nMax Rigidbody velocity: "
+                + behaviour.MaxRigidbodyVelocity.ToString("F2")
+                + "\nZero-configured-pin knockout: "
+                + behaviour.UnpinnedMuscleKnockout
                 + "\nSurface state / baseline: "
                 + behaviour.SurfaceState + " / "
                 + behaviour.SurfaceBaselineCaptured

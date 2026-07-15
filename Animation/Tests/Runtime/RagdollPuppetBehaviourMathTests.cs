@@ -1,4 +1,5 @@
 ﻿using NUnit.Framework;
+using UnityEngine;
 
 namespace Hairibar.Ragdoll.Animation.Tests
 {
@@ -63,6 +64,116 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 RagdollPuppetBehaviourMath.ShouldLoseBalance(
                     1.1f, 1f, 0.8f, 0.6f, 1f),
                 Is.False);
+        }
+
+
+        [Test]
+        public void ConfiguredPinWeight_ComposesAuthoredMasterAndPersistentWeights()
+        {
+            float configured =
+                RagdollPuppetBehaviourMath.ResolveConfiguredPinWeight(
+                    0.5f,
+                    0.8f,
+                    0.25f);
+
+            Assert.That(configured, Is.EqualTo(0.1f).Within(0.0001f));
+        }
+
+        [Test]
+        public void EffectivePinWeight_ComposesSuppressionMinimumAndPuppetState()
+        {
+            float effective =
+                RagdollPuppetBehaviourMath.ResolveEffectivePinWeight(
+                    0.8f,
+                    0.75f,
+                    0.5f,
+                    0.25f);
+
+            Assert.That(effective, Is.EqualTo(0.1f).Within(0.0001f));
+        }
+
+        [Test]
+        public void ZeroConfiguredPin_IsIgnoredWhenUnpinnedMuscleKnockoutIsDisabled()
+        {
+            bool shouldLoseBalance =
+                RagdollPuppetBehaviourMath.ShouldLoseBalance(
+                    2f,
+                    1f,
+                    0f,
+                    0f,
+                    1f,
+                    1f,
+                    false);
+
+            Assert.That(shouldLoseBalance, Is.False);
+        }
+
+        [Test]
+        public void ZeroConfiguredPin_CanKnockOutWhenOptionIsEnabled()
+        {
+            bool shouldLoseBalance =
+                RagdollPuppetBehaviourMath.ShouldLoseBalance(
+                    2f,
+                    1f,
+                    0f,
+                    0f,
+                    1f,
+                    1f,
+                    true);
+
+            Assert.That(shouldLoseBalance, Is.True);
+        }
+
+        [Test]
+        public void TemporaryFullSuppression_DoesNotBecomeAZeroConfiguredPin()
+        {
+            bool shouldLoseBalance =
+                RagdollPuppetBehaviourMath.ShouldLoseBalance(
+                    2f,
+                    1f,
+                    0f,
+                    1f,
+                    1f,
+                    1f,
+                    false);
+
+            Assert.That(shouldLoseBalance, Is.True);
+        }
+
+        [Test]
+        public void VelocityLimit_ClampsMagnitudeAndPreservesDirection()
+        {
+            Vector3 original = new Vector3(3f, 4f, 0f);
+            Vector3 limited =
+                RagdollPuppetBehaviourMath.LimitVelocity(original, 2f);
+
+            Assert.That(limited.magnitude, Is.EqualTo(2f).Within(0.0001f));
+            Assert.That(
+                Vector3.Dot(original.normalized, limited.normalized),
+                Is.EqualTo(1f).Within(0.0001f));
+        }
+
+        [Test]
+        public void VelocityLimit_ZeroStopsLinearVelocity()
+        {
+            Vector3 limited =
+                RagdollPuppetBehaviourMath.LimitVelocity(
+                    new Vector3(3f, 4f, 0f),
+                    0f);
+
+            Assert.That(limited, Is.EqualTo(Vector3.zero));
+        }
+
+        [Test]
+        public void VelocityLimit_InfinityLeavesVelocityUntouched()
+        {
+            Vector3 original = new Vector3(3f, 4f, 5f);
+            Vector3 limited =
+                RagdollPuppetBehaviourMath.LimitVelocity(
+                    original,
+                    Mathf.Infinity);
+
+            Assert.That(limited, Is.EqualTo(original));
         }
 
         [Test]

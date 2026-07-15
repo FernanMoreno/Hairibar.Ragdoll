@@ -16,6 +16,10 @@ namespace Hairibar.Ragdoll.Animation
         [SerializeField] bool loseBalanceOnTargetDrift = true;
         [SerializeField, Range(0f, 1f)] float pinWeightThreshold = 1f;
         [SerializeField, Range(0f, 1f)] float unpinnedMuscleWeightMultiplier = 0.3f;
+        [Tooltip("Limits Puppet Rigidbody velocity and sampled Target velocity when entering Unpinned, preventing stored pin forces from launching the ragdoll.")]
+        [SerializeField] float maxRigidbodyVelocity = 10f;
+        [Tooltip("When disabled, muscles whose configured pin weight is zero cannot trigger a global loss of balance.")]
+        [SerializeField] bool unpinnedMuscleKnockout = true;
 
         [Header("Recovery")]
         [Tooltip("Global multiplier for temporary pin-authority recovery. It composes with the RagdollMuscleController base rate and each semantic group's Regain Position Authority Multiplier.")]
@@ -131,6 +135,16 @@ namespace Hairibar.Ragdoll.Animation
         public float RegainPinSpeed => regainPinSpeed;
         public float MuscleWeightRelativeToPinWeight =>
             muscleWeightRelativeToPinWeight;
+        public float MaxRigidbodyVelocity
+        {
+            get => maxRigidbodyVelocity;
+            set => maxRigidbodyVelocity = value;
+        }
+        public bool UnpinnedMuscleKnockout
+        {
+            get => unpinnedMuscleKnockout;
+            set => unpinnedMuscleKnockout = value;
+        }
         public float AppliedRegainPinSpeed => IsInitialized
             ? Context.Muscles.PositionSuppressionRecoveryMultiplier
             : 1f;
@@ -1133,6 +1147,12 @@ namespace Hairibar.Ragdoll.Animation
                     ? Mathf.Max(0f, getUpKnockOutDistanceMultiplier)
                     : 1f;
 
+            float statePositionAuthority =
+                RagdollPuppetStateWeights.Evaluate(
+                    State,
+                    GetUpProgress,
+                    unpinnedMuscleWeightMultiplier).PositionAuthority;
+
             for (int index = 0; index < Context.Pairs.Count; index++)
             {
                 RagdollAnimator.AnimatedPair pair = Context.Pairs[index];
@@ -1145,12 +1165,28 @@ namespace Hairibar.Ragdoll.Animation
                     pair.RagdollBone.Transform.position,
                     pair.currentPose.worldPosition);
 
+                BoneProfile authoredProfile =
+                    Context.Animator.GetBoneProfile(pair.Name);
+                float configuredPinWeight =
+                    RagdollPuppetBehaviourMath.ResolveConfiguredPinWeight(
+                        authoredProfile.positionAlpha,
+                        Context.Animator.MasterAlpha,
+                        muscleState.PositionAuthority);
+                float effectivePinWeight =
+                    RagdollPuppetBehaviourMath.ResolveEffectivePinWeight(
+                        configuredPinWeight,
+                        muscleState.PositionSuppression,
+                        settings.minimumPositionAuthority,
+                        statePositionAuthority);
+
                 if (!RagdollPuppetBehaviourMath.ShouldLoseBalance(
                     targetDistance,
                     settings.knockOutDistance,
-                    muscleState.EffectivePositionAuthority,
+                    effectivePinWeight,
+                    configuredPinWeight,
                     pinWeightThreshold,
-                    stateDistanceMultiplier))
+                    stateDistanceMultiplier,
+                    unpinnedMuscleKnockout))
                 {
                     continue;
                 }
@@ -1197,9 +1233,37 @@ namespace Hairibar.Ragdoll.Animation
                 return false;
             }
 
+            if (next == RagdollPuppetState.Unpinned)
+            {
+                LimitVelocitiesForUnpinnedState();
+            }
+
             ApplySurfaceConfiguration(true);
             RaiseStateChanged(previous, next, reason);
             return true;
+        }
+
+        void LimitVelocitiesForUnpinnedState()
+        {
+            if (maxRigidbodyVelocity == Mathf.Infinity) return;
+
+            for (int index = 0; index < Context.Pairs.Count; index++)
+            {
+                RagdollAnimator.AnimatedPair pair = Context.Pairs[index];
+                Rigidbody rigidbody = pair.RagdollBone.Rigidbody;
+                if (rigidbody)
+                {
+                    rigidbody.velocity =
+                        RagdollPuppetBehaviourMath.LimitVelocity(
+                            rigidbody.velocity,
+                            maxRigidbodyVelocity);
+                }
+
+                pair.poseLinearVelocity =
+                    RagdollPuppetBehaviourMath.LimitVelocity(
+                        pair.poseLinearVelocity,
+                        maxRigidbodyVelocity);
+            }
         }
 
         void RaiseStateChanged(

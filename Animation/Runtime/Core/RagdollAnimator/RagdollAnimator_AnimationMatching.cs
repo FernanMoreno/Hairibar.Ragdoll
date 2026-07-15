@@ -60,7 +60,7 @@ namespace Hairibar.Ragdoll.Animation
         }
 
 
-        BoneProfile GetBoneProfile(BoneName bone)
+        internal BoneProfile GetBoneProfile(BoneName bone)
         {
             bool isRoot = Bindings.Definition.IsRoot(bone);
 
