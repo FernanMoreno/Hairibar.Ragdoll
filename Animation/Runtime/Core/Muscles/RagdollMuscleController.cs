@@ -191,15 +191,7 @@ namespace Hairibar.Ragdoll.Animation
 
         public void ApplyImpact(RagdollBoneHandle source, MuscleImpactSettings settings)
         {
-            EnsureInitialized();
-
-            RagdollBoneTopology topology = bindings.Topology;
-            if (!topology.Contains(source))
-            {
-                throw new ArgumentException(
-                    "The supplied impact source does not belong to this muscle controller.",
-                    nameof(source));
-            }
+            ValidateImpactSource(source);
 
             RagdollMuscleBehaviourSettings sourceSettings =
                 GetBehaviourSettings(source.Index);
@@ -208,7 +200,35 @@ namespace Hairibar.Ragdoll.Animation
                 : sourceSettings.ScaleCollisionSuppression(
                     settings.positionSuppression);
 
+            ApplyImpactCore(source, settings, sourcePositionSuppression);
+        }
+
+        /// <summary>
+        /// Applies an impact whose source suppression has already been resolved against
+        /// global, layer and muscle resistance. Used internally by BehaviourPuppet so the
+        /// source muscle resistance is not applied twice.
+        /// </summary>
+        internal void ApplyResolvedImpact(
+            RagdollBoneHandle source,
+            MuscleImpactSettings settings)
+        {
+            ValidateImpactSource(source);
+            ApplyImpactCore(
+                source,
+                settings,
+                Mathf.Clamp01(settings.positionSuppression));
+        }
+
+        void ApplyImpactCore(
+            RagdollBoneHandle source,
+            MuscleImpactSettings settings,
+            float sourcePositionSuppression)
+        {
+            RagdollBoneTopology topology = bindings.Topology;
+            RagdollMuscleBehaviourSettings sourceSettings =
+                GetBehaviourSettings(source.Index);
             float now = CurrentTime;
+
             for (int index = 0; index < states.Length; index++)
             {
                 RagdollBoneHandle affected = bindings.GetHandleAt(index);
@@ -236,6 +256,17 @@ namespace Hairibar.Ragdoll.Animation
                 states[index].AccumulateSuppression(
                     positionSuppression,
                     rotationSuppression);
+            }
+        }
+
+        void ValidateImpactSource(RagdollBoneHandle source)
+        {
+            EnsureInitialized();
+            if (!bindings.Topology.Contains(source))
+            {
+                throw new ArgumentException(
+                    "The supplied impact source does not belong to this muscle controller.",
+                    nameof(source));
             }
         }
 

@@ -18,7 +18,8 @@ namespace Hairibar.Ragdoll.Animation.Editor
             {
                 EditorGUILayout.HelpBox(
                     "Configure Ground Layers so they include walkable geometry. "
-                    + "Collision Layers filters BehaviourPuppet contacts, Collision Threshold is squared impulse, and Max Collisions is the accepted-event budget for one physics timestamp. "
+                    + "Collision Layers filters contacts, Collision Threshold is squared impulse, and Max Collisions is the accepted-event budget. "
+                    + "Collision Resistance can be constant or evaluated from sampled Target speed; layer rules use first-match order. "
                     + "Body Front Axis must point out of the chest and Body Up Axis must match character up while standing.",
                     MessageType.Info);
                 return;
@@ -26,6 +27,8 @@ namespace Hairibar.Ragdoll.Animation.Editor
 
             RagdollGroundingSnapshot grounding = behaviour.Grounding;
             RagdollPuppetCollisionStepSnapshot collisionStep = behaviour.CollisionStep;
+            RagdollPuppetCollisionResponseSnapshot collisionResponse =
+                behaviour.LastCollisionResponse;
             EditorGUILayout.HelpBox(
                 "State: " + behaviour.State
                 + "\nState time: " + behaviour.StateElapsedTime.ToString("F2")
@@ -43,7 +46,20 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 + "\nStep reported / accepted / rejected: "
                 + collisionStep.ReportedCount + " / "
                 + collisionStep.AcceptedCount + " / "
-                + collisionStep.RejectedCount,
+                + collisionStep.RejectedCount
+                + "\nLast unpin suppression: "
+                + (collisionResponse.HasResponse
+                    ? collisionResponse.PositionSuppression.ToString("P0")
+                    : "none")
+                + "\nTarget speed / effective resistance: "
+                + (collisionResponse.HasResponse
+                    ? collisionResponse.TargetSpeed.ToString("F2") + " / "
+                        + collisionResponse.EffectiveResistance.ToString("F2")
+                    : "none")
+                + "\nMatched layer rule: "
+                + (collisionResponse.HasResponse
+                    ? collisionResponse.LayerRuleIndex.ToString()
+                    : "none"),
                 MessageType.Info);
 
             int upstreamBudget = behaviour.UpstreamMaximumEventsPerFixedStep;
@@ -55,6 +71,17 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     + " events per physics step, below this behaviour's budget of "
                     + behaviour.MaximumCollisionsPerFixedStep
                     + ". The upstream hub can therefore discard callbacks first.",
+                    MessageType.Warning);
+            }
+
+            RagdollCollisionReaction collisionReaction =
+                behaviour.GetComponent<RagdollCollisionReaction>();
+            if (collisionReaction
+                && collisionReaction.enabled
+                && collisionReaction.softenPositionMatching)
+            {
+                EditorGUILayout.HelpBox(
+                    "RagdollCollisionReaction is also applying position suppression. Disable its position response when RagdollPuppetBehaviour owns collision unpinning, otherwise impacts will be accumulated twice.",
                     MessageType.Warning);
             }
 

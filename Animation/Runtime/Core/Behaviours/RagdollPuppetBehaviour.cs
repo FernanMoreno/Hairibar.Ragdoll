@@ -24,6 +24,13 @@ namespace Hairibar.Ragdoll.Animation
         [SerializeField, Min(0f)] float collisionThreshold = 0f;
         [Tooltip("Maximum number of valid Enter/Stay collisions accepted during one physics timestamp. Layer and threshold rejections do not consume this budget.")]
         [SerializeField, Range(1, 30)] int maximumCollisionsPerFixedStep = 30;
+        [Tooltip("Global collision resistance. A Target-speed curve can replace the constant value.")]
+        [SerializeField] RagdollPuppetCollisionResistance collisionResistance =
+            new RagdollPuppetCollisionResistance();
+        [Tooltip("First matching entry can multiply resistance and override the squared impulse threshold for its layers.")]
+        [SerializeField] RagdollPuppetCollisionLayerRule[]
+            collisionResistanceMultipliers =
+                new RagdollPuppetCollisionLayerRule[0];
 
         [Header("Grounding")]
         [SerializeField] LayerMask groundLayers = -1;
@@ -66,6 +73,8 @@ namespace Hairibar.Ragdoll.Animation
         float lastAcceptedCollisionImpulse;
         float lastAcceptedCollisionFixedTime;
         RagdollPuppetCollisionRejectionReason lastCollisionRejectionReason;
+        RagdollPuppetCollisionResponseSnapshot lastCollisionResponse =
+            RagdollPuppetCollisionResponseSnapshot.Empty;
 
         public RagdollPuppetState State => stateMachine != null
             ? stateMachine.State
@@ -84,6 +93,10 @@ namespace Hairibar.Ragdoll.Animation
         public LayerMask CollisionLayers => collisionLayers;
         public float CollisionThreshold => collisionThreshold;
         public int MaximumCollisionsPerFixedStep => maximumCollisionsPerFixedStep;
+        public RagdollPuppetCollisionResistance CollisionResistance =>
+            collisionResistance;
+        public IReadOnlyList<RagdollPuppetCollisionLayerRule>
+            CollisionResistanceMultipliers => collisionResistanceMultipliers;
         public long AcceptedCollisionCount => acceptedCollisionCount;
         public long RejectedCollisionCount => rejectedCollisionCount;
         public RagdollBoneHandle LastAcceptedCollisionBone => lastAcceptedCollisionBone;
@@ -93,6 +106,8 @@ namespace Hairibar.Ragdoll.Animation
             lastCollisionRejectionReason;
         public RagdollPuppetCollisionStepSnapshot CollisionStep =>
             collisionProcessor.Snapshot;
+        public RagdollPuppetCollisionResponseSnapshot LastCollisionResponse =>
+            lastCollisionResponse;
         public int UpstreamMaximumEventsPerFixedStep => IsInitialized
             ? Context.CollisionHub.MaxEventsPerFixedStep
             : -1;
@@ -142,6 +157,12 @@ namespace Hairibar.Ragdoll.Animation
         /// reference is callback-scoped and must not be retained.
         /// </summary>
         public event Action<RagdollCollisionEvent> CollisionAccepted;
+
+        /// <summary>
+        /// Raised after an accepted collision has applied position-authority suppression.
+        /// The float is the resolved source suppression in the range 0..1.
+        /// </summary>
+        public event Action<RagdollCollisionEvent, float> CollisionUnpinApplied;
 
         public bool LoseBalance()
         {
@@ -207,6 +228,7 @@ namespace Hairibar.Ragdoll.Animation
 
         protected override void OnBehaviourInitialize()
         {
+            NormalizeCollisionResponseConfiguration();
             stateMachine = new RagdollPuppetStateMachine();
             groundProbe = new RagdollGroundProbe(Context);
             collisionProcessor.Reset();
@@ -244,6 +266,12 @@ namespace Hairibar.Ragdoll.Animation
         protected override void OnBehaviourCollision(
             RagdollCollisionEvent collisionEvent)
         {
+            RagdollPuppetCollisionResponseMath.LayerResolution layerResolution =
+                RagdollPuppetCollisionResponseMath.ResolveLayer(
+                    collisionResistanceMultipliers,
+                    collisionEvent.OtherLayer,
+                    collisionThreshold);
+
             RagdollPuppetCollisionRejectionReason rejectionReason;
             if (!collisionProcessor.TryAccept(
                 collisionEvent.FixedTime,
@@ -251,7 +279,7 @@ namespace Hairibar.Ragdoll.Animation
                 collisionEvent.OtherLayer,
                 collisionEvent.Impulse.sqrMagnitude,
                 collisionLayers.value,
-                collisionThreshold,
+                layerResolution.CollisionThreshold,
                 maximumCollisionsPerFixedStep,
                 out rejectionReason))
             {
@@ -266,7 +294,17 @@ namespace Hairibar.Ragdoll.Animation
             lastAcceptedCollisionBone = collisionEvent.Bone;
             lastAcceptedCollisionImpulse = collisionEvent.ImpulseMagnitude;
             lastAcceptedCollisionFixedTime = collisionEvent.FixedTime;
+
+            float positionSuppression = ApplyCollisionUnpin(
+                collisionEvent,
+                layerResolution);
             CollisionAccepted?.Invoke(collisionEvent);
+            if (positionSuppression > 0f)
+            {
+                CollisionUnpinApplied?.Invoke(
+                    collisionEvent,
+                    positionSuppression);
+            }
         }
 
         protected override void OnBehaviourFixedUpdate(float deltaTime)
@@ -375,6 +413,57 @@ namespace Hairibar.Ragdoll.Animation
                 mappingWeights.RotationWeight,
                 maximumRotationMapping,
                 blend);
+        }
+
+        float ApplyCollisionUnpin(
+            RagdollCollisionEvent collisionEvent,
+            RagdollPuppetCollisionResponseMath.LayerResolution layerResolution)
+        {
+            RagdollAnimator.AnimatedPair pair =
+                Context.GetPair(collisionEvent.Bone);
+            float targetSpeed = pair.poseLinearVelocity.magnitude;
+            float globalResistance = collisionResistance.Evaluate(targetSpeed);
+            float muscleResistance = Context.Muscles
+                .GetBehaviourSettings(collisionEvent.Bone)
+                .collisionResistance;
+            float effectiveResistance =
+                RagdollPuppetCollisionResponseMath.EvaluateEffectiveResistance(
+                    globalResistance,
+                    layerResolution.ResistanceMultiplier,
+                    muscleResistance);
+            float positionSuppression =
+                RagdollPuppetCollisionResponseMath.EvaluatePositionSuppression(
+                    collisionEvent.ImpulseMagnitude,
+                    globalResistance,
+                    layerResolution.ResistanceMultiplier,
+                    muscleResistance);
+
+            lastCollisionResponse =
+                new RagdollPuppetCollisionResponseSnapshot(
+                    true,
+                    collisionEvent.Bone,
+                    collisionEvent.FixedTime,
+                    collisionEvent.ImpulseMagnitude,
+                    targetSpeed,
+                    globalResistance,
+                    layerResolution.ResistanceMultiplier,
+                    muscleResistance,
+                    effectiveResistance,
+                    positionSuppression,
+                    layerResolution.RuleIndex);
+
+            if (positionSuppression <= 0f) return 0f;
+
+            MuscleImpactSettings impact = new MuscleImpactSettings
+            {
+                positionSuppression = positionSuppression,
+                rotationSuppression = 0f,
+                maximumPropagationDistance =
+                    Mathf.Max(0, Context.Bindings.BoneCount - 1),
+                propagationFalloff = 1f
+            };
+            Context.Muscles.ApplyResolvedImpact(collisionEvent.Bone, impact);
+            return positionSuppression;
         }
 
         bool BeginGetUp(
@@ -579,10 +668,38 @@ namespace Hairibar.Ragdoll.Animation
             lastAcceptedCollisionFixedTime = 0f;
             lastCollisionRejectionReason =
                 RagdollPuppetCollisionRejectionReason.None;
+            lastCollisionResponse =
+                RagdollPuppetCollisionResponseSnapshot.Empty;
 
             if (!resetTotals) return;
             acceptedCollisionCount = 0L;
             rejectedCollisionCount = 0L;
+        }
+
+        void NormalizeCollisionResponseConfiguration()
+        {
+            if (collisionResistance == null)
+            {
+                collisionResistance =
+                    new RagdollPuppetCollisionResistance();
+            }
+            collisionResistance.Normalize();
+
+            if (collisionResistanceMultipliers == null)
+            {
+                collisionResistanceMultipliers =
+                    new RagdollPuppetCollisionLayerRule[0];
+            }
+
+            for (int index = 0;
+                index < collisionResistanceMultipliers.Length;
+                index++)
+            {
+                if (collisionResistanceMultipliers[index] != null)
+                {
+                    collisionResistanceMultipliers[index].Normalize();
+                }
+            }
         }
 
         Vector3 GetWorldUp()
@@ -608,6 +725,7 @@ namespace Hairibar.Ragdoll.Animation
                 maximumCollisionsPerFixedStep,
                 1,
                 30);
+            NormalizeCollisionResponseConfiguration();
             groundProbeStartOffset = Mathf.Max(0f, groundProbeStartOffset);
             groundProbeDistance = Mathf.Max(0.001f, groundProbeDistance);
             maximumGroundAngle = Mathf.Clamp(maximumGroundAngle, 0f, 89.9f);
