@@ -9,8 +9,6 @@ namespace Hairibar.Ragdoll.Animation.Tests
         GameObject secondObject;
         ConfigurableJoint firstJoint;
         ConfigurableJoint secondJoint;
-        BoxCollider firstCollider;
-        BoxCollider secondCollider;
 
         [SetUp]
         public void SetUp()
@@ -21,8 +19,6 @@ namespace Hairibar.Ragdoll.Animation.Tests
             secondObject.AddComponent<Rigidbody>();
             firstJoint = firstObject.AddComponent<ConfigurableJoint>();
             secondJoint = secondObject.AddComponent<ConfigurableJoint>();
-            firstCollider = firstObject.AddComponent<BoxCollider>();
-            secondCollider = secondObject.AddComponent<BoxCollider>();
 
             firstJoint.angularXMotion = ConfigurableJointMotion.Limited;
             firstJoint.angularYMotion = ConfigurableJointMotion.Locked;
@@ -35,22 +31,20 @@ namespace Hairibar.Ragdoll.Animation.Tests
         [TearDown]
         public void TearDown()
         {
-            Physics.IgnoreCollision(firstCollider, secondCollider, false);
             Object.DestroyImmediate(firstObject);
             Object.DestroyImmediate(secondObject);
         }
 
         [Test]
-        public void KillPolicies_ApplyAuthoredLimitsAndRestoreExactPreKillState()
+        public void KillPolicy_AppliesAuthoredLimitsAndRestoresExactPreKillState()
         {
             RagdollLifecyclePhysicsPolicy policy = CreatePolicy();
 
             firstJoint.angularXMotion = ConfigurableJointMotion.Free;
             firstJoint.angularYMotion = ConfigurableJointMotion.Free;
             firstJoint.angularZMotion = ConfigurableJointMotion.Free;
-            Physics.IgnoreCollision(firstCollider, secondCollider, true);
 
-            policy.BeginKill(true, true);
+            policy.BeginKill(true);
 
             Assert.That(firstJoint.angularXMotion,
                 Is.EqualTo(ConfigurableJointMotion.Limited));
@@ -58,9 +52,6 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 Is.EqualTo(ConfigurableJointMotion.Locked));
             Assert.That(firstJoint.angularZMotion,
                 Is.EqualTo(ConfigurableJointMotion.Free));
-            Assert.That(
-                Physics.GetIgnoreCollision(firstCollider, secondCollider),
-                Is.False);
 
             policy.RestoreAfterDeath();
 
@@ -70,25 +61,18 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 Is.EqualTo(ConfigurableJointMotion.Free));
             Assert.That(firstJoint.angularZMotion,
                 Is.EqualTo(ConfigurableJointMotion.Free));
-            Assert.That(
-                Physics.GetIgnoreCollision(firstCollider, secondCollider),
-                Is.True);
         }
 
         [Test]
-        public void DisabledKillPolicies_DoNotChangeLimitsOrCollisionIgnores()
+        public void DisabledKillPolicy_DoesNotChangeLimits()
         {
             RagdollLifecyclePhysicsPolicy policy = CreatePolicy();
             firstJoint.angularXMotion = ConfigurableJointMotion.Free;
-            Physics.IgnoreCollision(firstCollider, secondCollider, true);
 
-            policy.BeginKill(false, false);
+            policy.BeginKill(false);
 
             Assert.That(firstJoint.angularXMotion,
                 Is.EqualTo(ConfigurableJointMotion.Free));
-            Assert.That(
-                Physics.GetIgnoreCollision(firstCollider, secondCollider),
-                Is.True);
 
             policy.RestoreAfterDeath();
         }
@@ -125,7 +109,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
             RagdollLifecyclePhysicsPolicy policy = CreatePolicy();
             policy.SetAngularLimits(false);
 
-            policy.BeginKill(true, false);
+            policy.BeginKill(true);
             Assert.That(policy.AngularLimitsMatch(true), Is.True);
 
             policy.RestoreAfterDeath();
@@ -137,17 +121,13 @@ namespace Hairibar.Ragdoll.Animation.Tests
         {
             RagdollLifecyclePhysicsPolicy policy = CreatePolicy();
             firstJoint.angularXMotion = ConfigurableJointMotion.Free;
-            Physics.IgnoreCollision(firstCollider, secondCollider, true);
 
-            policy.BeginKill(true, true);
+            policy.BeginKill(true);
             policy.AbandonForPermanentFreeze();
 
             Assert.That(policy.IsActive, Is.False);
             Assert.That(firstJoint.angularXMotion,
                 Is.EqualTo(ConfigurableJointMotion.Limited));
-            Assert.That(
-                Physics.GetIgnoreCollision(firstCollider, secondCollider),
-                Is.False);
         }
 
         RagdollLifecyclePhysicsPolicy CreatePolicy()
@@ -157,12 +137,6 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 {
                     new RagdollLifecyclePhysicsPolicy.JointRecord(firstJoint),
                     new RagdollLifecyclePhysicsPolicy.JointRecord(secondJoint)
-                },
-                new[]
-                {
-                    new RagdollLifecyclePhysicsPolicy.ColliderPair(
-                        firstCollider,
-                        secondCollider)
                 });
         }
     }

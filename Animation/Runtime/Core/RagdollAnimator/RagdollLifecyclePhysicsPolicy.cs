@@ -5,10 +5,10 @@ using UnityEngine;
 namespace Hairibar.Ragdoll.Animation
 {
     /// <summary>
-    /// Captures the authored angular motions and internal-collision state shared by
-    /// global joint controls and the complete Dead/Frozen lifecycle. Death can restore
-    /// authored limits temporarily and enable collisions without replacing collider
-    /// enabled state or collision materials, then roll back to the exact pre-kill state.
+    /// Captures authored angular motions shared by global joint controls and the
+    /// Dead/Frozen lifecycle. Internal collisions are owned separately by
+    /// RagdollInternalCollisionController so automatic, manual and death policies
+    /// cannot restore the same collider pair in conflicting orders.
     /// </summary>
     internal sealed class RagdollLifecyclePhysicsPolicy
     {
@@ -49,44 +49,24 @@ namespace Hairibar.Ragdoll.Animation
 
             internal JointRecord(ConfigurableJoint joint)
             {
+                if (!joint) throw new ArgumentNullException(nameof(joint));
                 Joint = joint;
                 Authored = new AngularMotionState(joint);
                 BeforeKill = Authored;
             }
         }
 
-        internal sealed class ColliderPair
-        {
-            internal readonly Collider First;
-            internal readonly Collider Second;
-            internal bool IgnoredBeforeKill;
-            internal bool CapturedBeforeKill;
-
-            internal ColliderPair(Collider first, Collider second)
-            {
-                First = first;
-                Second = second;
-            }
-        }
-
         readonly JointRecord[] joints;
-        readonly ColliderPair[] colliderPairs;
         bool active;
         bool angularLimitsApplied;
-        bool internalCollisionsApplied;
 
         internal bool IsActive => active;
         internal bool AngularLimitsApplied => angularLimitsApplied;
-        internal bool InternalCollisionsApplied => internalCollisionsApplied;
         internal int JointCount => joints.Length;
-        internal int InternalColliderPairCount => colliderPairs.Length;
 
-        internal RagdollLifecyclePhysicsPolicy(
-            JointRecord[] joints,
-            ColliderPair[] colliderPairs)
+        internal RagdollLifecyclePhysicsPolicy(JointRecord[] joints)
         {
             this.joints = joints ?? new JointRecord[0];
-            this.colliderPairs = colliderPairs ?? new ColliderPair[0];
         }
 
         internal static RagdollLifecyclePhysicsPolicy Create(
@@ -100,53 +80,17 @@ namespace Hairibar.Ragdoll.Animation
             }
 
             List<JointRecord> jointRecords = new List<JointRecord>();
-            List<Collider[]> colliderGroups = new List<Collider[]>();
-
             foreach (RagdollBone bone in bindings.Bones)
             {
                 if (bone.Joint)
                 {
                     jointRecords.Add(new JointRecord(bone.Joint));
                 }
-
-                List<Collider> colliders = new List<Collider>();
-                foreach (Collider collider in bone.Colliders)
-                {
-                    if (collider) colliders.Add(collider);
-                }
-                colliderGroups.Add(colliders.ToArray());
-            }
-
-            List<ColliderPair> pairs = new List<ColliderPair>();
-            for (int firstBone = 0;
-                firstBone < colliderGroups.Count;
-                firstBone++)
-            {
-                Collider[] firstColliders = colliderGroups[firstBone];
-                for (int secondBone = firstBone + 1;
-                    secondBone < colliderGroups.Count;
-                    secondBone++)
-                {
-                    Collider[] secondColliders = colliderGroups[secondBone];
-                    for (int first = 0; first < firstColliders.Length; first++)
-                    {
-                        for (int second = 0;
-                            second < secondColliders.Length;
-                            second++)
-                        {
-                            pairs.Add(new ColliderPair(
-                                firstColliders[first],
-                                secondColliders[second]));
-                        }
-                    }
-                }
             }
 
             return new RagdollLifecyclePhysicsPolicy(
-                jointRecords.ToArray(),
-                pairs.ToArray());
+                jointRecords.ToArray());
         }
-
 
         internal void SetAngularLimits(bool limited)
         {
@@ -199,9 +143,7 @@ namespace Hairibar.Ragdoll.Animation
             return true;
         }
 
-        internal void BeginKill(
-            bool enableAngularLimits,
-            bool enableInternalCollisions)
+        internal void BeginKill(bool enableAngularLimits)
         {
             if (active)
             {
@@ -211,42 +153,20 @@ namespace Hairibar.Ragdoll.Animation
 
             active = true;
             angularLimitsApplied = enableAngularLimits;
-            internalCollisionsApplied = enableInternalCollisions;
 
             try
             {
-                if (enableAngularLimits)
+                if (!enableAngularLimits) return;
+
+                for (int index = 0; index < joints.Length; index++)
                 {
-                    for (int index = 0; index < joints.Length; index++)
-                    {
-                        JointRecord record = joints[index];
-                        if (!record.Joint) continue;
+                    JointRecord record = joints[index];
+                    if (!record.Joint) continue;
 
-                        record.BeforeKill =
-                            new AngularMotionState(record.Joint);
-                        record.CapturedBeforeKill = true;
-                        record.Authored.Apply(record.Joint);
-                    }
-                }
-
-                if (enableInternalCollisions)
-                {
-                    for (int index = 0;
-                        index < colliderPairs.Length;
-                        index++)
-                    {
-                        ColliderPair pair = colliderPairs[index];
-                        if (!pair.First || !pair.Second) continue;
-
-                        pair.IgnoredBeforeKill = Physics.GetIgnoreCollision(
-                            pair.First,
-                            pair.Second);
-                        pair.CapturedBeforeKill = true;
-                        Physics.IgnoreCollision(
-                            pair.First,
-                            pair.Second,
-                            false);
-                    }
+                    record.BeforeKill =
+                        new AngularMotionState(record.Joint);
+                    record.CapturedBeforeKill = true;
+                    record.Authored.Apply(record.Joint);
                 }
             }
             catch
@@ -259,27 +179,6 @@ namespace Hairibar.Ragdoll.Animation
         internal void RestoreAfterDeath()
         {
             if (!active) return;
-
-            if (internalCollisionsApplied)
-            {
-                for (int index = 0;
-                    index < colliderPairs.Length;
-                    index++)
-                {
-                    ColliderPair pair = colliderPairs[index];
-                    if (!pair.CapturedBeforeKill
-                        || !pair.First
-                        || !pair.Second)
-                    {
-                        continue;
-                    }
-
-                    Physics.IgnoreCollision(
-                        pair.First,
-                        pair.Second,
-                        pair.IgnoredBeforeKill);
-                }
-            }
 
             if (angularLimitsApplied)
             {
@@ -307,14 +206,9 @@ namespace Hairibar.Ragdoll.Animation
             {
                 joints[index].CapturedBeforeKill = false;
             }
-            for (int index = 0; index < colliderPairs.Length; index++)
-            {
-                colliderPairs[index].CapturedBeforeKill = false;
-            }
 
             active = false;
             angularLimitsApplied = false;
-            internalCollisionsApplied = false;
         }
     }
 }

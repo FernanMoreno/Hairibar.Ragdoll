@@ -87,6 +87,14 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     "Updates connected anchors from the resolved Target pose and controls whether registered joints use their authored angular motions. Support Translation Animation extends anchor updates to directly parented Target bones."),
                 true);
 
+            ExtraNaughtyEditorGUILayout.Header("Internal Collisions");
+            EditorGUILayout.PropertyField(
+                serializedObject.FindProperty("internalCollisionSettings"),
+                new GUIContent(
+                    "Internal Collision Settings",
+                    "Controls whether colliders belonging to different registered ragdoll bones collide. Forced ignores authored on the active RagdollMuscleProfile remain ignored while collisions are enabled."),
+                true);
+
             ExtraNaughtyEditorGUILayout.Header("Mapping");
             EditorGUILayout.Slider(serializedObject.FindProperty("_masterMappingWeight"), 0, 1,
                 new GUIContent("Master Mapping Weight",
@@ -156,6 +164,24 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 EditorGUILayout.LabelField(
                     "Manual Angular Limit Control",
                     runtimeAnimator.ManualAngularLimitControl.ToString());
+                EditorGUILayout.LabelField(
+                    "Internal Collider Pairs",
+                    runtimeAnimator.RuntimeInternalColliderPairCount.ToString());
+                EditorGUILayout.LabelField(
+                    "Forced Ignore Bone Pairs",
+                    runtimeAnimator.RuntimeForcedInternalBonePairCount.ToString());
+                EditorGUILayout.LabelField(
+                    "Forced Ignore Collider Pairs",
+                    runtimeAnimator.RuntimeForcedInternalColliderPairCount.ToString());
+                EditorGUILayout.LabelField(
+                    "Internal Collision Writes Last Step",
+                    runtimeAnimator.LastInternalCollisionWriteCount.ToString());
+                EditorGUILayout.LabelField(
+                    "Manual Internal Collision Control",
+                    runtimeAnimator.ManualInternalCollisionControl.ToString());
+                EditorGUILayout.LabelField(
+                    "Lifecycle Collision Override",
+                    runtimeAnimator.InternalCollisionLifecycleOverrideActive.ToString());
             }
 
             ExtraNaughtyEditorGUILayout.Header("Debug Features (Editor Only)");

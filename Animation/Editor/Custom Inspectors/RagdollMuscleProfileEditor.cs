@@ -27,11 +27,28 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 }
             }
 
+            if (GUILayout.Button("Synchronize Internal Collision Ignores"))
+            {
+                Undo.RecordObject(
+                    profile,
+                    "Synchronize internal collision ignores");
+                string synchronizeError;
+                if (!profile.TrySynchronizeInternalCollisionIgnores(
+                    out synchronizeError))
+                {
+                    Debug.LogError(synchronizeError, profile);
+                }
+                else
+                {
+                    EditorUtility.SetDirty(profile);
+                }
+            }
+
             string validationError;
             bool valid = profile.TryValidate(out validationError);
             EditorGUILayout.HelpBox(
                 valid
-                    ? "The profile contains one semantic group per definition bone."
+                    ? "The profile contains one semantic group per definition bone and valid symmetric internal-collision ignore rules."
                     : validationError,
                 valid ? MessageType.Info : MessageType.Warning);
         }

@@ -218,21 +218,51 @@ namespace Hairibar.Ragdoll.Animation
         {
             lifecycleSettings.Normalize();
             ForceActiveSimulationForDeath();
-            lifecyclePhysicsPolicy.BeginKill(
-                lifecycleSettings.EnableAngularLimitsOnKill
-                    && !manualAngularLimitControl,
-                lifecycleSettings.EnableInternalCollisionsOnKill);
 
-            lifecycleKilling = true;
-            lifecycleKillElapsed = 0f;
-            lifecycleKillStartingWeight = ResolveStartingMuscleWeight();
+            bool angularPolicyStarted = false;
+            bool internalCollisionPolicyStarted = false;
+            try
+            {
+                lifecyclePhysicsPolicy.BeginKill(
+                    lifecycleSettings.EnableAngularLimitsOnKill
+                        && !manualAngularLimitControl);
+                angularPolicyStarted = true;
 
-            lifecycleMuscles.SetLifecycleDrive(
-                0f,
-                lifecycleKillStartingWeight,
-                lifecycleSettings.DeadMuscleDamper);
-            lifecycleMuscles.ClearAllImmunity();
-            CopySampledVelocitiesToPuppet();
+                BeginInternalCollisionLifecycleOverride(
+                    lifecycleSettings.EnableInternalCollisionsOnKill);
+                internalCollisionPolicyStarted = true;
+
+                lifecycleKilling = true;
+                lifecycleKillElapsed = 0f;
+                lifecycleKillStartingWeight = ResolveStartingMuscleWeight();
+
+                lifecycleMuscles.SetLifecycleDrive(
+                    0f,
+                    lifecycleKillStartingWeight,
+                    lifecycleSettings.DeadMuscleDamper);
+                lifecycleMuscles.ClearAllImmunity();
+                CopySampledVelocitiesToPuppet();
+            }
+            catch
+            {
+                lifecycleKilling = false;
+                lifecycleMuscles.ClearLifecycleDrive();
+                try
+                {
+                    if (internalCollisionPolicyStarted)
+                    {
+                        EndInternalCollisionLifecycleOverride();
+                    }
+                }
+                finally
+                {
+                    if (angularPolicyStarted)
+                    {
+                        lifecyclePhysicsPolicy.RestoreAfterDeath();
+                    }
+                }
+                throw;
+            }
 
             if (lifecycleBehaviours && lifecycleBehaviours.IsInitialized)
             {
@@ -316,7 +346,14 @@ namespace Hairibar.Ragdoll.Animation
             if (resurrect)
             {
                 lifecycleMuscles.ClearLifecycleDrive();
-                lifecyclePhysicsPolicy.RestoreAfterDeath();
+                try
+                {
+                    lifecyclePhysicsPolicy.RestoreAfterDeath();
+                }
+                finally
+                {
+                    EndInternalCollisionLifecycleOverride();
+                }
             }
             else
             {
@@ -327,6 +364,7 @@ namespace Hairibar.Ragdoll.Animation
             }
 
             lifecycleSimulationMode.ResumeFromLifecycleFreeze();
+            ReapplyInternalCollisionPolicy();
             if (lifecycleBehaviours && lifecycleBehaviours.IsInitialized)
             {
                 lifecycleBehaviours.NotifyUnfrozen();
@@ -356,7 +394,14 @@ namespace Hairibar.Ragdoll.Animation
         void CompleteResurrection()
         {
             lifecycleMuscles.ClearLifecycleDrive();
-            lifecyclePhysicsPolicy.RestoreAfterDeath();
+            try
+            {
+                lifecyclePhysicsPolicy.RestoreAfterDeath();
+            }
+            finally
+            {
+                EndInternalCollisionLifecycleOverride();
+            }
             if (lifecycleBehaviours && lifecycleBehaviours.IsInitialized)
             {
                 lifecycleBehaviours.NotifyResurrected();
@@ -580,6 +625,7 @@ namespace Hairibar.Ragdoll.Animation
 
             lifecyclePermanentDestructionScheduled = true;
             lifecyclePhysicsPolicy.AbandonForPermanentFreeze();
+            AbandonInternalCollisionsForPermanentFreeze();
             lifecycleSimulationMode
                 .AbandonLifecycleFreezeForPermanentDestruction();
             StartCoroutine(DestroyFrozenSubsystemPermanently());
@@ -625,6 +671,7 @@ namespace Hairibar.Ragdoll.Animation
                 && lifecycleSimulationMode.IsLifecycleFreezeSuspended)
             {
                 lifecycleSimulationMode.ResumeFromLifecycleFreeze();
+                ReapplyInternalCollisionPolicy();
                 if (lifecycleBehaviours
                     && lifecycleBehaviours.IsInitialized)
                 {
@@ -632,9 +679,16 @@ namespace Hairibar.Ragdoll.Animation
                 }
             }
 
-            if (lifecyclePhysicsPolicy != null)
+            try
             {
-                lifecyclePhysicsPolicy.RestoreAfterDeath();
+                if (lifecyclePhysicsPolicy != null)
+                {
+                    lifecyclePhysicsPolicy.RestoreAfterDeath();
+                }
+            }
+            finally
+            {
+                EndInternalCollisionLifecycleOverride();
             }
             if (lifecycleMuscles)
             {
@@ -666,6 +720,8 @@ namespace Hairibar.Ragdoll.Animation
         {
             lifecycleSettings.Normalize();
             pinSettings.Normalize();
+            jointRuntimeSettings.Normalize();
+            internalCollisionSettings.Normalize();
         }
     }
 }

@@ -798,6 +798,10 @@ namespace Hairibar.Ragdoll.Animation
             if (colliderSurfaceController != null)
             {
                 colliderSurfaceController.Restore();
+                if (Context.Animator)
+                {
+                    Context.Animator.ReapplyInternalCollisionPolicy();
+                }
             }
             hasObservedSurfaceSimulationMode = false;
             Context.Muscles.ClearPositionSuppressionRecoveryMultiplier();
@@ -1815,11 +1819,15 @@ namespace Hairibar.Ragdoll.Animation
                 hasObservedSurfaceSimulationMode = true;
             }
 
-            colliderSurfaceController.Apply(
+            bool surfaceApplied = colliderSurfaceController.Apply(
                 lifecycleSuspended
                     ? RagdollPuppetState.Unpinned
                     : State,
                 force);
+            if (surfaceApplied && Context.Animator)
+            {
+                Context.Animator.ReapplyInternalCollisionPolicy();
+            }
         }
 
         void ObserveSurfaceSimulationMode()

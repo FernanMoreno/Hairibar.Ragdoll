@@ -83,15 +83,15 @@ namespace Hairibar.Ragdoll.Animation
             materialOverrideCount = 0;
         }
 
-        internal void Apply(RagdollPuppetState state, bool force)
+        internal bool Apply(RagdollPuppetState state, bool force)
         {
-            if (!baselineCaptured) return;
+            if (!baselineCaptured) return false;
 
             RagdollPuppetColliderSurfaceState surfaceState =
                 RagdollPuppetColliderSurfacePolicy.ResolveState(state);
             if (!force && hasAppliedState && currentState == surfaceState)
             {
-                return;
+                return false;
             }
 
             int disabled = 0;
@@ -131,6 +131,7 @@ namespace Hairibar.Ragdoll.Animation
             hasAppliedState = true;
             disabledColliderCount = disabled;
             materialOverrideCount = overridden;
+            return true;
         }
 
         internal void Restore()
