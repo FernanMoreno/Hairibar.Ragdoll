@@ -56,6 +56,14 @@ namespace Hairibar.Ragdoll.Animation
             set => _masterDampingRatio = Mathf.Clamp01(value);
         }
 
+        public bool FixTargetTransforms
+        {
+            get => fixTargetTransforms;
+            set => fixTargetTransforms = value;
+        }
+
+        public bool HasPendingTeleport => teleportPending;
+
         public bool forceTargetPose = false;
         #endregion
 
@@ -68,6 +76,7 @@ namespace Hairibar.Ragdoll.Animation
         [SerializeField] float _masterAlpha = 1;
         [SerializeField] float _masterDampingRatio = 1;
         [SerializeField] float _profileTransitionLength = 1;
+        [SerializeField] bool fixTargetTransforms = true;
         #endregion
 
         #region Private State
@@ -83,16 +92,27 @@ namespace Hairibar.Ragdoll.Animation
         #endregion
 
         #region Unity Update Messages
+        void Update()
+        {
+            if (!isActiveAndEnabled || animatedPairs is null) return;
+            FixTargetTransformsAtUpdateBoundary();
+        }
+
         void FixedUpdate()
         {
             if (!isActiveAndEnabled || animatedPairs is null) return;
-            if (LifecycleIsFrozenStable()) return;
 
             if (UsesFixedAnimatorUpdate()
                 && LifecycleAllowsAnimationSampling())
             {
                 ReadAnimatedPose();
             }
+            else
+            {
+                ProcessPendingTeleportAtFixedBoundary();
+            }
+
+            if (LifecycleIsFrozenStable()) return;
 
             RestoreAnimatedPose();
             ModifyTargetPose();
@@ -103,16 +123,21 @@ namespace Hairibar.Ragdoll.Animation
         {
             if (!isActiveAndEnabled || animatedPairs is null) return;
 
-            if (LifecycleIsFrozenStable())
-            {
-                UpdateLifecycle(Time.deltaTime);
-                return;
-            }
-
             if (!UsesFixedAnimatorUpdate()
                 && LifecycleAllowsAnimationSampling())
             {
                 ReadAnimatedPose();
+            }
+            else
+            {
+                ProcessPendingTeleportAtLateBoundary();
+            }
+
+            if (LifecycleIsFrozenStable())
+            {
+                UpdateLifecycle(Time.deltaTime);
+                InvokePostLateUpdateHook();
+                return;
             }
 
             if (!forceTargetPose)
@@ -121,6 +146,7 @@ namespace Hairibar.Ragdoll.Animation
             }
 
             UpdateLifecycle(Time.deltaTime);
+            InvokePostLateUpdateHook();
         }
         #endregion
 
@@ -146,7 +172,7 @@ namespace Hairibar.Ragdoll.Animation
             CreateAnimatedPairs(mapper.BonePairs);
 
             ForceAnimatorUpdate();
-            ReadAnimatedPose();
+            ReadAnimatedPose(false, false);
 
             GatherBoneProfileModifiers();
             InitializeBoneProfileModifiers(boneProfileModifiers, animatedPairs);

@@ -12,6 +12,7 @@ namespace Hairibar.Ragdoll.Animation
         const float MinimumSampleDeltaTime = 0.000001f;
 
         bool initialized;
+        bool resetVelocityOnNextPush;
         float sampleTime;
         RagdollAnimator.AnimatedPose pose;
         Vector3 linearVelocity;
@@ -25,15 +26,33 @@ namespace Hairibar.Ragdoll.Animation
         public void Reset(RagdollAnimator.AnimatedPose newPose, float newSampleTime)
         {
             initialized = true;
+            resetVelocityOnNextPush = false;
             sampleTime = newSampleTime;
             pose = newPose;
             linearVelocity = Vector3.zero;
             angularVelocity = Vector3.zero;
         }
 
+        internal void ApplyTeleport(
+            Quaternion deltaRotation,
+            Vector3 deltaPosition,
+            Vector3 pivot)
+        {
+            if (!initialized) return;
+
+            pose = RagdollTeleportMath.TransformPose(
+                pose,
+                deltaRotation,
+                deltaPosition,
+                pivot);
+            linearVelocity = Vector3.zero;
+            angularVelocity = Vector3.zero;
+            resetVelocityOnNextPush = true;
+        }
+
         public void Push(RagdollAnimator.AnimatedPose newPose, float newSampleTime)
         {
-            if (!initialized)
+            if (!initialized || resetVelocityOnNextPush)
             {
                 Reset(newPose, newSampleTime);
                 return;

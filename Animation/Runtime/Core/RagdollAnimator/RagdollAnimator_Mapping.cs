@@ -61,6 +61,7 @@ namespace Hairibar.Ragdoll.Animation
                 animatedPairs,
                 _masterMappingWeight,
                 mappingModifiers);
+            InvokeWriteHooks();
         }
 
         void GatherMappingModifiers()

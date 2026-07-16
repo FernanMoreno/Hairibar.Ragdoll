@@ -178,8 +178,13 @@ namespace Hairibar.Ragdoll.Animation
             }
         }
 
-        void ReadAnimatedPose()
+        void ReadAnimatedPose(
+            bool notifyHooks = true,
+            bool processPendingTeleport = true)
         {
+            if (notifyHooks) InvokeReadHooks();
+            if (processPendingTeleport) ProcessPendingTeleport();
+
             float sampleTime = GetAnimationSampleTime();
 
             // animatedPairs are sorted parent-first. This allows local joint rotations to
@@ -262,6 +267,11 @@ namespace Hairibar.Ragdoll.Animation
         #region State Change Operations
         public void SnapToTargetPose()
         {
+            MovePuppetToTargetPose(true);
+        }
+
+        void MovePuppetToTargetPose(bool clearVelocities)
+        {
             if (animatedPairs is null) return;
 
             foreach (AnimatedPair pair in animatedPairs)
@@ -273,8 +283,11 @@ namespace Hairibar.Ragdoll.Animation
                 rb.position = ragdollPose.worldPosition;
                 rb.rotation = ragdollPose.worldRotation;
 
-                rb.velocity = Vector3.zero;
-                rb.angularVelocity = Vector3.zero;
+                if (clearVelocities)
+                {
+                    rb.velocity = Vector3.zero;
+                    rb.angularVelocity = Vector3.zero;
+                }
             }
         }
 

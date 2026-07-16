@@ -84,6 +84,11 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 new GUIContent("Bone Mapping Overrides"),
                 true);
             EditorGUILayout.PropertyField(serializedObject.FindProperty("forceTargetPose"));
+            EditorGUILayout.PropertyField(
+                serializedObject.FindProperty("fixTargetTransforms"),
+                new GUIContent(
+                    "Fix Target Transforms",
+                    "Restores each bound Target bone to its captured local pose before animation evaluation. This prevents additive read/write drift on bones that are not animated every frame."));
 
             ExtraNaughtyEditorGUILayout.Header("Lifecycle");
             EditorGUILayout.PropertyField(
@@ -117,6 +122,9 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 EditorGUILayout.LabelField(
                     "Kill Progress",
                     runtimeAnimator.KillProgress.ToString("P0"));
+                EditorGUILayout.LabelField(
+                    "Teleport Pending",
+                    runtimeAnimator.HasPendingTeleport.ToString());
             }
 
             ExtraNaughtyEditorGUILayout.Header("Debug Features (Editor Only)");

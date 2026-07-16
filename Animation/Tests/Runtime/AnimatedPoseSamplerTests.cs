@@ -85,6 +85,46 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Assert.That(sampler.LinearVelocity, Is.EqualTo(Vector3.one));
         }
 
+        [Test]
+        public void Teleport_TransformsWorldPoseAndClearsCachedVelocities()
+        {
+            AnimatedPoseSampler sampler = new AnimatedPoseSampler();
+            sampler.Push(Pose(Vector3.right, Quaternion.identity), 0f);
+            sampler.Push(Pose(Vector3.right * 2f, Quaternion.Euler(0f, 10f, 0f)), 1f);
+
+            sampler.ApplyTeleport(
+                Quaternion.Euler(0f, 90f, 0f),
+                new Vector3(5f, 0f, 0f),
+                Vector3.zero);
+
+            Assert.That(sampler.Pose.worldPosition.x, Is.EqualTo(5f).Within(0.0001f));
+            Assert.That(sampler.Pose.worldPosition.z, Is.EqualTo(-2f).Within(0.0001f));
+            Assert.That(
+                Quaternion.Angle(
+                    sampler.Pose.worldRotation,
+                    Quaternion.Euler(0f, 100f, 0f)),
+                Is.LessThan(0.001f));
+            Assert.That(
+                Quaternion.Angle(
+                    sampler.Pose.localRotation,
+                    Quaternion.Euler(0f, 10f, 0f)),
+                Is.LessThan(0.001f));
+            Assert.That(sampler.LinearVelocity, Is.EqualTo(Vector3.zero));
+            Assert.That(sampler.AngularVelocity, Is.EqualTo(Vector3.zero));
+
+            sampler.Push(
+                Pose(new Vector3(6f, 0f, -2f), Quaternion.Euler(0f, 110f, 0f)),
+                2f);
+            Assert.That(sampler.LinearVelocity, Is.EqualTo(Vector3.zero));
+            Assert.That(sampler.AngularVelocity, Is.EqualTo(Vector3.zero));
+
+            sampler.Push(
+                Pose(new Vector3(7f, 0f, -2f), Quaternion.Euler(0f, 120f, 0f)),
+                3f);
+            Assert.That(sampler.LinearVelocity, Is.EqualTo(Vector3.right));
+            Assert.That(sampler.AngularVelocity.y, Is.GreaterThan(0f));
+        }
+
         static RagdollAnimator.AnimatedPose Pose(Vector3 position, Quaternion localRotation)
         {
             return new RagdollAnimator.AnimatedPose

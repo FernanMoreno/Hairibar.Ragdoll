@@ -31,6 +31,7 @@ namespace Hairibar.Ragdoll.Animation
             internal Vector3 poseAngularVelocity;
 
             readonly RagdollBoneTargetBonePair bonePair;
+            readonly RagdollTargetDefaultPose defaultTargetPose;
             AnimatedPoseSampler poseSampler;
 
 
@@ -81,6 +82,68 @@ namespace Hairibar.Ragdoll.Animation
                     SampledTargetPose.worldRotation);
             }
 
+            internal void FixTargetTransform()
+            {
+                defaultTargetPose.Apply(TargetBone);
+            }
+
+            internal TeleportState CaptureTeleportState()
+            {
+                return new TeleportState
+                {
+                    sampledTargetPose = SampledTargetPose,
+                    currentPose = currentPose,
+                    poseSampler = poseSampler,
+                    poseLinearVelocity = poseLinearVelocity,
+                    poseAngularVelocity = poseAngularVelocity
+                };
+            }
+
+            internal void RestoreTeleportState(TeleportState state)
+            {
+                SampledTargetPose = state.sampledTargetPose;
+                currentPose = state.currentPose;
+                poseSampler = state.poseSampler;
+                poseLinearVelocity = state.poseLinearVelocity;
+                poseAngularVelocity = state.poseAngularVelocity;
+            }
+
+            internal void ApplyTeleport(
+                Quaternion deltaRotation,
+                Vector3 deltaPosition,
+                Vector3 pivot)
+            {
+                if (poseSampler.IsInitialized)
+                {
+                    SampledTargetPose = RagdollTeleportMath.TransformPose(
+                        SampledTargetPose,
+                        deltaRotation,
+                        deltaPosition,
+                        pivot);
+                    currentPose = RagdollTeleportMath.TransformPose(
+                        currentPose,
+                        deltaRotation,
+                        deltaPosition,
+                        pivot);
+                    poseSampler.ApplyTeleport(
+                        deltaRotation,
+                        deltaPosition,
+                        pivot);
+                }
+
+                poseLinearVelocity = Vector3.zero;
+                poseAngularVelocity = Vector3.zero;
+            }
+
+            internal struct TeleportState
+            {
+                internal AnimatedPose sampledTargetPose;
+                internal AnimatedPose currentPose;
+                internal AnimatedPoseSampler poseSampler;
+                internal Vector3 poseLinearVelocity;
+                internal Vector3 poseAngularVelocity;
+            }
+
 
             internal AnimatedPair(
                 RagdollBoneTargetBonePair bonePair,
@@ -90,6 +153,7 @@ namespace Hairibar.Ragdoll.Animation
                 this.bonePair = bonePair;
                 Handle = handle;
                 MappingWeights = mappingWeights;
+                defaultTargetPose = RagdollTargetDefaultPose.Capture(TargetBone);
             }
         }
     }

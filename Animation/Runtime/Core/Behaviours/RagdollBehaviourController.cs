@@ -322,9 +322,10 @@ namespace Hairibar.Ragdoll.Animation
         }
 
         /// <summary>
-        /// Notifies all initialized behaviours after an external system has teleported the
-        /// Target and Puppet. This method does not move Transforms or Rigidbodies itself.
-        /// The caller must supply the exact world-space delta used by the completed teleport.
+        /// Notifies all initialized behaviours after the core or an external integration has
+        /// teleported the Target and Puppet. This method does not move Transforms or
+        /// Rigidbodies itself. The caller must supply the exact world-space delta used by the
+        /// completed teleport.
         /// </summary>
         public void NotifyTeleported(
             Quaternion deltaRotation,
@@ -365,6 +366,25 @@ namespace Hairibar.Ragdoll.Animation
                     behaviour.ReactivateInternal();
                 }
             }
+        }
+
+
+        internal void NotifyFixTransforms()
+        {
+            if (!CanDispatch) return;
+            ActiveBehaviour.FixTransformsInternal();
+        }
+
+        internal void NotifyRead()
+        {
+            if (!CanDispatch) return;
+            ActiveBehaviour.ReadInternal();
+        }
+
+        internal void NotifyWrite()
+        {
+            if (!CanDispatch) return;
+            ActiveBehaviour.WriteInternal();
         }
 
         internal float ResolveLifecycleMuscleWeight(

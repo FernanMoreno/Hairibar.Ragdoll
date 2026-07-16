@@ -160,6 +160,24 @@ namespace Hairibar.Ragdoll.Animation
                 moveToTarget);
         }
 
+        internal void FixTransformsInternal()
+        {
+            if (!IsInitialized) return;
+            OnBehaviourFixTransforms();
+        }
+
+        internal void ReadInternal()
+        {
+            if (!IsInitialized) return;
+            OnBehaviourRead();
+        }
+
+        internal void WriteInternal()
+        {
+            if (!IsInitialized) return;
+            OnBehaviourWrite();
+        }
+
         internal void FixedUpdateInternal(float deltaTime)
         {
             OnBehaviourFixedUpdate(deltaTime);
@@ -267,6 +285,21 @@ namespace Hairibar.Ragdoll.Animation
             Vector3 deltaPosition,
             Vector3 pivot,
             bool moveToTarget)
+        {
+        }
+
+        /// <summary>Called immediately before the core restores default Target transforms.</summary>
+        protected virtual void OnBehaviourFixTransforms()
+        {
+        }
+
+        /// <summary>Called immediately before the core samples the animated Target pose.</summary>
+        protected virtual void OnBehaviourRead()
+        {
+        }
+
+        /// <summary>Called immediately after the core maps the Puppet pose to the Target.</summary>
+        protected virtual void OnBehaviourWrite()
         {
         }
 
