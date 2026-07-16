@@ -209,6 +209,49 @@ namespace Hairibar.Ragdoll.Animation
             return Activate(null);
         }
 
+        /// <summary>
+        /// Notifies all initialized behaviours after an external system has teleported the
+        /// Target and Puppet. This method does not move Transforms or Rigidbodies itself.
+        /// The caller must supply the exact world-space delta used by the completed teleport.
+        /// </summary>
+        public void NotifyTeleported(
+            Quaternion deltaRotation,
+            Vector3 deltaPosition,
+            Vector3 pivot,
+            bool moveToTarget)
+        {
+            EnsureInitialized();
+
+            IReadOnlyList<RagdollBehaviourBase> registered = collection.Behaviours;
+            for (int index = 0; index < registered.Count; index++)
+            {
+                RagdollBehaviourBase behaviour = registered[index];
+                if (behaviour)
+                {
+                    behaviour.TeleportInternal(
+                        deltaRotation,
+                        deltaPosition,
+                        pivot,
+                        moveToTarget);
+                }
+            }
+        }
+
+        internal void ReactivateAfterAnimator()
+        {
+            if (!IsInitialized || !isActiveAndEnabled) return;
+
+            IReadOnlyList<RagdollBehaviourBase> registered = collection.Behaviours;
+            for (int index = 0; index < registered.Count; index++)
+            {
+                RagdollBehaviourBase behaviour = registered[index];
+                if (behaviour)
+                {
+                    behaviour.ReactivateInternal();
+                }
+            }
+        }
+
         public void Modify(
             ref BoneProfile boneProfile,
             RagdollAnimator.AnimatedPair pair,

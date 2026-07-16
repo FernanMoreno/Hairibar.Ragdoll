@@ -236,6 +236,18 @@ namespace Hairibar.Ragdoll.Animation
             }
         }
 
+        internal void ClearAllSuppressions()
+        {
+            EnsureInitialized();
+
+            float now = CurrentTime;
+            for (int index = 0; index < states.Length; index++)
+            {
+                states[index].ClearSuppression();
+                lastRecoveryTimes[index] = now;
+            }
+        }
+
         public void SetAuthorities(RagdollBoneHandle bone, float positionAuthority, float rotationAuthority)
         {
             int index = ValidateHandle(bone);

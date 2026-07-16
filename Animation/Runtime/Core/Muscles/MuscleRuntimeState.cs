@@ -83,6 +83,12 @@ namespace Hairibar.Ragdoll.Animation
             positionSuppression = Mathf.Clamp01(suppression);
         }
 
+        internal void ClearSuppression()
+        {
+            positionSuppression = 0f;
+            rotationSuppression = 0f;
+        }
+
         internal void AccumulateSuppression(float position, float rotation)
         {
             positionSuppression = Accumulate(positionSuppression, position);

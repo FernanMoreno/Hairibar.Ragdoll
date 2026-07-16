@@ -23,6 +23,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     + "Regain Pin Speed composes with the muscle-controller base rate and semantic group multipliers; Muscle Weight Relative To Pin affects rotational authority only in Puppet state. "
                     + "Max Rigidbody Velocity clamps physical and sampled Target velocity on the transition to Unpinned; Unpinned Muscle Knockout controls whether zero-configured-pin muscles may knock out the whole Puppet. "
                     + "Blend To Animation Time controls Target blending independently from Minimum Get Up Duration; Get Up Collision Resistance and Get Up Regain Pin Speed multiply their base values only while GetUp is active. "
+                    + "Can Move Target is a runtime ownership switch: when false the behaviour consumes GetUp alignment without moving the Target root. NotifyTeleported must be called only after an external teleport has completed. "
                     + "Muscle-profile surface settings can disable colliders only in Puppet and assign shared PhysicMaterials for Puppet/GetUp or Unpinned; the captured baseline is restored when the behaviour deactivates. "
                     + "Normal Mode Unmapped suppresses mapping without contact. Kinematic delegates global Rigidbody mode changes to RagdollSimulationModeController and activates only from accepted contacts that satisfy its source and impulse filters. "
                     + "Body Front Axis must point out of the chest and Body Up Axis must match character up while standing.",
@@ -85,6 +86,10 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 + behaviour.GetUpCollisionResistanceMlp.ToString("F2") + " / "
                 + behaviour.GetUpRegainPinSpeedMlp.ToString("F2") + " / "
                 + behaviour.GetUpKnockOutDistanceMlp.ToString("F2")
+                + "\nCan move Target / alignment pending / teleport-completed blend: "
+                + behaviour.CanMoveTarget + " / "
+                + behaviour.TargetAlignmentPending + " / "
+                + behaviour.GetUpBlendCompletedByTeleport
                 + "\nSurface state / baseline: "
                 + behaviour.SurfaceState + " / "
                 + behaviour.SurfaceBaselineCaptured

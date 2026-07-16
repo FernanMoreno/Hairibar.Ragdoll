@@ -75,6 +75,29 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [Test]
+        public void ClearSuppression_PreservesPersistentRuntimeConfiguration()
+        {
+            MuscleRuntimeState state = MuscleRuntimeState.Default;
+            state.SetAuthorities(0.25f, 0.75f);
+            state.SetMappingAuthorities(0.4f, 0.6f);
+            state.SetDriveMultipliers(0.5f, 0.7f, 0.8f, 0.9f);
+            state.AccumulateSuppression(0.8f, 0.6f);
+
+            state.ClearSuppression();
+
+            Assert.That(state.PositionSuppression, Is.EqualTo(0f));
+            Assert.That(state.RotationSuppression, Is.EqualTo(0f));
+            Assert.That(state.PositionAuthority, Is.EqualTo(0.25f));
+            Assert.That(state.RotationAuthority, Is.EqualTo(0.75f));
+            Assert.That(state.PositionMappingAuthority, Is.EqualTo(0.4f));
+            Assert.That(state.RotationMappingAuthority, Is.EqualTo(0.6f));
+            Assert.That(state.PositionDampingMultiplier, Is.EqualTo(0.5f));
+            Assert.That(state.RotationDampingMultiplier, Is.EqualTo(0.7f));
+            Assert.That(state.MaxLinearAccelerationMultiplier, Is.EqualTo(0.8f));
+            Assert.That(state.MaxAngularAccelerationMultiplier, Is.EqualTo(0.9f));
+        }
+
+        [Test]
         public void Recovery_IsIndependentPerAuthorityChannel()
         {
             MuscleRuntimeState state = MuscleRuntimeState.Default;

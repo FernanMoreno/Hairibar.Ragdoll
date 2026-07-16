@@ -110,6 +110,26 @@ namespace Hairibar.Ragdoll.Animation
             }
         }
 
+        internal void ReactivateInternal()
+        {
+            if (!IsInitialized) return;
+            OnBehaviourReactivated();
+        }
+
+        internal void TeleportInternal(
+            Quaternion deltaRotation,
+            Vector3 deltaPosition,
+            Vector3 pivot,
+            bool moveToTarget)
+        {
+            if (!IsInitialized) return;
+            OnBehaviourTeleported(
+                deltaRotation,
+                deltaPosition,
+                pivot,
+                moveToTarget);
+        }
+
         internal void FixedUpdateInternal(float deltaTime)
         {
             OnBehaviourFixedUpdate(deltaTime);
@@ -158,6 +178,27 @@ namespace Hairibar.Ragdoll.Animation
 
         /// <summary>Called before this stops being the active behaviour.</summary>
         protected virtual void OnBehaviourDeactivated()
+        {
+        }
+
+        /// <summary>
+        /// Called after the initialized RagdollAnimator has been re-enabled and snapped the
+        /// physical rig to the current Target pose. Behaviour selection is preserved.
+        /// </summary>
+        protected virtual void OnBehaviourReactivated()
+        {
+        }
+
+        /// <summary>
+        /// Called after an external teleport operation has moved the rig. The hook receives
+        /// the exact world-space delta so cached behaviour state can be transformed without
+        /// performing the core teleport a second time.
+        /// </summary>
+        protected virtual void OnBehaviourTeleported(
+            Quaternion deltaRotation,
+            Vector3 deltaPosition,
+            Vector3 pivot,
+            bool moveToTarget)
         {
         }
 

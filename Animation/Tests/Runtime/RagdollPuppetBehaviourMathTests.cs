@@ -199,6 +199,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 Assert.That(
                     behaviour.GetUpKnockOutDistanceMlp,
                     Is.EqualTo(10f));
+                Assert.That(behaviour.CanMoveTarget, Is.True);
             }
             finally
             {
@@ -224,6 +225,56 @@ namespace Hairibar.Ragdoll.Animation.Tests
                     RagdollPuppetState.GetUp,
                     2f),
                 Is.EqualTo(2f));
+        }
+
+        [Test]
+        public void TeleportMoveToTarget_CompletesOnlyTheGetUpBlend()
+        {
+            Assert.That(
+                RagdollPuppetBehaviourMath.ResolveGetUpBlendProgress(
+                    RagdollPuppetState.GetUp,
+                    0.25f,
+                    true),
+                Is.EqualTo(1f));
+            Assert.That(
+                RagdollPuppetBehaviourMath.ResolveGetUpBlendProgress(
+                    RagdollPuppetState.GetUp,
+                    0.25f,
+                    false),
+                Is.EqualTo(0.25f));
+            Assert.That(
+                RagdollPuppetBehaviourMath.ResolveGetUpBlendProgress(
+                    RagdollPuppetState.Unpinned,
+                    0.25f,
+                    true),
+                Is.EqualTo(0.25f));
+        }
+
+        [Test]
+        public void TeleportRotation_TransformsAndNormalizesCachedGroundDirection()
+        {
+            Vector3 transformed =
+                RagdollPuppetBehaviourMath.TransformDirectionForTeleport(
+                    Vector3.up,
+                    Quaternion.Euler(0f, 0f, -90f),
+                    Vector3.forward);
+
+            Assert.That(transformed.x, Is.EqualTo(1f).Within(0.0001f));
+            Assert.That(transformed.y, Is.EqualTo(0f).Within(0.0001f));
+            Assert.That(transformed.z, Is.EqualTo(0f).Within(0.0001f));
+            Assert.That(transformed.magnitude, Is.EqualTo(1f).Within(0.0001f));
+        }
+
+        [Test]
+        public void TeleportDirection_UsesFallbackForMissingCachedDirection()
+        {
+            Vector3 transformed =
+                RagdollPuppetBehaviourMath.TransformDirectionForTeleport(
+                    Vector3.zero,
+                    Quaternion.identity,
+                    Vector3.forward);
+
+            Assert.That(transformed, Is.EqualTo(Vector3.forward));
         }
 
         [Test]

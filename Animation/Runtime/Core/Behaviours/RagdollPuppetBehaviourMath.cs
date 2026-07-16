@@ -94,6 +94,32 @@ namespace Hairibar.Ragdoll.Animation
                 : 1f;
         }
 
+        internal static float ResolveGetUpBlendProgress(
+            RagdollPuppetState state,
+            float timedProgress,
+            bool completedByTeleport)
+        {
+            return state == RagdollPuppetState.GetUp && completedByTeleport
+                ? 1f
+                : Mathf.Clamp01(timedProgress);
+        }
+
+        internal static Vector3 TransformDirectionForTeleport(
+            Vector3 direction,
+            Quaternion deltaRotation,
+            Vector3 fallback)
+        {
+            Vector3 source = direction.sqrMagnitude > Mathf.Epsilon
+                ? direction.normalized
+                : fallback.sqrMagnitude > Mathf.Epsilon
+                    ? fallback.normalized
+                    : Vector3.up;
+            Vector3 transformed = deltaRotation * source;
+            return transformed.sqrMagnitude > Mathf.Epsilon
+                ? transformed.normalized
+                : Vector3.up;
+        }
+
         internal static bool IsGetUpReady(
             float unpinnedElapsedTime,
             float getUpDelay,

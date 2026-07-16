@@ -84,6 +84,8 @@ namespace Hairibar.Ragdoll.Animation
         [SerializeField, Min(0f)] float getUpRegainPinSpeedMultiplier = 2f;
         [Tooltip("Knock Out Distance multiplier while in GetUp.")]
         [SerializeField, Min(0f)] float getUpKnockOutDistanceMultiplier = 10f;
+        [Tooltip("If disabled, this behaviour will not move the Target root while unpinned or getting up. Intended for externally synchronized or network-owned Target roots.")]
+        [SerializeField, HideInInspector] bool canMoveTarget = true;
 
         [Header("Get Up Orientation")]
         [Tooltip("Root-bone local axis pointing out of the character's chest/front.")]
@@ -115,6 +117,7 @@ namespace Hairibar.Ragdoll.Animation
         RagdollGetUpOrientation getUpOrientation = RagdollGetUpOrientation.Unknown;
         Vector3 preparedGroundNormal = Vector3.up;
         bool targetAlignmentPending;
+        bool getUpBlendCompletedByTeleport;
         long acceptedCollisionCount;
         long rejectedCollisionCount;
         RagdollBoneHandle lastAcceptedCollisionBone = RagdollBoneHandle.Invalid;
@@ -144,7 +147,10 @@ namespace Hairibar.Ragdoll.Animation
             : 0f;
 
         public float GetUpProgress => stateMachine != null
-            ? stateMachine.GetUpProgress(blendToAnimationTime)
+            ? RagdollPuppetBehaviourMath.ResolveGetUpBlendProgress(
+                State,
+                stateMachine.GetUpProgress(blendToAnimationTime),
+                getUpBlendCompletedByTeleport)
             : 1f;
 
         public RagdollBoneHandle LastKnockOutBone => lastKnockOutBone;
@@ -189,6 +195,14 @@ namespace Hairibar.Ragdoll.Animation
             get => getUpKnockOutDistanceMultiplier;
             set => getUpKnockOutDistanceMultiplier = value;
         }
+        public bool CanMoveTarget
+        {
+            get => canMoveTarget;
+            set => canMoveTarget = value;
+        }
+        public bool TargetAlignmentPending => targetAlignmentPending;
+        public bool GetUpBlendCompletedByTeleport =>
+            getUpBlendCompletedByTeleport;
         public float RegainPinSpeed => regainPinSpeed;
         public float MuscleWeightRelativeToPinWeight =>
             muscleWeightRelativeToPinWeight;
@@ -419,6 +433,7 @@ namespace Hairibar.Ragdoll.Animation
             if (State != RagdollPuppetState.GetUp) return false;
 
             targetAlignmentPending = false;
+            getUpBlendCompletedByTeleport = false;
             getUpOrientation = RagdollGetUpOrientation.Unknown;
             return TransitionTo(
                 RagdollPuppetState.Unpinned,
@@ -466,6 +481,7 @@ namespace Hairibar.Ragdoll.Animation
             lastKnockOutBone = RagdollBoneHandle.Invalid;
             getUpOrientation = RagdollGetUpOrientation.Unknown;
             targetAlignmentPending = false;
+            getUpBlendCompletedByTeleport = false;
             unmappedContactTracker.Reset();
             kinematicContactTracker.Reset();
             kinematicActivationQueue.Reset();
@@ -488,6 +504,74 @@ namespace Hairibar.Ragdoll.Animation
             ObserveSurfaceSimulationMode();
             ApplySurfaceConfiguration(true);
             ResetCollisionProcessing(true);
+        }
+
+        protected override void OnBehaviourReactivated()
+        {
+            stateMachine.Reset(RagdollPuppetState.Puppet);
+            groundProbe.Reset();
+            lastKnockOutBone = RagdollBoneHandle.Invalid;
+            getUpOrientation = RagdollGetUpOrientation.Unknown;
+            preparedGroundNormal = GetWorldUp();
+            targetAlignmentPending = false;
+            getUpBlendCompletedByTeleport = false;
+            unmappedContactTracker.Reset();
+            kinematicContactTracker.Reset();
+            kinematicActivationQueue.Reset();
+            unmappedContactActive = false;
+            kinematicActivationContactActive = false;
+            kinematicModeManaged = false;
+            normalModeMappingWeight =
+                RagdollPuppetNormalModeMath.ResolveMappingTarget(
+                    normalMode,
+                    RagdollPuppetState.Puppet,
+                    false);
+            lastKinematicActivationSource =
+                RagdollPuppetKinematicActivationSource.None;
+            lastKinematicActivationImpulse = 0f;
+            lastKinematicActivationFixedTime = 0f;
+            kinematicActivationCount = 0L;
+
+            if (!IsActive) return;
+
+            Context.Muscles.ClearAllSuppressions();
+            ApplyRecoveryConfiguration();
+            hasObservedSurfaceSimulationMode = false;
+            if (!colliderSurfaceController.BaselineCaptured)
+            {
+                colliderSurfaceController.CaptureBaseline();
+            }
+            ObserveSurfaceSimulationMode();
+            ApplySurfaceConfiguration(true);
+            ResetCollisionProcessing(true);
+        }
+
+        protected override void OnBehaviourTeleported(
+            Quaternion deltaRotation,
+            Vector3 deltaPosition,
+            Vector3 pivot,
+            bool moveToTarget)
+        {
+            if (groundProbe != null)
+            {
+                groundProbe.Reset();
+            }
+
+            preparedGroundNormal =
+                RagdollPuppetBehaviourMath.TransformDirectionForTeleport(
+                    preparedGroundNormal,
+                    deltaRotation,
+                    GetWorldUp());
+
+            if (State != RagdollPuppetState.GetUp || !moveToTarget)
+            {
+                return;
+            }
+
+            // The external teleport has already moved the Target with the Puppet. Do not
+            // apply the pending one-shot root correction again and do not restart GetUp.
+            targetAlignmentPending = false;
+            getUpBlendCompletedByTeleport = true;
         }
 
         protected override void OnBehaviourDeactivated()
@@ -514,6 +598,7 @@ namespace Hairibar.Ragdoll.Animation
             lastKnockOutBone = RagdollBoneHandle.Invalid;
             getUpOrientation = RagdollGetUpOrientation.Unknown;
             targetAlignmentPending = false;
+            getUpBlendCompletedByTeleport = false;
             unmappedContactTracker.Reset();
             kinematicContactTracker.Reset();
             kinematicActivationQueue.Reset();
@@ -611,6 +696,7 @@ namespace Hairibar.Ragdoll.Animation
                 if (stateMachine.Advance(deltaTime, minimumGetUpDuration))
                 {
                     getUpOrientation = RagdollGetUpOrientation.Unknown;
+                    getUpBlendCompletedByTeleport = false;
                     ApplyRecoveryConfiguration();
                     ApplySurfaceConfiguration(true);
                     RaiseStateChanged(
@@ -660,7 +746,10 @@ namespace Hairibar.Ragdoll.Animation
                 return;
             }
 
-            ApplyTargetRootAlignment(pairs);
+            if (canMoveTarget)
+            {
+                ApplyTargetRootAlignment(pairs);
+            }
             targetAlignmentPending = false;
         }
 
@@ -1117,6 +1206,7 @@ namespace Hairibar.Ragdoll.Animation
                 ? groundNormal.normalized
                 : GetWorldUp();
             targetAlignmentPending = true;
+            getUpBlendCompletedByTeleport = false;
             GetUpPoseSelected?.Invoke(orientation);
             return true;
         }
@@ -1301,6 +1391,7 @@ namespace Hairibar.Ragdoll.Animation
             }
 
             targetAlignmentPending = false;
+            getUpBlendCompletedByTeleport = false;
             getUpOrientation = RagdollGetUpOrientation.Unknown;
             lastKnockOutBone = source;
             return true;
@@ -1320,11 +1411,17 @@ namespace Hairibar.Ragdoll.Animation
 
             if (next == RagdollPuppetState.Unpinned)
             {
+                getUpBlendCompletedByTeleport = false;
                 LimitVelocitiesForUnpinnedState();
             }
             else if (next == RagdollPuppetState.GetUp)
             {
+                getUpBlendCompletedByTeleport = false;
                 Context.Muscles.SetAllPositionSuppressions(1f);
+            }
+            else
+            {
+                getUpBlendCompletedByTeleport = false;
             }
 
             ApplyRecoveryConfiguration();

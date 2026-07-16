@@ -151,6 +151,13 @@ namespace Hairibar.Ragdoll.Animation
         void OnEnable()
         {
             SnapToTargetPose();
+
+            RagdollBehaviourController behaviourController =
+                GetComponent<RagdollBehaviourController>();
+            if (behaviourController && behaviourController.IsInitialized)
+            {
+                behaviourController.ReactivateAfterAnimator();
+            }
         }
 
         void OnDisable()
