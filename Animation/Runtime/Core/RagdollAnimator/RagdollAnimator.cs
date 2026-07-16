@@ -168,6 +168,7 @@ namespace Hairibar.Ragdoll.Animation
 
             RestoreAnimatedPose();
             ModifyTargetPose();
+            UpdateJointRuntimeBeforeSimulation();
             DoAnimationMatching();
         }
 
@@ -206,6 +207,7 @@ namespace Hairibar.Ragdoll.Animation
         void Awake()
         {
             pinSettings.Normalize();
+            jointRuntimeSettings.Normalize();
 
             if (!_ragdollBindings)
             {
@@ -236,6 +238,7 @@ namespace Hairibar.Ragdoll.Animation
 
             GatherMappingModifiers();
             InitializeLifecycle();
+            InitializeJointRuntime();
 
             SnapToTargetPose();
         }
@@ -247,6 +250,7 @@ namespace Hairibar.Ragdoll.Animation
                 SnapToTargetPose();
             }
             RestoreLifecycleAfterEnable();
+            RefreshJointRuntimeConfiguration();
 
             RagdollBehaviourController behaviourController =
                 GetComponent<RagdollBehaviourController>();
@@ -264,6 +268,7 @@ namespace Hairibar.Ragdoll.Animation
         void OnDestroy()
         {
             ShutdownLifecycle();
+            ShutdownJointRuntime();
         }
 
         void OnDisable()

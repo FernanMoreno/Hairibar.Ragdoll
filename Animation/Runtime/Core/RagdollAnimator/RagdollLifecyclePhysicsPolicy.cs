@@ -5,10 +5,10 @@ using UnityEngine;
 namespace Hairibar.Ragdoll.Animation
 {
     /// <summary>
-    /// Reversible physical policy applied for the complete Dead/Frozen lifecycle. It
-    /// restores authored angular motions while dying and temporarily enables collisions
-    /// between every pair of registered ragdoll bones without replacing collider enabled
-    /// state or collision materials.
+    /// Captures the authored angular motions and internal-collision state shared by
+    /// global joint controls and the complete Dead/Frozen lifecycle. Death can restore
+    /// authored limits temporarily and enable collisions without replacing collider
+    /// enabled state or collision materials, then roll back to the exact pre-kill state.
     /// </summary>
     internal sealed class RagdollLifecyclePhysicsPolicy
     {
@@ -78,6 +78,7 @@ namespace Hairibar.Ragdoll.Animation
         internal bool IsActive => active;
         internal bool AngularLimitsApplied => angularLimitsApplied;
         internal bool InternalCollisionsApplied => internalCollisionsApplied;
+        internal int JointCount => joints.Length;
         internal int InternalColliderPairCount => colliderPairs.Length;
 
         internal RagdollLifecyclePhysicsPolicy(
@@ -144,6 +145,58 @@ namespace Hairibar.Ragdoll.Animation
             return new RagdollLifecyclePhysicsPolicy(
                 jointRecords.ToArray(),
                 pairs.ToArray());
+        }
+
+
+        internal void SetAngularLimits(bool limited)
+        {
+            for (int index = 0; index < joints.Length; index++)
+            {
+                JointRecord record = joints[index];
+                if (!record.Joint) continue;
+
+                if (limited)
+                {
+                    record.Authored.Apply(record.Joint);
+                }
+                else
+                {
+                    record.Joint.angularXMotion =
+                        ConfigurableJointMotion.Free;
+                    record.Joint.angularYMotion =
+                        ConfigurableJointMotion.Free;
+                    record.Joint.angularZMotion =
+                        ConfigurableJointMotion.Free;
+                }
+            }
+        }
+
+        internal bool AngularLimitsMatch(bool limited)
+        {
+            for (int index = 0; index < joints.Length; index++)
+            {
+                JointRecord record = joints[index];
+                if (!record.Joint) continue;
+
+                if (limited)
+                {
+                    if (!record.Authored.Matches(record.Joint))
+                    {
+                        return false;
+                    }
+                }
+                else if (record.Joint.angularXMotion
+                        != ConfigurableJointMotion.Free
+                    || record.Joint.angularYMotion
+                        != ConfigurableJointMotion.Free
+                    || record.Joint.angularZMotion
+                        != ConfigurableJointMotion.Free)
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         internal void BeginKill(

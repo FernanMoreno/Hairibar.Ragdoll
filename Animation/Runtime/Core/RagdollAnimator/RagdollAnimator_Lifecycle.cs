@@ -219,7 +219,8 @@ namespace Hairibar.Ragdoll.Animation
             lifecycleSettings.Normalize();
             ForceActiveSimulationForDeath();
             lifecyclePhysicsPolicy.BeginKill(
-                lifecycleSettings.EnableAngularLimitsOnKill,
+                lifecycleSettings.EnableAngularLimitsOnKill
+                    && !manualAngularLimitControl,
                 lifecycleSettings.EnableInternalCollisionsOnKill);
 
             lifecycleKilling = true;

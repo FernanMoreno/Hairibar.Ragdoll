@@ -94,6 +94,45 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [Test]
+        public void AngularLimitPolicy_FreesAndRestoresAuthoredMotions()
+        {
+            RagdollLifecyclePhysicsPolicy policy = CreatePolicy();
+
+            policy.SetAngularLimits(false);
+
+            Assert.That(policy.AngularLimitsMatch(false), Is.True);
+            Assert.That(firstJoint.angularXMotion,
+                Is.EqualTo(ConfigurableJointMotion.Free));
+            Assert.That(firstJoint.angularYMotion,
+                Is.EqualTo(ConfigurableJointMotion.Free));
+            Assert.That(secondJoint.angularZMotion,
+                Is.EqualTo(ConfigurableJointMotion.Free));
+
+            policy.SetAngularLimits(true);
+
+            Assert.That(policy.AngularLimitsMatch(true), Is.True);
+            Assert.That(firstJoint.angularXMotion,
+                Is.EqualTo(ConfigurableJointMotion.Limited));
+            Assert.That(firstJoint.angularYMotion,
+                Is.EqualTo(ConfigurableJointMotion.Locked));
+            Assert.That(secondJoint.angularZMotion,
+                Is.EqualTo(ConfigurableJointMotion.Limited));
+        }
+
+        [Test]
+        public void GlobalFreeLimits_AreTemporarilyAuthoredDuringKill()
+        {
+            RagdollLifecyclePhysicsPolicy policy = CreatePolicy();
+            policy.SetAngularLimits(false);
+
+            policy.BeginKill(true, false);
+            Assert.That(policy.AngularLimitsMatch(true), Is.True);
+
+            policy.RestoreAfterDeath();
+            Assert.That(policy.AngularLimitsMatch(false), Is.True);
+        }
+
+        [Test]
         public void PermanentFreeze_AbandonsRollbackWithoutMutatingFrozenState()
         {
             RagdollLifecyclePhysicsPolicy policy = CreatePolicy();

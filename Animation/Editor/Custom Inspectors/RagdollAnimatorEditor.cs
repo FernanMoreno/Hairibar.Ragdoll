@@ -79,6 +79,14 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     "Shapes temporary world-space position authority. Pin Pow curves weights between zero and one; Pin Distance Falloff loosens position pinning as a bone drifts from its Target; Angular Pinning adds an optional world-space torque channel without replacing the muscle Slerp Drive."),
                 true);
 
+            ExtraNaughtyEditorGUILayout.Header("Joint Runtime");
+            EditorGUILayout.PropertyField(
+                serializedObject.FindProperty("jointRuntimeSettings"),
+                new GUIContent(
+                    "Joint Runtime Settings",
+                    "Updates connected anchors from the resolved Target pose and controls whether registered joints use their authored angular motions. Support Translation Animation extends anchor updates to directly parented Target bones."),
+                true);
+
             ExtraNaughtyEditorGUILayout.Header("Mapping");
             EditorGUILayout.Slider(serializedObject.FindProperty("_masterMappingWeight"), 0, 1,
                 new GUIContent("Master Mapping Weight",
@@ -133,6 +141,21 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 EditorGUILayout.LabelField(
                     "Teleport Pending",
                     runtimeAnimator.HasPendingTeleport.ToString());
+                EditorGUILayout.LabelField(
+                    "Runtime Joint Anchor Records",
+                    runtimeAnimator.RuntimeJointAnchorCount.ToString());
+                EditorGUILayout.LabelField(
+                    "Runtime Angular Joints",
+                    runtimeAnimator.RuntimeAngularJointCount.ToString());
+                EditorGUILayout.LabelField(
+                    "Anchors Updated Last Step",
+                    runtimeAnimator.LastJointAnchorUpdateCount.ToString());
+                EditorGUILayout.LabelField(
+                    "Anchors Skipped Last Step",
+                    runtimeAnimator.LastJointAnchorSkippedCount.ToString());
+                EditorGUILayout.LabelField(
+                    "Manual Angular Limit Control",
+                    runtimeAnimator.ManualAngularLimitControl.ToString());
             }
 
             ExtraNaughtyEditorGUILayout.Header("Debug Features (Editor Only)");
