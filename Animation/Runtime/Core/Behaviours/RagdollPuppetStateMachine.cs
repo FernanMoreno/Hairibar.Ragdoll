@@ -39,7 +39,7 @@ namespace Hairibar.Ragdoll.Animation
         /// <summary>
         /// Advances state-local time. Returns true when GetUp completed automatically.
         /// </summary>
-        internal bool Advance(float deltaTime, float getUpDuration)
+        internal bool Advance(float deltaTime, float minimumGetUpDuration)
         {
             StateElapsedTime += Mathf.Max(0f, deltaTime);
             if (State != RagdollPuppetState.GetUp)
@@ -47,7 +47,7 @@ namespace Hairibar.Ragdoll.Animation
                 return false;
             }
 
-            float duration = Mathf.Max(0f, getUpDuration);
+            float duration = Mathf.Max(0f, minimumGetUpDuration);
             if (duration > Mathf.Epsilon && StateElapsedTime < duration)
             {
                 return false;

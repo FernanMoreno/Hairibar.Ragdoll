@@ -125,6 +125,47 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [Test]
+        public void GetUpStateResistanceMultipliesEffectiveResistance()
+        {
+            float resistance =
+                RagdollPuppetCollisionResponseMath.EvaluateEffectiveResistance(
+                    3f,
+                    2f,
+                    0.5f,
+                    2f);
+
+            Assert.That(resistance, Is.EqualTo(6f).Within(0.0001f));
+        }
+
+        [Test]
+        public void GetUpStateResistanceReducesSuppression()
+        {
+            float suppression =
+                RagdollPuppetCollisionResponseMath.EvaluatePositionSuppression(
+                    3f,
+                    3f,
+                    1f,
+                    1f,
+                    2f);
+
+            Assert.That(suppression, Is.EqualTo(0.5f).Within(0.0001f));
+        }
+
+        [Test]
+        public void ZeroStateResistanceProducesFullSuppressionForPositiveImpulse()
+        {
+            float suppression =
+                RagdollPuppetCollisionResponseMath.EvaluatePositionSuppression(
+                    1f,
+                    3f,
+                    1f,
+                    1f,
+                    0f);
+
+            Assert.That(suppression, Is.EqualTo(1f));
+        }
+
+        [Test]
         public void SuppressionIsClampedAndRejectsInvalidImpulse()
         {
             Assert.That(

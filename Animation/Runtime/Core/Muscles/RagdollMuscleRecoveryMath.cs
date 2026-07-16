@@ -20,6 +20,14 @@ namespace Hairibar.Ragdoll.Animation
             return (float) product;
         }
 
+        internal static float ResolveMinimumPositionAuthority(
+            float configuredMinimum,
+            float runtimeMultiplier)
+        {
+            return SanitizeWeight(configuredMinimum, 0f)
+                * SanitizeWeight(runtimeMultiplier, 1f);
+        }
+
         internal static float ResolveEffectivePositionAuthority(
             float persistentAuthority,
             float positionSuppression,
@@ -48,7 +56,7 @@ namespace Hairibar.Ragdoll.Animation
             return SanitizeNonNegative(value, fallback);
         }
 
-        static float SanitizeWeight(float value, float fallback)
+        internal static float SanitizeWeight(float value, float fallback)
         {
             if (float.IsNaN(value) || float.IsInfinity(value))
             {

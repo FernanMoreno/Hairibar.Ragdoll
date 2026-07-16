@@ -49,16 +49,17 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [Test]
-        public void GetUpCompletesAfterBlendDuration()
+        public void GetUpCompletionUsesIndependentMinimumDuration()
         {
             RagdollPuppetStateMachine machine =
                 new RagdollPuppetStateMachine();
             machine.TryTransition(RagdollPuppetState.Unpinned);
             machine.TryTransition(RagdollPuppetState.GetUp);
 
-            Assert.That(machine.Advance(0.4f, 1f), Is.False);
-            Assert.That(machine.GetUpProgress(1f), Is.EqualTo(0.4f).Within(0.0001f));
-            Assert.That(machine.Advance(0.6f, 1f), Is.True);
+            Assert.That(machine.Advance(0.2f, 1f), Is.False);
+            Assert.That(machine.GetUpProgress(0.2f), Is.EqualTo(1f));
+            Assert.That(machine.Advance(0.79f, 1f), Is.False);
+            Assert.That(machine.Advance(0.01f, 1f), Is.True);
             Assert.That(machine.State, Is.EqualTo(RagdollPuppetState.Puppet));
         }
 

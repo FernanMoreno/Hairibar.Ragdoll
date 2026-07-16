@@ -62,6 +62,26 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [Test]
+        public void RuntimeMinimumMultiplier_CanReleaseGetUpPinCompletely()
+        {
+            Assert.That(
+                RagdollMuscleRecoveryMath.ResolveMinimumPositionAuthority(
+                    0.4f,
+                    0f),
+                Is.EqualTo(0f));
+            Assert.That(
+                RagdollMuscleRecoveryMath.ResolveMinimumPositionAuthority(
+                    0.4f,
+                    1f),
+                Is.EqualTo(0.4f).Within(0.0001f));
+            Assert.That(
+                RagdollMuscleRecoveryMath.ResolveMinimumPositionAuthority(
+                    float.NaN,
+                    float.PositiveInfinity),
+                Is.EqualTo(0f));
+        }
+
+        [Test]
         public void EffectiveAuthorityRespectsSemanticMinimum()
         {
             Assert.That(

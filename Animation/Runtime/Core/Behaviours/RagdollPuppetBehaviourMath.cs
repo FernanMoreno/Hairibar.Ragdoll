@@ -85,6 +85,15 @@ namespace Hairibar.Ragdoll.Animation
                 <= Mathf.Clamp01(pinWeightThreshold);
         }
 
+        internal static float ResolveGetUpStateMultiplier(
+            RagdollPuppetState state,
+            float getUpMultiplier)
+        {
+            return state == RagdollPuppetState.GetUp
+                ? Mathf.Max(0f, getUpMultiplier)
+                : 1f;
+        }
+
         internal static bool IsGetUpReady(
             float unpinnedElapsedTime,
             float getUpDelay,
@@ -94,7 +103,7 @@ namespace Hairibar.Ragdoll.Animation
             return Mathf.Max(0f, unpinnedElapsedTime)
                     >= Mathf.Max(0f, getUpDelay)
                 && Mathf.Max(0f, rootSpeed)
-                    <= Mathf.Max(0f, maximumGetUpVelocity);
+                    < Mathf.Max(0f, maximumGetUpVelocity);
         }
     }
 }

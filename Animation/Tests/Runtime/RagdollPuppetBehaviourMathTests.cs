@@ -34,7 +34,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [Test]
-        public void GetUpWeights_BlendBackToPuppet()
+        public void GetUpWeights_KeepPinRecoveryIndependentFromTargetBlend()
         {
             RagdollPuppetStateWeights weights =
                 RagdollPuppetStateWeights.Evaluate(
@@ -42,7 +42,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
                     0.5f,
                     0.2f);
 
-            Assert.That(weights.PositionAuthority, Is.EqualTo(0.5f));
+            Assert.That(weights.PositionAuthority, Is.EqualTo(1f));
             Assert.That(weights.RotationAuthority, Is.EqualTo(0.6f).Within(0.0001f));
             Assert.That(weights.MaximumMappingBlend, Is.EqualTo(0.5f));
         }
@@ -177,7 +177,57 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [Test]
-        public void GetUpReadiness_RequiresDelayAndLowVelocity()
+        public void GetUpDefaults_MatchDocumentedPublicSurface()
+        {
+            GameObject gameObject = new GameObject("Puppet behaviour defaults");
+            try
+            {
+                RagdollPuppetBehaviour behaviour =
+                    gameObject.AddComponent<RagdollPuppetBehaviour>();
+
+                Assert.That(behaviour.CanGetUp, Is.True);
+                Assert.That(behaviour.GetUpDelay, Is.EqualTo(5f));
+                Assert.That(behaviour.BlendToAnimationTime, Is.EqualTo(0.2f));
+                Assert.That(behaviour.MaxGetUpVelocity, Is.EqualTo(0.3f));
+                Assert.That(behaviour.MinGetUpDuration, Is.EqualTo(1f));
+                Assert.That(
+                    behaviour.GetUpCollisionResistanceMlp,
+                    Is.EqualTo(2f));
+                Assert.That(
+                    behaviour.GetUpRegainPinSpeedMlp,
+                    Is.EqualTo(2f));
+                Assert.That(
+                    behaviour.GetUpKnockOutDistanceMlp,
+                    Is.EqualTo(10f));
+            }
+            finally
+            {
+                Object.DestroyImmediate(gameObject);
+            }
+        }
+
+        [Test]
+        public void GetUpStateMultiplier_IsConfiguredOnlyDuringGetUp()
+        {
+            Assert.That(
+                RagdollPuppetBehaviourMath.ResolveGetUpStateMultiplier(
+                    RagdollPuppetState.Puppet,
+                    2f),
+                Is.EqualTo(1f));
+            Assert.That(
+                RagdollPuppetBehaviourMath.ResolveGetUpStateMultiplier(
+                    RagdollPuppetState.Unpinned,
+                    2f),
+                Is.EqualTo(1f));
+            Assert.That(
+                RagdollPuppetBehaviourMath.ResolveGetUpStateMultiplier(
+                    RagdollPuppetState.GetUp,
+                    2f),
+                Is.EqualTo(2f));
+        }
+
+        [Test]
+        public void GetUpReadiness_RequiresDelayAndStrictlyLowerVelocity()
         {
             Assert.That(
                 RagdollPuppetBehaviourMath.IsGetUpReady(
@@ -190,6 +240,10 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Assert.That(
                 RagdollPuppetBehaviourMath.IsGetUpReady(
                     1f, 1f, 0.6f, 0.5f),
+                Is.False);
+            Assert.That(
+                RagdollPuppetBehaviourMath.IsGetUpReady(
+                    1f, 1f, 0.5f, 0.5f),
                 Is.False);
         }
     }

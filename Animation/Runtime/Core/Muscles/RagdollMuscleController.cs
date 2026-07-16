@@ -22,6 +22,7 @@ namespace Hairibar.Ragdoll.Animation
 
         // Runtime owner multiplier. BehaviourPuppet sets this while active and restores 1 on exit.
         float positionSuppressionRecoveryMultiplier = 1f;
+        float minimumPositionAuthorityMultiplier = 1f;
 
         RagdollDefinitionBindings bindings;
         RagdollMuscleProfileRuntime runtimeProfile;
@@ -47,6 +48,8 @@ namespace Hairibar.Ragdoll.Animation
 
         public float PositionSuppressionRecoveryMultiplier =>
             positionSuppressionRecoveryMultiplier;
+        public float MinimumPositionAuthorityMultiplier =>
+            minimumPositionAuthorityMultiplier;
 
         public void Initialize(IEnumerable<RagdollAnimator.AnimatedPair> pairs)
         {
@@ -99,7 +102,7 @@ namespace Hairibar.Ragdoll.Animation
             AdvanceRecovery(index, CurrentTime);
             states[index].ApplyTo(
                 ref boneProfile,
-                GetBehaviourSettings(index).minimumPositionAuthority);
+                GetAppliedMinimumPositionAuthority(index));
         }
 
         public void ModifyMapping(
@@ -164,7 +167,13 @@ namespace Hairibar.Ragdoll.Animation
             return RagdollMuscleRecoveryMath.ResolveEffectivePositionAuthority(
                 state.PositionAuthority,
                 state.PositionSuppression,
-                GetBehaviourSettings(index).minimumPositionAuthority);
+                GetAppliedMinimumPositionAuthority(index));
+        }
+
+        internal float GetAppliedMinimumPositionAuthority(
+            RagdollBoneHandle bone)
+        {
+            return GetAppliedMinimumPositionAuthority(ValidateHandle(bone));
         }
 
         /// <summary>
@@ -191,6 +200,40 @@ namespace Hairibar.Ragdoll.Animation
         internal void ClearPositionSuppressionRecoveryMultiplier()
         {
             SetPositionSuppressionRecoveryMultiplier(1f);
+        }
+
+        internal void SetMinimumPositionAuthorityMultiplier(float multiplier)
+        {
+            minimumPositionAuthorityMultiplier =
+                RagdollMuscleRecoveryMath.SanitizeWeight(multiplier, 1f);
+        }
+
+        internal void ClearMinimumPositionAuthorityMultiplier()
+        {
+            SetMinimumPositionAuthorityMultiplier(1f);
+        }
+
+        float GetAppliedMinimumPositionAuthority(int index)
+        {
+            return RagdollMuscleRecoveryMath.ResolveMinimumPositionAuthority(
+                GetBehaviourSettings(index).minimumPositionAuthority,
+                minimumPositionAuthorityMultiplier);
+        }
+
+        internal void SetAllPositionSuppressions(float suppression)
+        {
+            EnsureInitialized();
+
+            float now = CurrentTime;
+            AdvanceAllRecovery(now);
+            float value = RagdollMuscleRecoveryMath.SanitizeWeight(
+                suppression,
+                0f);
+            for (int index = 0; index < states.Length; index++)
+            {
+                states[index].SetPositionSuppression(value);
+                lastRecoveryTimes[index] = now;
+            }
         }
 
         public void SetAuthorities(RagdollBoneHandle bone, float positionAuthority, float rotationAuthority)

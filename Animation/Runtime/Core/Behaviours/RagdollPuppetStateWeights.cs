@@ -41,7 +41,9 @@ namespace Hairibar.Ragdoll.Animation
                 case RagdollPuppetState.GetUp:
                     return new RagdollPuppetStateWeights
                     {
-                        PositionAuthority = progress,
+                        // The muscle controller owns the stateful pin recovery in GetUp.
+                        // Target blending therefore does not multiply position authority here.
+                        PositionAuthority = 1f,
                         RotationAuthority = Mathf.Lerp(muscleWeight, 1f, progress),
                         MaximumMappingBlend = 1f - progress
                     };

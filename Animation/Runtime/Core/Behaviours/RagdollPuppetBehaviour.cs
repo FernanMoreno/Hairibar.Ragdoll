@@ -1,11 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Serialization;
 
 namespace Hairibar.Ragdoll.Animation
 {
     /// <summary>
-    /// Puppet/Unpinned/GetUp behaviour with ground validation, center-of-mass sampling,
+    /// Puppet/Unpinned/GetUp behaviour with ground sampling, center-of-mass sampling,
     /// prone/supine selection and one-shot Target root alignment before GetUp blending.
     /// </summary>
     [AddComponentMenu("Ragdoll/Behaviours/Ragdoll Puppet Behaviour")]
@@ -60,14 +61,29 @@ namespace Hairibar.Ragdoll.Animation
         [SerializeField, Min(0f)] float groundProbeStartOffset = 0.1f;
         [SerializeField, Min(0.001f)] float groundProbeDistance = 1f;
         [SerializeField, Range(0f, 89.9f)] float maximumGroundAngle = 60f;
-        [SerializeField, Min(0f)] float minimumGroundedTime = 0.25f;
 
         [Header("Getting Up")]
-        [SerializeField] bool automaticGetUp = true;
-        [SerializeField, Min(0f)] float getUpDelay = 1f;
-        [SerializeField, Min(0f)] float blendToAnimationTime = 0.5f;
-        [SerializeField, Min(0f)] float maximumGetUpVelocity = 0.5f;
-        [SerializeField, Min(0f)] float getUpKnockOutDistanceMultiplier = 2f;
+        [Tooltip(
+            "Automatically enters GetUp after Get Up Delay once the hip "
+            + "Rigidbody speed is below Max Get Up Velocity.")]
+        [FormerlySerializedAs("automaticGetUp")]
+        [SerializeField] bool canGetUp = true;
+        [Tooltip("Minimum delay after losing balance before automatic GetUp can begin.")]
+        [SerializeField, Min(0f)] float getUpDelay = 5f;
+        [Tooltip("Duration of blending the Target from the ragdoll pose to the get-up animation.")]
+        [SerializeField, Min(0f)] float blendToAnimationTime = 0.2f;
+        [Tooltip("Automatic GetUp waits until the hip Rigidbody speed is below this value.")]
+        [SerializeField, Min(0f)] float maximumGetUpVelocity = 0.3f;
+        [Tooltip(
+            "Minimum duration of the GetUp state before returning to Puppet. "
+            + "Independent from Blend To Animation Time.")]
+        [SerializeField, Min(0f)] float minimumGetUpDuration = 1f;
+        [Tooltip("Collision resistance multiplier while in GetUp.")]
+        [SerializeField, Min(0f)] float getUpCollisionResistanceMultiplier = 2f;
+        [Tooltip("Regain Pin Speed multiplier while in GetUp.")]
+        [SerializeField, Min(0f)] float getUpRegainPinSpeedMultiplier = 2f;
+        [Tooltip("Knock Out Distance multiplier while in GetUp.")]
+        [SerializeField, Min(0f)] float getUpKnockOutDistanceMultiplier = 10f;
 
         [Header("Get Up Orientation")]
         [Tooltip("Root-bone local axis pointing out of the character's chest/front.")]
@@ -94,6 +110,7 @@ namespace Hairibar.Ragdoll.Animation
         RagdollSimulationMode lastObservedSurfaceSimulationMode;
         bool hasObservedSurfaceSimulationMode;
         RagdollAnimator.AnimatedPair rootPair;
+        RagdollAnimator.AnimatedPair getUpReferencePair;
         RagdollBoneHandle lastKnockOutBone = RagdollBoneHandle.Invalid;
         RagdollGetUpOrientation getUpOrientation = RagdollGetUpOrientation.Unknown;
         Vector3 preparedGroundNormal = Vector3.up;
@@ -132,6 +149,46 @@ namespace Hairibar.Ragdoll.Animation
 
         public RagdollBoneHandle LastKnockOutBone => lastKnockOutBone;
         public RagdollGetUpOrientation GetUpOrientation => getUpOrientation;
+        public bool CanGetUp
+        {
+            get => canGetUp;
+            set => canGetUp = value;
+        }
+        public float GetUpDelay
+        {
+            get => getUpDelay;
+            set => getUpDelay = value;
+        }
+        public float BlendToAnimationTime
+        {
+            get => blendToAnimationTime;
+            set => blendToAnimationTime = value;
+        }
+        public float MaxGetUpVelocity
+        {
+            get => maximumGetUpVelocity;
+            set => maximumGetUpVelocity = value;
+        }
+        public float MinGetUpDuration
+        {
+            get => minimumGetUpDuration;
+            set => minimumGetUpDuration = value;
+        }
+        public float GetUpCollisionResistanceMlp
+        {
+            get => getUpCollisionResistanceMultiplier;
+            set => getUpCollisionResistanceMultiplier = value;
+        }
+        public float GetUpRegainPinSpeedMlp
+        {
+            get => getUpRegainPinSpeedMultiplier;
+            set => getUpRegainPinSpeedMultiplier = value;
+        }
+        public float GetUpKnockOutDistanceMlp
+        {
+            get => getUpKnockOutDistanceMultiplier;
+            set => getUpKnockOutDistanceMultiplier = value;
+        }
         public float RegainPinSpeed => regainPinSpeed;
         public float MuscleWeightRelativeToPinWeight =>
             muscleWeightRelativeToPinWeight;
@@ -221,23 +278,20 @@ namespace Hairibar.Ragdoll.Animation
                     return false;
                 }
 
-                RagdollGroundingSnapshot grounding = Grounding;
-                if (!grounding.IsGrounded
-                    || grounding.StableTime < Mathf.Max(0f, minimumGroundedTime))
-                {
-                    return false;
-                }
-
                 if (!RagdollPuppetBehaviourMath.IsGetUpReady(
                     StateElapsedTime,
                     getUpDelay,
-                    Context.Bindings.Root.Rigidbody.velocity.magnitude,
+                    getUpReferencePair.RagdollBone.Rigidbody.velocity.magnitude,
                     maximumGetUpVelocity))
                 {
                     return false;
                 }
 
-                return ResolveGetUpOrientation(grounding.GroundNormal)
+                RagdollGroundingSnapshot grounding = Grounding;
+                Vector3 groundNormal = grounding.IsGrounded
+                    ? grounding.GroundNormal
+                    : GetWorldUp();
+                return ResolveGetUpOrientation(groundNormal)
                     != RagdollGetUpOrientation.Unknown;
             }
         }
@@ -316,16 +370,19 @@ namespace Hairibar.Ragdoll.Animation
         }
 
         /// <summary>
-        /// Starts GetUp after delay, hip-velocity, stable-ground and orientation checks pass.
+        /// Starts GetUp after delay, hip-velocity and orientation checks pass.
         /// </summary>
         public bool TryBeginGetUp()
         {
             if (!CanBeginGetUp) return false;
 
             RagdollGroundingSnapshot grounding = Grounding;
+            Vector3 groundNormal = grounding.IsGrounded
+                ? grounding.GroundNormal
+                : GetWorldUp();
             return BeginGetUp(
-                ResolveGetUpOrientation(grounding.GroundNormal),
-                grounding.GroundNormal);
+                ResolveGetUpOrientation(groundNormal),
+                groundNormal);
         }
 
         /// <summary>
@@ -399,6 +456,7 @@ namespace Hairibar.Ragdoll.Animation
             kinematicActivationContactActive = false;
             kinematicModeManaged = false;
             rootPair = FindRootPair();
+            getUpReferencePair = FindGetUpReferencePair();
         }
 
         protected override void OnBehaviourActivated()
@@ -440,6 +498,7 @@ namespace Hairibar.Ragdoll.Animation
             }
             hasObservedSurfaceSimulationMode = false;
             Context.Muscles.ClearPositionSuppressionRecoveryMultiplier();
+            Context.Muscles.ClearMinimumPositionAuthorityMultiplier();
             ReleaseKinematicSimulationMode(true);
 
             if (stateMachine != null)
@@ -549,9 +608,10 @@ namespace Hairibar.Ragdoll.Animation
             if (State != RagdollPuppetState.GetUp || !targetAlignmentPending)
             {
                 RagdollPuppetState previous = State;
-                if (stateMachine.Advance(deltaTime, blendToAnimationTime))
+                if (stateMachine.Advance(deltaTime, minimumGetUpDuration))
                 {
                     getUpOrientation = RagdollGetUpOrientation.Unknown;
+                    ApplyRecoveryConfiguration();
                     ApplySurfaceConfiguration(true);
                     RaiseStateChanged(
                         previous,
@@ -560,7 +620,7 @@ namespace Hairibar.Ragdoll.Animation
                 }
             }
 
-            if (automaticGetUp
+            if (canGetUp
                 && State == RagdollPuppetState.Unpinned
                 && TryBeginGetUp())
             {
@@ -988,17 +1048,23 @@ namespace Hairibar.Ragdoll.Animation
             float muscleResistance = Context.Muscles
                 .GetBehaviourSettings(collisionEvent.Bone)
                 .collisionResistance;
+            float stateResistanceMultiplier =
+                RagdollPuppetBehaviourMath.ResolveGetUpStateMultiplier(
+                    State,
+                    getUpCollisionResistanceMultiplier);
             float effectiveResistance =
                 RagdollPuppetCollisionResponseMath.EvaluateEffectiveResistance(
                     globalResistance,
                     layerResolution.ResistanceMultiplier,
-                    muscleResistance);
+                    muscleResistance,
+                    stateResistanceMultiplier);
             float positionSuppression =
                 RagdollPuppetCollisionResponseMath.EvaluatePositionSuppression(
                     collisionEvent.ImpulseMagnitude,
                     globalResistance,
                     layerResolution.ResistanceMultiplier,
-                    muscleResistance);
+                    muscleResistance,
+                    stateResistanceMultiplier);
 
             lastCollisionResponse =
                 new RagdollPuppetCollisionResponseSnapshot(
@@ -1010,6 +1076,7 @@ namespace Hairibar.Ragdoll.Animation
                     globalResistance,
                     layerResolution.ResistanceMultiplier,
                     muscleResistance,
+                    stateResistanceMultiplier,
                     effectiveResistance,
                     positionSuppression,
                     layerResolution.RuleIndex);
@@ -1058,7 +1125,7 @@ namespace Hairibar.Ragdoll.Animation
         {
             RagdollGetUpOrientation classified =
                 RagdollGetUpAlignmentMath.Classify(
-                    rootPair.RagdollBone.Transform.rotation,
+                    getUpReferencePair.RagdollBone.Transform.rotation,
                     bodyFrontAxis,
                     groundNormal,
                     minimumOrientationDot);
@@ -1084,9 +1151,9 @@ namespace Hairibar.Ragdoll.Animation
             RagdollGetUpAlignmentMath.CalculateTargetRootPose(
                 previousRootPosition,
                 previousRootRotation,
-                rootPair.TargetBone.position,
-                rootPair.RagdollBone.Transform.position,
-                rootPair.RagdollBone.Transform.rotation,
+                getUpReferencePair.TargetBone.position,
+                getUpReferencePair.RagdollBone.Transform.position,
+                getUpReferencePair.RagdollBone.Transform.rotation,
                 bodyUpAxis,
                 getUpOrientation,
                 preparedGroundNormal,
@@ -1140,6 +1207,24 @@ namespace Hairibar.Ragdoll.Animation
                 "RagdollPuppetBehaviour requires an animated pair for the ragdoll root bone.");
         }
 
+        RagdollAnimator.AnimatedPair FindGetUpReferencePair()
+        {
+            for (int index = 0; index < Context.Pairs.Count; index++)
+            {
+                RagdollAnimator.AnimatedPair pair = Context.Pairs[index];
+                RagdollMuscleGroup group;
+                if (Context.Muscles.TryGetMuscleGroup(pair.Handle, out group)
+                    && group == RagdollMuscleGroup.Hips)
+                {
+                    return pair;
+                }
+            }
+
+            // A muscle profile is optional. Without an explicit Hips assignment,
+            // the ragdoll root remains the deterministic pelvis-compatible fallback.
+            return rootPair;
+        }
+
         bool TryFindKnockOutBone(out RagdollBoneHandle knockOutBone)
         {
             float stateDistanceMultiplier =
@@ -1176,7 +1261,7 @@ namespace Hairibar.Ragdoll.Animation
                     RagdollPuppetBehaviourMath.ResolveEffectivePinWeight(
                         configuredPinWeight,
                         muscleState.PositionSuppression,
-                        settings.minimumPositionAuthority,
+                        Context.Muscles.GetAppliedMinimumPositionAuthority(pair.Handle),
                         statePositionAuthority);
 
                 if (!RagdollPuppetBehaviourMath.ShouldLoseBalance(
@@ -1237,7 +1322,12 @@ namespace Hairibar.Ragdoll.Animation
             {
                 LimitVelocitiesForUnpinnedState();
             }
+            else if (next == RagdollPuppetState.GetUp)
+            {
+                Context.Muscles.SetAllPositionSuppressions(1f);
+            }
 
+            ApplyRecoveryConfiguration();
             ApplySurfaceConfiguration(true);
             RaiseStateChanged(previous, next, reason);
             return true;
@@ -1294,8 +1384,21 @@ namespace Hairibar.Ragdoll.Animation
         {
             if (!IsInitialized) return;
 
+            bool gettingUp = State == RagdollPuppetState.GetUp;
+            Context.Muscles.SetMinimumPositionAuthorityMultiplier(
+                gettingUp ? 0f : 1f);
+
+            float stateMultiplier =
+                RagdollPuppetBehaviourMath.ResolveGetUpStateMultiplier(
+                    State,
+                    getUpRegainPinSpeedMultiplier);
+            float effectiveMultiplier =
+                RagdollMuscleRecoveryMath.ResolvePositionRecoveryRate(
+                    1f,
+                    regainPinSpeed,
+                    stateMultiplier);
             Context.Muscles.SetPositionSuppressionRecoveryMultiplier(
-                regainPinSpeed);
+                effectiveMultiplier);
         }
 
         void ApplySurfaceConfiguration(bool force)
@@ -1413,10 +1516,14 @@ namespace Hairibar.Ragdoll.Animation
             groundProbeStartOffset = Mathf.Max(0f, groundProbeStartOffset);
             groundProbeDistance = Mathf.Max(0.001f, groundProbeDistance);
             maximumGroundAngle = Mathf.Clamp(maximumGroundAngle, 0f, 89.9f);
-            minimumGroundedTime = Mathf.Max(0f, minimumGroundedTime);
             getUpDelay = Mathf.Max(0f, getUpDelay);
             blendToAnimationTime = Mathf.Max(0f, blendToAnimationTime);
             maximumGetUpVelocity = Mathf.Max(0f, maximumGetUpVelocity);
+            minimumGetUpDuration = Mathf.Max(0f, minimumGetUpDuration);
+            getUpCollisionResistanceMultiplier =
+                Mathf.Max(0f, getUpCollisionResistanceMultiplier);
+            getUpRegainPinSpeedMultiplier =
+                Mathf.Max(0f, getUpRegainPinSpeedMultiplier);
             getUpKnockOutDistanceMultiplier =
                 Mathf.Max(0f, getUpKnockOutDistanceMultiplier);
             minimumOrientationDot = Mathf.Clamp01(minimumOrientationDot);

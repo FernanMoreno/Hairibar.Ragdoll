@@ -11,6 +11,7 @@
         public float GlobalResistance { get; private set; }
         public float LayerResistanceMultiplier { get; private set; }
         public float MuscleResistanceMultiplier { get; private set; }
+        public float StateResistanceMultiplier { get; private set; }
         public float EffectiveResistance { get; private set; }
         public float PositionSuppression { get; private set; }
         public int LayerRuleIndex { get; private set; }
@@ -41,6 +42,35 @@
             float effectiveResistance,
             float positionSuppression,
             int layerRuleIndex)
+            : this(
+                hasResponse,
+                bone,
+                fixedTime,
+                impulseMagnitude,
+                targetSpeed,
+                globalResistance,
+                layerResistanceMultiplier,
+                muscleResistanceMultiplier,
+                1f,
+                effectiveResistance,
+                positionSuppression,
+                layerRuleIndex)
+        {
+        }
+
+        internal RagdollPuppetCollisionResponseSnapshot(
+            bool hasResponse,
+            RagdollBoneHandle bone,
+            float fixedTime,
+            float impulseMagnitude,
+            float targetSpeed,
+            float globalResistance,
+            float layerResistanceMultiplier,
+            float muscleResistanceMultiplier,
+            float stateResistanceMultiplier,
+            float effectiveResistance,
+            float positionSuppression,
+            int layerRuleIndex)
         {
             HasResponse = hasResponse;
             Bone = bone;
@@ -50,6 +80,7 @@
             GlobalResistance = globalResistance;
             LayerResistanceMultiplier = layerResistanceMultiplier;
             MuscleResistanceMultiplier = muscleResistanceMultiplier;
+            StateResistanceMultiplier = stateResistanceMultiplier;
             EffectiveResistance = effectiveResistance;
             PositionSuppression = positionSuppression;
             LayerRuleIndex = layerRuleIndex;

@@ -22,6 +22,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     + "Collision Resistance can be constant or evaluated from sampled Target speed; layer rules use first-match order. "
                     + "Regain Pin Speed composes with the muscle-controller base rate and semantic group multipliers; Muscle Weight Relative To Pin affects rotational authority only in Puppet state. "
                     + "Max Rigidbody Velocity clamps physical and sampled Target velocity on the transition to Unpinned; Unpinned Muscle Knockout controls whether zero-configured-pin muscles may knock out the whole Puppet. "
+                    + "Blend To Animation Time controls Target blending independently from Minimum Get Up Duration; Get Up Collision Resistance and Get Up Regain Pin Speed multiply their base values only while GetUp is active. "
                     + "Muscle-profile surface settings can disable colliders only in Puppet and assign shared PhysicMaterials for Puppet/GetUp or Unpinned; the captured baseline is restored when the behaviour deactivates. "
                     + "Normal Mode Unmapped suppresses mapping without contact. Kinematic delegates global Rigidbody mode changes to RagdollSimulationModeController and activates only from accepted contacts that satisfy its source and impulse filters. "
                     + "Body Front Axis must point out of the chest and Body Up Axis must match character up while standing.",
@@ -72,6 +73,18 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 + behaviour.MaxRigidbodyVelocity.ToString("F2")
                 + "\nZero-configured-pin knockout: "
                 + behaviour.UnpinnedMuscleKnockout
+                + "\nAutomatic GetUp: "
+                + behaviour.CanGetUp
+                + "\nGetUp delay / max speed: "
+                + behaviour.GetUpDelay.ToString("F2") + " / "
+                + behaviour.MaxGetUpVelocity.ToString("F2")
+                + "\nGetUp blend / minimum duration: "
+                + behaviour.BlendToAnimationTime.ToString("F2") + " / "
+                + behaviour.MinGetUpDuration.ToString("F2")
+                + "\nGetUp collision / regain / knockout multipliers: "
+                + behaviour.GetUpCollisionResistanceMlp.ToString("F2") + " / "
+                + behaviour.GetUpRegainPinSpeedMlp.ToString("F2") + " / "
+                + behaviour.GetUpKnockOutDistanceMlp.ToString("F2")
                 + "\nSurface state / baseline: "
                 + behaviour.SurfaceState + " / "
                 + behaviour.SurfaceBaselineCaptured
@@ -99,9 +112,10 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 + (collisionResponse.HasResponse
                     ? collisionResponse.PositionSuppression.ToString("P0")
                     : "none")
-                + "\nTarget speed / effective resistance: "
+                + "\nTarget speed / state resistance / effective resistance: "
                 + (collisionResponse.HasResponse
                     ? collisionResponse.TargetSpeed.ToString("F2") + " / "
+                        + collisionResponse.StateResistanceMultiplier.ToString("F2") + " / "
                         + collisionResponse.EffectiveResistance.ToString("F2")
                     : "none")
                 + "\nMatched layer rule: "

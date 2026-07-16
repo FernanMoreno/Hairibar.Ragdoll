@@ -78,6 +78,11 @@ namespace Hairibar.Ragdoll.Animation
             maxAngularAccelerationMultiplier = Mathf.Max(0f, maxAngularAcceleration);
         }
 
+        internal void SetPositionSuppression(float suppression)
+        {
+            positionSuppression = Mathf.Clamp01(suppression);
+        }
+
         internal void AccumulateSuppression(float position, float rotation)
         {
             positionSuppression = Accumulate(positionSuppression, position);

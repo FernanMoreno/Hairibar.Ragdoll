@@ -63,6 +63,18 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [Test]
+        public void PositionSuppression_CanBeResetWithoutChangingRotationSuppression()
+        {
+            MuscleRuntimeState state = MuscleRuntimeState.Default;
+            state.AccumulateSuppression(0.25f, 0.75f);
+
+            state.SetPositionSuppression(1f);
+
+            Assert.That(state.PositionSuppression, Is.EqualTo(1f));
+            Assert.That(state.RotationSuppression, Is.EqualTo(0.75f));
+        }
+
+        [Test]
         public void Recovery_IsIndependentPerAuthorityChannel()
         {
             MuscleRuntimeState state = MuscleRuntimeState.Default;

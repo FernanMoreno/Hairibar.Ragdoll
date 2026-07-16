@@ -72,14 +72,28 @@ namespace Hairibar.Ragdoll.Animation
             float layerResistanceMultiplier,
             float muscleResistanceMultiplier)
         {
+            return EvaluateEffectiveResistance(
+                globalResistance,
+                layerResistanceMultiplier,
+                muscleResistanceMultiplier,
+                1f);
+        }
+
+        internal static float EvaluateEffectiveResistance(
+            float globalResistance,
+            float layerResistanceMultiplier,
+            float muscleResistanceMultiplier,
+            float stateResistanceMultiplier)
+        {
             double effective =
                 SanitizePositive(globalResistance, 3f)
                 * (double) SanitizePositive(layerResistanceMultiplier, 1f)
-                * SanitizePositive(muscleResistanceMultiplier, 1f);
+                * SanitizePositive(muscleResistanceMultiplier, 1f)
+                * SanitizeNonNegative(stateResistanceMultiplier);
 
             if (double.IsNaN(effective) || effective <= 0d)
             {
-                return 0.001f;
+                return 0f;
             }
 
             return effective >= float.MaxValue
@@ -93,14 +107,32 @@ namespace Hairibar.Ragdoll.Animation
             float layerResistanceMultiplier,
             float muscleResistanceMultiplier)
         {
+            return EvaluatePositionSuppression(
+                impulseMagnitude,
+                globalResistance,
+                layerResistanceMultiplier,
+                muscleResistanceMultiplier,
+                1f);
+        }
+
+        internal static float EvaluatePositionSuppression(
+            float impulseMagnitude,
+            float globalResistance,
+            float layerResistanceMultiplier,
+            float muscleResistanceMultiplier,
+            float stateResistanceMultiplier)
+        {
             float impulse = SanitizeNonNegative(impulseMagnitude);
             if (impulse <= 0f) return 0f;
 
             float effectiveResistance = EvaluateEffectiveResistance(
                 globalResistance,
                 layerResistanceMultiplier,
-                muscleResistanceMultiplier);
-            return Mathf.Clamp01(impulse / effectiveResistance);
+                muscleResistanceMultiplier,
+                stateResistanceMultiplier);
+            return effectiveResistance <= 0f
+                ? 1f
+                : Mathf.Clamp01(impulse / effectiveResistance);
         }
 
         internal static float SanitizeNonNegative(float value)
