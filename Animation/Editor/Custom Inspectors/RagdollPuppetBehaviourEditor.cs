@@ -21,6 +21,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     + "Collision Layers filters contacts, Collision Threshold is squared impulse, and Max Collisions is the accepted-event budget. "
                     + "Collision Resistance can be constant or evaluated from sampled Target speed; layer rules use first-match order. "
                     + "Regain Pin Speed composes with the muscle-controller base rate and semantic group multipliers; Muscle Weight Relative To Pin affects rotational authority only in Puppet state. "
+                    + "Combat boosts temporarily raise incoming immunity or outgoing impulse damage and fall back to neutral at Boost Falloff; use the runtime API globally, by bone, with parent/child falloff, or by semantic group. "
                     + "Max Rigidbody Velocity clamps physical and sampled Target velocity on the transition to Unpinned; Unpinned Muscle Knockout controls whether zero-configured-pin muscles may knock out the whole Puppet. "
                     + "Blend To Animation Time controls Target blending independently from Minimum Get Up Duration; Get Up Collision Resistance and Get Up Regain Pin Speed multiply their base values only while GetUp is active. "
                     + "Can Move Target is a runtime ownership switch: when false the behaviour consumes GetUp alignment without moving the Target root. NotifyTeleported must be called only after an external teleport has completed. "
@@ -70,6 +71,12 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 + behaviour.AppliedRegainPinSpeed.ToString("F2")
                 + "\nMuscle relative to pin: "
                 + behaviour.MuscleWeightRelativeToPinWeight.ToString("P0")
+                + "\nBoost falloff / active: "
+                + behaviour.BoostFalloff.ToString("F2") + " / "
+                + behaviour.HasActiveBoosts
+                + "\nMaximum immunity / impulse multiplier: "
+                + behaviour.MaximumImmunity.ToString("P0") + " / "
+                + behaviour.MaximumImpulseMultiplier.ToString("F2")
                 + "\nMax Rigidbody velocity: "
                 + behaviour.MaxRigidbodyVelocity.ToString("F2")
                 + "\nZero-configured-pin knockout: "
@@ -113,9 +120,17 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 + collisionStep.ReportedCount + " / "
                 + collisionStep.AcceptedCount + " / "
                 + collisionStep.RejectedCount
-                + "\nLast unpin suppression: "
+                + "\nLast raw / damage impulse and source multiplier: "
                 + (collisionResponse.HasResponse
-                    ? collisionResponse.PositionSuppression.ToString("P0")
+                    ? collisionResponse.ImpulseMagnitude.ToString("F2") + " / "
+                        + collisionResponse.DamageImpulseMagnitude.ToString("F2") + " / "
+                        + collisionResponse.SourceImpulseMultiplier.ToString("F2")
+                    : "none")
+                + "\nLast immunity / unmitigated / applied suppression: "
+                + (collisionResponse.HasResponse
+                    ? collisionResponse.ReceivingImmunity.ToString("P0") + " / "
+                        + collisionResponse.UnmitigatedPositionSuppression.ToString("P0") + " / "
+                        + collisionResponse.PositionSuppression.ToString("P0")
                     : "none")
                 + "\nTarget speed / state resistance / effective resistance: "
                 + (collisionResponse.HasResponse

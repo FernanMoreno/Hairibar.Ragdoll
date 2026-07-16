@@ -185,6 +185,52 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 Is.EqualTo(0f));
         }
 
+
+        [Test]
+        public void EmptySnapshot_UsesNeutralCombatBoostDiagnostics()
+        {
+            RagdollPuppetCollisionResponseSnapshot snapshot =
+                RagdollPuppetCollisionResponseSnapshot.Empty;
+
+            Assert.That(snapshot.HasResponse, Is.False);
+            Assert.That(snapshot.ImpulseMagnitude, Is.EqualTo(0f));
+            Assert.That(snapshot.DamageImpulseMagnitude, Is.EqualTo(0f));
+            Assert.That(snapshot.SourceImpulseMultiplier, Is.EqualTo(1f));
+            Assert.That(snapshot.ReceivingImmunity, Is.EqualTo(0f));
+            Assert.That(snapshot.UnmitigatedPositionSuppression, Is.EqualTo(0f));
+            Assert.That(snapshot.LayerResistanceMultiplier, Is.EqualTo(1f));
+            Assert.That(snapshot.MuscleResistanceMultiplier, Is.EqualTo(1f));
+            Assert.That(snapshot.StateResistanceMultiplier, Is.EqualTo(1f));
+            Assert.That(snapshot.LayerRuleIndex, Is.EqualTo(-1));
+        }
+
+        [Test]
+        public void LegacySnapshotConstructor_PreservesNeutralBoostSemantics()
+        {
+            RagdollPuppetCollisionResponseSnapshot snapshot =
+                new RagdollPuppetCollisionResponseSnapshot(
+                    true,
+                    RagdollBoneHandle.Invalid,
+                    2f,
+                    4f,
+                    3f,
+                    2f,
+                    1.5f,
+                    0.5f,
+                    6f,
+                    0.25f,
+                    7);
+
+            Assert.That(snapshot.DamageImpulseMagnitude, Is.EqualTo(4f));
+            Assert.That(snapshot.SourceImpulseMultiplier, Is.EqualTo(1f));
+            Assert.That(snapshot.ReceivingImmunity, Is.EqualTo(0f));
+            Assert.That(
+                snapshot.UnmitigatedPositionSuppression,
+                Is.EqualTo(0.25f));
+            Assert.That(snapshot.PositionSuppression, Is.EqualTo(0.25f));
+            Assert.That(snapshot.StateResistanceMultiplier, Is.EqualTo(1f));
+        }
+
         [Test]
         public void EffectiveResistanceSaturatesInsteadOfOverflowing()
         {

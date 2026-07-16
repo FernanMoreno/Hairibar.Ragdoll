@@ -200,6 +200,12 @@ namespace Hairibar.Ragdoll.Animation.Tests
                     behaviour.GetUpKnockOutDistanceMlp,
                     Is.EqualTo(10f));
                 Assert.That(behaviour.CanMoveTarget, Is.True);
+                Assert.That(behaviour.BoostFalloff, Is.EqualTo(1f));
+                Assert.That(behaviour.HasActiveBoosts, Is.False);
+                Assert.That(behaviour.MaximumImmunity, Is.EqualTo(0f));
+                Assert.That(
+                    behaviour.MaximumImpulseMultiplier,
+                    Is.EqualTo(1f));
             }
             finally
             {

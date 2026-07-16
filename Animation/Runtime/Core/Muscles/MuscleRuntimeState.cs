@@ -20,6 +20,8 @@ namespace Hairibar.Ragdoll.Animation
         [SerializeField] float rotationDampingMultiplier;
         [SerializeField] float maxLinearAccelerationMultiplier;
         [SerializeField] float maxAngularAccelerationMultiplier;
+        [SerializeField] float immunity;
+        [SerializeField] float impulseMultiplier;
 
         public float PositionAuthority => positionAuthority;
         public float RotationAuthority => rotationAuthority;
@@ -33,6 +35,9 @@ namespace Hairibar.Ragdoll.Animation
         public float RotationDampingMultiplier => rotationDampingMultiplier;
         public float MaxLinearAccelerationMultiplier => maxLinearAccelerationMultiplier;
         public float MaxAngularAccelerationMultiplier => maxAngularAccelerationMultiplier;
+        public float Immunity => immunity;
+        public float ImpulseMultiplier => impulseMultiplier;
+        public bool HasActiveBoost => immunity > 0f || impulseMultiplier > 1f;
 
         public static MuscleRuntimeState Default
         {
@@ -49,7 +54,9 @@ namespace Hairibar.Ragdoll.Animation
                     positionDampingMultiplier = 1f,
                     rotationDampingMultiplier = 1f,
                     maxLinearAccelerationMultiplier = 1f,
-                    maxAngularAccelerationMultiplier = 1f
+                    maxAngularAccelerationMultiplier = 1f,
+                    immunity = 0f,
+                    impulseMultiplier = 1f
                 };
             }
         }
@@ -81,6 +88,40 @@ namespace Hairibar.Ragdoll.Animation
         internal void SetPositionSuppression(float suppression)
         {
             positionSuppression = Mathf.Clamp01(suppression);
+        }
+
+        internal bool BoostImmunity(float value)
+        {
+            if (float.IsNaN(value) || value < 0f) return false;
+
+            float boosted = Mathf.Clamp01(value);
+            if (boosted <= immunity) return false;
+
+            immunity = boosted;
+            return true;
+        }
+
+        internal bool BoostImpulseMultiplier(float value)
+        {
+            if (float.IsNaN(value) || float.IsInfinity(value)) return false;
+
+            float boosted = Mathf.Max(1f, value);
+            if (boosted <= impulseMultiplier) return false;
+
+            impulseMultiplier = boosted;
+            return true;
+        }
+
+        internal void AdvanceBoostFalloff(float falloff, float deltaTime)
+        {
+            immunity = RagdollMuscleBoostMath.StepImmunity(
+                immunity,
+                falloff,
+                deltaTime);
+            impulseMultiplier = RagdollMuscleBoostMath.StepImpulseMultiplier(
+                impulseMultiplier,
+                falloff,
+                deltaTime);
         }
 
         internal void ClearSuppression()

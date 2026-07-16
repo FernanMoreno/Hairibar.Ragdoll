@@ -27,6 +27,8 @@ namespace Hairibar.Ragdoll.Animation
         [SerializeField, Range(0.001f, 10f)] float regainPinSpeed = 1f;
         [Tooltip("How strongly rotational muscle authority follows effective pin authority in the normal Puppet state. Zero preserves authored muscle strength; one makes muscle strength follow pin authority completely.")]
         [SerializeField, Range(0f, 1f)] float muscleWeightRelativeToPinWeight;
+        [Tooltip("How fast temporary immunity returns to zero and outgoing impulse multipliers return to one.")]
+        [SerializeField, Min(0f)] float boostFalloff = 1f;
 
         [Header("Normal Mode")]
         [Tooltip("Active preserves authored simulation and mapping. Unmapped suppresses Puppet-to-Target mapping outside accepted contact. Kinematic delegates Rigidbody mode changes to RagdollSimulationModeController until an eligible accepted contact activates the Puppet.")]
@@ -206,6 +208,19 @@ namespace Hairibar.Ragdoll.Animation
         public float RegainPinSpeed => regainPinSpeed;
         public float MuscleWeightRelativeToPinWeight =>
             muscleWeightRelativeToPinWeight;
+        public float BoostFalloff
+        {
+            get => boostFalloff;
+            set => boostFalloff = RagdollMuscleBoostMath.SanitizeFalloff(value);
+        }
+        public bool HasActiveBoosts => IsInitialized
+            && Context.Muscles.HasActiveBoosts;
+        public float MaximumImmunity => IsInitialized
+            ? Context.Muscles.MaximumImmunity
+            : 0f;
+        public float MaximumImpulseMultiplier => IsInitialized
+            ? Context.Muscles.MaximumImpulseMultiplier
+            : 1f;
         public float MaxRigidbodyVelocity
         {
             get => maxRigidbodyVelocity;
@@ -337,9 +352,137 @@ namespace Hairibar.Ragdoll.Animation
             KinematicActivated;
 
         /// <summary>
-        /// Changes the balanced Puppet policy. Immediate changes skip the mapping blend and
-        /// request the corresponding stable simulation mode immediately when possible.
+        /// Raises immunity and outgoing impulse multiplier for every muscle. Values never
+        /// lower an existing boost and return automatically to their separate neutral values.
         /// </summary>
+        public void Boost(float immunity, float impulseMlp)
+        {
+            RequireMuscleController().Boost(immunity, impulseMlp);
+        }
+
+        /// <summary>Raises both boost channels for one muscle.</summary>
+        public void Boost(
+            RagdollBoneHandle bone,
+            float immunity,
+            float impulseMlp)
+        {
+            RequireMuscleController().Boost(bone, immunity, impulseMlp);
+        }
+
+        /// <summary>
+        /// Raises both channels for one muscle and its ancestors/descendants using independent
+        /// per-edge parent and child falloffs. Unrelated branches are not modified.
+        /// </summary>
+        public void Boost(
+            RagdollBoneHandle bone,
+            float immunity,
+            float impulseMlp,
+            float boostParents,
+            float boostChildren)
+        {
+            RequireMuscleController().Boost(
+                bone,
+                immunity,
+                impulseMlp,
+                boostParents,
+                boostChildren);
+        }
+
+        /// <summary>
+        /// Raises both channels for a semantic group and returns the number of matching muscles.
+        /// Returns zero when no muscle profile supplies semantic group assignments.
+        /// </summary>
+        public int Boost(
+            RagdollMuscleGroup group,
+            float immunity,
+            float impulseMlp)
+        {
+            return RequireMuscleController().Boost(
+                group,
+                immunity,
+                impulseMlp);
+        }
+
+        /// <summary>Raises incoming-damage immunity for every muscle.</summary>
+        public void BoostImmunity(float immunity)
+        {
+            RequireMuscleController().BoostImmunity(immunity);
+        }
+
+        /// <summary>Raises incoming-damage immunity for one muscle.</summary>
+        public void BoostImmunity(
+            RagdollBoneHandle bone,
+            float immunity)
+        {
+            RequireMuscleController().BoostImmunity(bone, immunity);
+        }
+
+        /// <summary>
+        /// Raises immunity for one muscle and its ancestor/descendant chains.
+        /// </summary>
+        public void BoostImmunity(
+            RagdollBoneHandle bone,
+            float immunity,
+            float boostParents,
+            float boostChildren)
+        {
+            RequireMuscleController().BoostImmunity(
+                bone,
+                immunity,
+                boostParents,
+                boostChildren);
+        }
+
+        /// <summary>Raises immunity for a semantic group and returns its match count.</summary>
+        public int BoostImmunity(
+            RagdollMuscleGroup group,
+            float immunity)
+        {
+            return RequireMuscleController().BoostImmunity(group, immunity);
+        }
+
+        /// <summary>Raises outgoing cross-puppet impact damage for every muscle.</summary>
+        public void BoostImpulseMlp(float impulseMlp)
+        {
+            RequireMuscleController().BoostImpulseMlp(impulseMlp);
+        }
+
+        /// <summary>Raises outgoing cross-puppet impact damage for one muscle.</summary>
+        public void BoostImpulseMlp(
+            RagdollBoneHandle bone,
+            float impulseMlp)
+        {
+            RequireMuscleController().BoostImpulseMlp(bone, impulseMlp);
+        }
+
+        /// <summary>
+        /// Raises outgoing damage for one muscle and its ancestor/descendant chains.
+        /// </summary>
+        public void BoostImpulseMlp(
+            RagdollBoneHandle bone,
+            float impulseMlp,
+            float boostParents,
+            float boostChildren)
+        {
+            RequireMuscleController().BoostImpulseMlp(
+                bone,
+                impulseMlp,
+                boostParents,
+                boostChildren);
+        }
+
+        /// <summary>
+        /// Raises outgoing damage for a semantic group and returns its match count.
+        /// </summary>
+        public int BoostImpulseMlp(
+            RagdollMuscleGroup group,
+            float impulseMlp)
+        {
+            return RequireMuscleController().BoostImpulseMlp(
+                group,
+                impulseMlp);
+        }
+
         public void SetNormalMode(
             RagdollPuppetNormalMode mode,
             bool immediate = false)
@@ -498,6 +641,7 @@ namespace Hairibar.Ragdoll.Animation
             lastKinematicActivationImpulse = 0f;
             lastKinematicActivationFixedTime = 0f;
             kinematicActivationCount = 0L;
+            Context.Muscles.SetCombatBoostsEnabled(true);
             ApplyRecoveryConfiguration();
             hasObservedSurfaceSimulationMode = false;
             colliderSurfaceController.CaptureBaseline();
@@ -534,6 +678,7 @@ namespace Hairibar.Ragdoll.Animation
 
             if (!IsActive) return;
 
+            Context.Muscles.SetCombatBoostsEnabled(true);
             Context.Muscles.ClearAllSuppressions();
             ApplyRecoveryConfiguration();
             hasObservedSurfaceSimulationMode = false;
@@ -576,6 +721,7 @@ namespace Hairibar.Ragdoll.Animation
 
         protected override void OnBehaviourDeactivated()
         {
+            Context.Muscles.SetCombatBoostsEnabled(false);
             if (colliderSurfaceController != null)
             {
                 colliderSurfaceController.Restore();
@@ -657,6 +803,7 @@ namespace Hairibar.Ragdoll.Animation
 
         protected override void OnBehaviourFixedUpdate(float deltaTime)
         {
+            Context.Muscles.AdvanceBoostFalloff(boostFalloff, deltaTime);
             ApplyRecoveryConfiguration();
             ApplySurfaceConfiguration(false);
 
@@ -1147,13 +1294,41 @@ namespace Hairibar.Ragdoll.Animation
                     layerResolution.ResistanceMultiplier,
                     muscleResistance,
                     stateResistanceMultiplier);
-            float positionSuppression =
-                RagdollPuppetCollisionResponseMath.EvaluatePositionSuppression(
+            float sourceImpulseMultiplier =
+                RagdollMuscleController.ResolveExternalImpulseMultiplier(
+                    collisionEvent.OtherRigidbody,
+                    Context.Muscles);
+            float damageImpulse =
+                RagdollMuscleBoostMath.ApplyImpulseMultiplier(
                     collisionEvent.ImpulseMagnitude,
+                    sourceImpulseMultiplier);
+            float unmitigatedPositionSuppression =
+                RagdollPuppetCollisionResponseMath.EvaluatePositionSuppression(
+                    damageImpulse,
                     globalResistance,
                     layerResolution.ResistanceMultiplier,
                     muscleResistance,
                     stateResistanceMultiplier);
+            float receivingImmunity = Context.Muscles.CombatBoostsEnabled
+                ? Context.Muscles.GetImmunity(collisionEvent.Bone)
+                : 0f;
+            float appliedPositionSuppression = 0f;
+
+            if (unmitigatedPositionSuppression > 0f)
+            {
+                MuscleImpactSettings impact = new MuscleImpactSettings
+                {
+                    positionSuppression = unmitigatedPositionSuppression,
+                    rotationSuppression = 0f,
+                    maximumPropagationDistance =
+                        Mathf.Max(0, Context.Bindings.BoneCount - 1),
+                    propagationFalloff = 1f
+                };
+                appliedPositionSuppression =
+                    Context.Muscles.ApplyResolvedImpact(
+                        collisionEvent.Bone,
+                        impact);
+            }
 
             lastCollisionResponse =
                 new RagdollPuppetCollisionResponseSnapshot(
@@ -1161,27 +1336,20 @@ namespace Hairibar.Ragdoll.Animation
                     collisionEvent.Bone,
                     collisionEvent.FixedTime,
                     collisionEvent.ImpulseMagnitude,
+                    damageImpulse,
+                    sourceImpulseMultiplier,
+                    receivingImmunity,
+                    unmitigatedPositionSuppression,
                     targetSpeed,
                     globalResistance,
                     layerResolution.ResistanceMultiplier,
                     muscleResistance,
                     stateResistanceMultiplier,
                     effectiveResistance,
-                    positionSuppression,
+                    appliedPositionSuppression,
                     layerResolution.RuleIndex);
 
-            if (positionSuppression <= 0f) return 0f;
-
-            MuscleImpactSettings impact = new MuscleImpactSettings
-            {
-                positionSuppression = positionSuppression,
-                rotationSuppression = 0f,
-                maximumPropagationDistance =
-                    Mathf.Max(0, Context.Bindings.BoneCount - 1),
-                propagationFalloff = 1f
-            };
-            Context.Muscles.ApplyResolvedImpact(collisionEvent.Bone, impact);
-            return positionSuppression;
+            return appliedPositionSuppression;
         }
 
         bool BeginGetUp(
@@ -1477,6 +1645,18 @@ namespace Hairibar.Ragdoll.Animation
             rejectedCollisionCount = 0L;
         }
 
+        RagdollMuscleController RequireMuscleController()
+        {
+            if (!IsInitialized)
+            {
+                throw new InvalidOperationException(
+                    "RagdollPuppetBehaviour has not been initialized by a "
+                    + "RagdollBehaviourController.");
+            }
+
+            return Context.Muscles;
+        }
+
         void ApplyRecoveryConfiguration()
         {
             if (!IsInitialized) return;
@@ -1593,6 +1773,7 @@ namespace Hairibar.Ragdoll.Animation
                 : Mathf.Clamp(regainPinSpeed, 0.001f, 10f);
             muscleWeightRelativeToPinWeight =
                 Mathf.Clamp01(muscleWeightRelativeToPinWeight);
+            boostFalloff = RagdollMuscleBoostMath.SanitizeFalloff(boostFalloff);
             mappingBlendSpeed = float.IsNaN(mappingBlendSpeed)
                 || float.IsInfinity(mappingBlendSpeed)
                 ? 0f

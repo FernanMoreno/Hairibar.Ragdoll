@@ -142,6 +142,51 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Assert.That(settings.GetPropagationWeight(-1), Is.EqualTo(0f));
         }
 
+        [Test]
+        public void DefaultBoostState_UsesNeutralImmunityAndImpulseMultiplier()
+        {
+            MuscleRuntimeState state = MuscleRuntimeState.Default;
+
+            Assert.That(state.Immunity, Is.EqualTo(0f));
+            Assert.That(state.ImpulseMultiplier, Is.EqualTo(1f));
+            Assert.That(state.HasActiveBoost, Is.False);
+        }
+
+        [Test]
+        public void Boosts_CanOnlyRaiseCurrentValues()
+        {
+            MuscleRuntimeState state = MuscleRuntimeState.Default;
+
+            Assert.That(state.BoostImmunity(0.75f), Is.True);
+            Assert.That(state.BoostImmunity(0.25f), Is.False);
+            Assert.That(state.BoostImpulseMultiplier(3f), Is.True);
+            Assert.That(state.BoostImpulseMultiplier(2f), Is.False);
+
+            Assert.That(state.Immunity, Is.EqualTo(0.75f));
+            Assert.That(state.ImpulseMultiplier, Is.EqualTo(3f));
+        }
+
+        [Test]
+        public void BoostFalloff_ReturnsToSeparateNeutralValues()
+        {
+            MuscleRuntimeState state = MuscleRuntimeState.Default;
+            state.BoostImmunity(1f);
+            state.BoostImpulseMultiplier(3f);
+
+            state.AdvanceBoostFalloff(0.5f, 1f);
+
+            Assert.That(state.Immunity, Is.EqualTo(0.5f).Within(0.0001f));
+            Assert.That(
+                state.ImpulseMultiplier,
+                Is.EqualTo(2f).Within(0.0001f));
+            Assert.That(state.HasActiveBoost, Is.True);
+
+            state.AdvanceBoostFalloff(1f, 1f);
+            Assert.That(state.Immunity, Is.EqualTo(0f));
+            Assert.That(state.ImpulseMultiplier, Is.EqualTo(1f));
+            Assert.That(state.HasActiveBoost, Is.False);
+        }
+
         static BoneProfile CreateProfile()
         {
             return new BoneProfile
