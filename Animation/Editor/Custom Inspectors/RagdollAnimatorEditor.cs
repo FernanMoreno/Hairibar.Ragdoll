@@ -71,6 +71,14 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 "A damping ratio of 1 will get to the target pose perfectly, with no overshooting. " +
                 "Lower values will overshoot the target pose."));
 
+            ExtraNaughtyEditorGUILayout.Header("Advanced Pinning");
+            EditorGUILayout.PropertyField(
+                serializedObject.FindProperty("pinSettings"),
+                new GUIContent(
+                    "Pin Settings",
+                    "Shapes temporary world-space position authority. Pin Pow curves weights between zero and one; Pin Distance Falloff loosens position pinning as a bone drifts from its Target; Angular Pinning adds an optional world-space torque channel without replacing the muscle Slerp Drive."),
+                true);
+
             ExtraNaughtyEditorGUILayout.Header("Mapping");
             EditorGUILayout.Slider(serializedObject.FindProperty("_masterMappingWeight"), 0, 1,
                 new GUIContent("Master Mapping Weight",

@@ -171,7 +171,8 @@ namespace Hairibar.Ragdoll.Animation
                 1f - positionSuppression,
                 Mathf.Clamp01(minimumSuppressionAuthority));
 
-            profile.positionAlpha *= positionAuthority * suppressionAuthority;
+            profile.MultiplyPositionPinWeight(
+                positionAuthority * suppressionAuthority);
             profile.rotationAlpha *= EffectiveRotationAuthority;
 
             profile.positionDampingRatio *= positionDampingMultiplier;

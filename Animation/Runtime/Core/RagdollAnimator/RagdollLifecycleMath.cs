@@ -48,9 +48,8 @@ namespace Hairibar.Ragdoll.Animation
             float muscleWeightMultiplier,
             float muscleDamperAdd)
         {
-            profile.positionAlpha *= SanitizeWeight(
-                positionAuthorityMultiplier,
-                1f);
+            profile.MultiplyPositionPinWeight(
+                SanitizeWeight(positionAuthorityMultiplier, 1f));
             profile.rotationAlpha *= SanitizeWeight(
                 muscleWeightMultiplier,
                 1f);

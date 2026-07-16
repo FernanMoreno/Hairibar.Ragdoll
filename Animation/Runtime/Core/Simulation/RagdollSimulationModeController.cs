@@ -162,7 +162,7 @@ namespace Hairibar.Ragdoll.Animation
             }
 
             float multiplier = Mathf.Clamp01(activeDriveWeight);
-            boneProfile.positionAlpha *= multiplier;
+            boneProfile.MultiplyPositionPinWeight(multiplier);
             boneProfile.rotationAlpha *= multiplier;
         }
 

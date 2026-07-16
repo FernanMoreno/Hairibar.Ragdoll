@@ -64,6 +64,57 @@ namespace Hairibar.Ragdoll.Animation
 
         public bool HasPendingTeleport => teleportPending;
 
+        public RagdollPinSettings PinSettings
+        {
+            get
+            {
+                RagdollPinSettings settings = pinSettings;
+                settings.Normalize();
+                return settings;
+            }
+            set
+            {
+                value.Normalize();
+                pinSettings = value;
+            }
+        }
+
+        public float PinPow
+        {
+            get => PinSettings.PinPow;
+            set
+            {
+                RagdollPinSettings settings = pinSettings;
+                settings.Normalize();
+                settings.PinPow = value;
+                pinSettings = settings;
+            }
+        }
+
+        public float PinDistanceFalloff
+        {
+            get => PinSettings.PinDistanceFalloff;
+            set
+            {
+                RagdollPinSettings settings = pinSettings;
+                settings.Normalize();
+                settings.PinDistanceFalloff = value;
+                pinSettings = settings;
+            }
+        }
+
+        public bool AngularPinning
+        {
+            get => PinSettings.AngularPinning;
+            set
+            {
+                RagdollPinSettings settings = pinSettings;
+                settings.Normalize();
+                settings.AngularPinning = value;
+                pinSettings = settings;
+            }
+        }
+
         public bool forceTargetPose = false;
         #endregion
 
@@ -76,6 +127,7 @@ namespace Hairibar.Ragdoll.Animation
         [SerializeField] float _masterAlpha = 1;
         [SerializeField] float _masterDampingRatio = 1;
         [SerializeField] float _profileTransitionLength = 1;
+        [SerializeField] RagdollPinSettings pinSettings = RagdollPinSettings.Default;
         [SerializeField] bool fixTargetTransforms = true;
         #endregion
 
@@ -153,6 +205,8 @@ namespace Hairibar.Ragdoll.Animation
         #region Lifetime
         void Awake()
         {
+            pinSettings.Normalize();
+
             if (!_ragdollBindings)
             {
                 throw new UnassignedReferenceException("A RagdollDefinitionBindings must be assigned in RagdollAnimator.");

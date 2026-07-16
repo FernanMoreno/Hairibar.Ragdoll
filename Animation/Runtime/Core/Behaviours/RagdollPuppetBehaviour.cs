@@ -1005,7 +1005,7 @@ namespace Hairibar.Ragdoll.Animation
                     GetUpProgress,
                     unpinnedMuscleWeightMultiplier);
 
-            boneProfile.positionAlpha *= weights.PositionAuthority;
+            boneProfile.MultiplyPositionPinWeight(weights.PositionAuthority);
             boneProfile.rotationAlpha *= ResolveStateRotationAuthority(pair);
         }
 

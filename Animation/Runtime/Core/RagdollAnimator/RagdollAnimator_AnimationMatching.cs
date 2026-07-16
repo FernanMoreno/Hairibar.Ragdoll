@@ -97,10 +97,24 @@ namespace Hairibar.Ragdoll.Animation
             Rigidbody rigidbody = pair.RagdollBone.Rigidbody;
             AnimatedPose targetPose = pair.currentPose;
 
-            Vector3 acceleration = AnimationMatching.GetAccelerationFromPositionSpring(rigidbody.position, targetPose.worldPosition,
-                rigidbody.velocity, pair.poseLinearVelocity, alpha, dampingRatio, rigidbody.mass, dt);
+            Vector3 positionOffset = targetPose.worldPosition - rigidbody.position;
+            Vector3 acceleration = AnimationMatching.GetAccelerationFromPositionSpring(
+                rigidbody.position,
+                targetPose.worldPosition,
+                rigidbody.velocity,
+                pair.poseLinearVelocity,
+                alpha,
+                dampingRatio,
+                rigidbody.mass,
+                dt);
 
             LimitAcceleration(ref acceleration, boneProfile.maxLinearAcceleration);
+            acceleration = RagdollPinMath.ResolvePositionAcceleration(
+                acceleration,
+                positionOffset,
+                boneProfile.PositionPinWeight,
+                pinSettings.PinPow,
+                pinSettings.PinDistanceFalloff);
 
             rigidbody.AddForce(acceleration, ForceMode.Acceleration);
         }
@@ -132,6 +146,21 @@ namespace Hairibar.Ragdoll.Animation
                 effectiveAngularMass,
                 dt,
                 boneProfile.maxAngularAcceleration);
+
+            if (pinSettings.AngularPinning)
+            {
+                Vector3 velocityChange =
+                    RagdollPinMath.ResolveAngularVelocityChange(
+                        rigidbody.rotation,
+                        pair.currentPose.worldRotation,
+                        rigidbody.angularVelocity,
+                        boneProfile.PositionPinWeight,
+                        pinSettings.PinPow,
+                        dt);
+                rigidbody.AddTorque(
+                    velocityChange,
+                    ForceMode.VelocityChange);
+            }
         }
 
         void SetTargetRotation(AnimatedPair pair)

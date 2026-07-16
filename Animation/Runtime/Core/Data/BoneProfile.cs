@@ -16,10 +16,29 @@ namespace Hairibar.Ragdoll.Animation
         public float rotationDampingRatio;
         public float maxAngularAcceleration;
 
+        // Runtime-only authority channel. Authored positionAlpha remains the spring
+        // stiffness; pin curves and falloff are applied after the base acceleration is
+        // limited so temporary unpinning remains effective under saturated springs.
+        [System.NonSerialized] float positionPinWeight;
+        [System.NonSerialized] bool positionPinWeightInitialized;
+
+        internal float PositionPinWeight =>
+            positionPinWeightInitialized ? Mathf.Clamp01(positionPinWeight) : 1f;
+
+        internal void SetPositionPinWeight(float value)
+        {
+            positionPinWeight = Mathf.Clamp01(value);
+            positionPinWeightInitialized = true;
+        }
+
+        internal void MultiplyPositionPinWeight(float multiplier)
+        {
+            SetPositionPinWeight(PositionPinWeight * Mathf.Clamp01(multiplier));
+        }
 
         public static BoneProfile Blend(BoneProfile a, BoneProfile b, float t)
         {
-            return new BoneProfile
+            BoneProfile result = new BoneProfile
             {
                 positionAlpha = BlendAlpha(a.positionAlpha, b.positionAlpha, t),
                 positionDampingRatio = Mathf.Lerp(a.positionDampingRatio, b.positionDampingRatio, t),
@@ -29,6 +48,9 @@ namespace Hairibar.Ragdoll.Animation
                 rotationDampingRatio = Mathf.Lerp(a.rotationDampingRatio, b.rotationDampingRatio, t),
                 maxAngularAcceleration = BlendMaxAcceleration(a.maxAngularAcceleration, b.maxAngularAcceleration, t)
             };
+            result.SetPositionPinWeight(
+                Mathf.Lerp(a.PositionPinWeight, b.PositionPinWeight, t));
+            return result;
         }
 
 

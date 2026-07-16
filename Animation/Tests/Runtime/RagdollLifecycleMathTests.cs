@@ -79,7 +79,8 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 0.25f,
                 2f);
 
-            Assert.That(profile.positionAlpha, Is.Zero);
+            Assert.That(profile.positionAlpha, Is.EqualTo(10f));
+            Assert.That(profile.PositionPinWeight, Is.Zero);
             Assert.That(profile.rotationAlpha, Is.EqualTo(5f));
             Assert.That(profile.rotationDampingRatio, Is.EqualTo(2.5f));
         }

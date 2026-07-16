@@ -19,6 +19,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Assert.That(profile.rotationAlpha, Is.EqualTo(expected.rotationAlpha));
             Assert.That(profile.rotationDampingRatio, Is.EqualTo(expected.rotationDampingRatio));
             Assert.That(profile.maxAngularAcceleration, Is.EqualTo(expected.maxAngularAcceleration));
+            Assert.That(profile.PositionPinWeight, Is.EqualTo(1f));
         }
 
         [Test]
@@ -124,6 +125,21 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Assert.That(profile.maxAngularAcceleration, Is.EqualTo(0f));
             Assert.That(float.IsNaN(profile.maxLinearAcceleration), Is.False);
             Assert.That(float.IsNaN(profile.maxAngularAcceleration), Is.False);
+        }
+
+        [Test]
+        public void PositionAuthority_UsesPinChannelWithoutChangingAuthoredSpring()
+        {
+            BoneProfile profile = CreateProfile();
+            float authoredAlpha = profile.positionAlpha;
+            MuscleRuntimeState state = MuscleRuntimeState.Default;
+            state.SetAuthorities(0.5f, 1f);
+            state.AccumulateSuppression(0.5f, 0f);
+
+            state.ApplyTo(ref profile);
+
+            Assert.That(profile.positionAlpha, Is.EqualTo(authoredAlpha));
+            Assert.That(profile.PositionPinWeight, Is.EqualTo(0.25f).Within(0.0001f));
         }
 
         [Test]

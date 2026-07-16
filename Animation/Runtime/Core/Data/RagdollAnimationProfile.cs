@@ -57,15 +57,23 @@ namespace Hairibar.Ragdoll.Animation
         }
         #endregion
 
-        BoneProfile DefaultBoneProfile => new BoneProfile
+        BoneProfile DefaultBoneProfile
         {
-            positionAlpha = globalPositionAlpha,
-            positionDampingRatio = globalPositionDampingRatio,
-            maxLinearAcceleration = globalMaxLinearAcceleration,
-            rotationAlpha = globalRotationAlpha,
-            rotationDampingRatio = globalRotationDampingRatio,
-            maxAngularAcceleration = globalMaxAngularAcceleration
-        };
+            get
+            {
+                BoneProfile profile = new BoneProfile
+                {
+                    positionAlpha = globalPositionAlpha,
+                    positionDampingRatio = globalPositionDampingRatio,
+                    maxLinearAcceleration = globalMaxLinearAcceleration,
+                    rotationAlpha = globalRotationAlpha,
+                    rotationDampingRatio = globalRotationDampingRatio,
+                    maxAngularAcceleration = globalMaxAngularAcceleration
+                };
+                profile.SetPositionPinWeight(1f);
+                return profile;
+            }
+        }
 
         void BuildOverridenBoneProfiles()
         {

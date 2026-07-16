@@ -80,7 +80,8 @@ namespace Hairibar.Ragdoll.Animation.Tests
             state.AccumulateSuppression(1f, 0f);
             state.ApplyTo(ref profile, 0.4f);
 
-            Assert.That(profile.positionAlpha, Is.EqualTo(0.2f).Within(0.0001f));
+            Assert.That(profile.positionAlpha, Is.EqualTo(1f));
+            Assert.That(profile.PositionPinWeight, Is.EqualTo(0.2f).Within(0.0001f));
             Assert.That(profile.rotationAlpha, Is.EqualTo(1f));
         }
     }

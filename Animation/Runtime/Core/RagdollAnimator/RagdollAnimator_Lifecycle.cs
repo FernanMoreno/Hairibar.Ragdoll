@@ -664,6 +664,7 @@ namespace Hairibar.Ragdoll.Animation
         void OnValidate()
         {
             lifecycleSettings.Normalize();
+            pinSettings.Normalize();
         }
     }
 }
