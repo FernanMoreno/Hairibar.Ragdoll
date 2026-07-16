@@ -79,6 +79,29 @@ namespace Hairibar.Ragdoll.Animation
         }
 
 
+        internal void RebindContextInternal(
+            RagdollBehaviourContext assignedContext)
+        {
+            if (assignedContext == null)
+            {
+                throw new ArgumentNullException(nameof(assignedContext));
+            }
+            if (!IsInitialized)
+            {
+                throw new InvalidOperationException(
+                    "A behaviour must be initialized before rebinding its hierarchy context.");
+            }
+            context = assignedContext;
+        }
+
+        internal void HierarchyChangedInternal(
+            IReadOnlyList<RagdollMuscleChange> added,
+            IReadOnlyList<RagdollMuscleChange> removed)
+        {
+            if (!IsInitialized) return;
+            OnBehaviourHierarchyChanged(added, removed);
+        }
+
         internal void ShutdownInternal()
         {
             if (!IsInitialized) return;
@@ -223,6 +246,16 @@ namespace Hairibar.Ragdoll.Animation
 
         /// <summary>Called when the owning controller is destroyed.</summary>
         protected virtual void OnBehaviourShutdown()
+        {
+        }
+
+        /// <summary>
+        /// Called after the core has committed a new runtime muscle registry and the
+        /// behaviour context points at the new generation.
+        /// </summary>
+        protected virtual void OnBehaviourHierarchyChanged(
+            IReadOnlyList<RagdollMuscleChange> added,
+            IReadOnlyList<RagdollMuscleChange> removed)
         {
         }
 

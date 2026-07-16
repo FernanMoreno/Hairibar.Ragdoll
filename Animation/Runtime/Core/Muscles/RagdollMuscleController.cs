@@ -41,6 +41,23 @@ namespace Hairibar.Ragdoll.Animation
         MuscleRuntimeState[] states;
         float[] lastRecoveryTimes;
 
+        internal sealed class HierarchySnapshot
+        {
+            internal readonly Dictionary<BoneName, StateEntry> States;
+
+            internal HierarchySnapshot(
+                Dictionary<BoneName, StateEntry> states)
+            {
+                States = states;
+            }
+        }
+
+        internal struct StateEntry
+        {
+            internal MuscleRuntimeState State;
+            internal float RecoveryTime;
+        }
+
         public bool IsInitialized => states != null;
         public RagdollMuscleProfile MuscleProfile => muscleProfile;
         public RagdollModifierStage Stage => RagdollModifierStage.RuntimeState;
@@ -84,6 +101,7 @@ namespace Hairibar.Ragdoll.Animation
                 string profileError;
                 if (!muscleProfile.TryCreateRuntime(
                     bindings,
+                    animator.ResolveRuntimeMuscleGroup,
                     out runtimeProfile,
                     out profileError))
                 {
@@ -121,6 +139,76 @@ namespace Hairibar.Ragdoll.Animation
                 }
             }
 
+            RegisterBoostSources();
+        }
+
+        internal HierarchySnapshot CaptureHierarchySnapshot(
+            IEnumerable<RagdollAnimator.AnimatedPair> pairs)
+        {
+            EnsureInitialized();
+            Dictionary<BoneName, StateEntry> captured =
+                new Dictionary<BoneName, StateEntry>();
+            foreach (RagdollAnimator.AnimatedPair pair in pairs)
+            {
+                int index = pair.Handle.Index;
+                captured[pair.Name] = new StateEntry
+                {
+                    State = states[index],
+                    RecoveryTime = lastRecoveryTimes[index]
+                };
+            }
+            return new HierarchySnapshot(captured);
+        }
+
+        internal void RebuildHierarchy(
+            IEnumerable<RagdollAnimator.AnimatedPair> pairs,
+            HierarchySnapshot snapshot)
+        {
+            if (pairs == null) throw new ArgumentNullException(nameof(pairs));
+            if (snapshot == null) throw new ArgumentNullException(nameof(snapshot));
+
+            UnregisterBoostSources();
+            RagdollAnimator animator = GetComponent<RagdollAnimator>();
+            bindings = animator.Bindings;
+
+            if (muscleProfile)
+            {
+                string profileError;
+                if (!muscleProfile.TryCreateRuntime(
+                    bindings,
+                    animator.ResolveRuntimeMuscleGroup,
+                    out runtimeProfile,
+                    out profileError))
+                {
+                    throw new InvalidOperationException(
+                        "The assigned RagdollMuscleProfile is invalid after hierarchy rebuild: "
+                        + profileError);
+                }
+            }
+            else
+            {
+                runtimeProfile = null;
+            }
+
+            states = new MuscleRuntimeState[bindings.BoneCount];
+            lastRecoveryTimes = new float[bindings.BoneCount];
+            float now = CurrentTime;
+            foreach (RagdollAnimator.AnimatedPair pair in pairs)
+            {
+                StateEntry entry;
+                if (snapshot.States.TryGetValue(pair.Name, out entry))
+                {
+                    states[pair.Handle.Index] = entry.State;
+                    lastRecoveryTimes[pair.Handle.Index] = entry.RecoveryTime;
+                }
+                else
+                {
+                    states[pair.Handle.Index] = MuscleRuntimeState.Default;
+                    lastRecoveryTimes[pair.Handle.Index] = now;
+                }
+            }
+
+            RecalculateHasActiveBoosts();
             RegisterBoostSources();
         }
 

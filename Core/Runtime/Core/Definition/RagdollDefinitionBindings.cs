@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
 using Hairibar.EngineExtensions.Serialization;
 using UnityEngine;
 
@@ -17,6 +16,12 @@ namespace Hairibar.Ragdoll
     {
         #region Public API
         public bool IsInitialized { get; private set; }
+
+        /// <summary>
+        /// Monotonically identifies the current runtime registry. Any hierarchy mutation
+        /// invalidates handles produced by the previous generation.
+        /// </summary>
+        public int RegistryGeneration => registryGeneration;
 
         public RagdollDefinition Definition => _definition;
 
@@ -279,10 +284,195 @@ namespace Hairibar.Ragdoll
             boneName = "JointDoesNotBelongToARagdollBone";
             return false;
         }
+
+        internal bool IsDefinitionBoneName(BoneName name)
+        {
+            if (!_definition) return false;
+            foreach (BoneName candidate in _definition.Bones)
+            {
+                if (candidate == name) return true;
+            }
+            return false;
+        }
+
+        internal RuntimeRegistrySnapshot CaptureRuntimeRegistry()
+        {
+            return new RuntimeRegistrySnapshot(
+                runtimeBindings,
+                removedDefinitionBones,
+                registryGeneration);
+        }
+
+        internal bool TryAddRuntimeBinding(
+            BoneName name,
+            ConfigurableJoint joint,
+            out RagdollBoneHandle handle,
+            out string error)
+        {
+            handle = RagdollBoneHandle.Invalid;
+            error = null;
+            ThrowExceptionIfNotInitialized();
+
+            if (string.IsNullOrWhiteSpace(name.ToString()))
+            {
+                error = "A runtime muscle requires a non-empty BoneName.";
+                return false;
+            }
+            if (!joint)
+            {
+                error = "A runtime muscle requires a ConfigurableJoint.";
+                return false;
+            }
+            if (!joint.GetComponent<Rigidbody>())
+            {
+                error = "A runtime muscle joint requires a Rigidbody on the same GameObject.";
+                return false;
+            }
+            if (indexByName.ContainsKey(name))
+            {
+                error = "A registered ragdoll bone named '" + name + "' already exists.";
+                return false;
+            }
+            if (indexByJoint.ContainsKey(joint))
+            {
+                error = "The supplied ConfigurableJoint already belongs to a registered ragdoll bone.";
+                return false;
+            }
+
+            RuntimeRegistrySnapshot snapshot = CaptureRuntimeRegistry();
+            if (IsDefinitionBoneName(name))
+            {
+                // Replacing a previously removed definition slot keeps the serialized
+                // binding suppressed and appends the runtime override deterministically.
+                removedDefinitionBones.Add(name);
+            }
+            runtimeBindings.Add(new RuntimeBinding(name, joint));
+
+            if (!TryCreateRagdollBones())
+            {
+                error = lastInitializationError
+                    ?? "The runtime ragdoll registry could not be rebuilt.";
+                RestoreRuntimeRegistry(snapshot);
+                return false;
+            }
+
+            return TryGetBoneHandle(name, out handle);
+        }
+
+        internal bool TryRemoveRuntimeSubtree(
+            ConfigurableJoint joint,
+            out RagdollBone[] removedBones,
+            out string error)
+        {
+            removedBones = new RagdollBone[0];
+            error = null;
+            ThrowExceptionIfNotInitialized();
+
+            RagdollBone root;
+            if (!TryGetBone(joint, out root))
+            {
+                error = "No registered ragdoll bone uses the supplied ConfigurableJoint.";
+                return false;
+            }
+            if (root.IsRoot)
+            {
+                error = "The root ragdoll bone cannot be removed at runtime.";
+                return false;
+            }
+
+            RagdollBoneHandle rootHandle;
+            TryGetBoneHandle(joint, out rootHandle);
+            List<RagdollBone> removed = new List<RagdollBone>();
+            for (int index = 0; index < indexedBones.Length; index++)
+            {
+                RagdollBoneHandle candidate = CreateHandle(index);
+                if (candidate == rootHandle
+                    || topology.IsAncestorOf(rootHandle, candidate))
+                {
+                    removed.Add(indexedBones[index]);
+                }
+            }
+
+            RuntimeRegistrySnapshot snapshot = CaptureRuntimeRegistry();
+            for (int index = 0; index < removed.Count; index++)
+            {
+                BoneName name = removed[index].Name;
+                bool removedRuntime = false;
+                for (int runtimeIndex = runtimeBindings.Count - 1;
+                    runtimeIndex >= 0;
+                    runtimeIndex--)
+                {
+                    if (runtimeBindings[runtimeIndex].Name != name) continue;
+                    runtimeBindings.RemoveAt(runtimeIndex);
+                    removedRuntime = true;
+                }
+
+                if (!removedRuntime && IsDefinitionBoneName(name))
+                {
+                    removedDefinitionBones.Add(name);
+                }
+            }
+
+            if (!TryCreateRagdollBones())
+            {
+                error = lastInitializationError
+                    ?? "The runtime ragdoll registry could not be rebuilt.";
+                RestoreRuntimeRegistry(snapshot);
+                return false;
+            }
+
+            removedBones = removed.ToArray();
+            return true;
+        }
+
+        internal void RestoreRuntimeRegistry(RuntimeRegistrySnapshot snapshot)
+        {
+            if (snapshot == null) throw new ArgumentNullException(nameof(snapshot));
+
+            runtimeBindings.Clear();
+            for (int index = 0; index < snapshot.RuntimeBindings.Length; index++)
+            {
+                runtimeBindings.Add(snapshot.RuntimeBindings[index].Clone());
+            }
+
+            removedDefinitionBones.Clear();
+            for (int index = 0; index < snapshot.RemovedDefinitionBones.Length; index++)
+            {
+                removedDefinitionBones.Add(snapshot.RemovedDefinitionBones[index]);
+            }
+
+            registryGeneration = PreviousGeneration(snapshot.Generation);
+            if (!TryCreateRagdollBones())
+            {
+                throw new InvalidOperationException(
+                    "Failed to restore the previous ragdoll registry: "
+                    + lastInitializationError);
+            }
+        }
+
+        internal void NotifyRuntimeHierarchyChanged()
+        {
+            if (OnRuntimeHierarchyChanged == null) return;
+
+            Delegate[] subscribers =
+                OnRuntimeHierarchyChanged.GetInvocationList();
+            for (int index = 0; index < subscribers.Length; index++)
+            {
+                try
+                {
+                    ((Action)subscribers[index])();
+                }
+                catch (Exception exception)
+                {
+                    Debug.LogException(exception, this);
+                }
+            }
+        }
         #endregion
 
         #region Initialization Event
         event Action OnBonesCreated;
+        event Action OnRuntimeHierarchyChanged;
 
         /// <summary>
         /// If the Definition is initialized, the action will be instantly called.
@@ -306,6 +496,20 @@ namespace Hairibar.Ragdoll
         {
             OnBonesCreated -= action;
         }
+
+        /// <summary>
+        /// Subscribes to committed runtime registry mutations. Unlike OnBonesCreated,
+        /// this event does not imply that authored definition profiles changed.
+        /// </summary>
+        public void SubscribeToRuntimeHierarchyChanged(Action action)
+        {
+            OnRuntimeHierarchyChanged += action;
+        }
+
+        public void UnsubscribeFromRuntimeHierarchyChanged(Action action)
+        {
+            OnRuntimeHierarchyChanged -= action;
+        }
         #endregion
 
         #region Serialized Data
@@ -325,6 +529,12 @@ namespace Hairibar.Ragdoll
 
         RagdollBoneTopology topology;
         int registryGeneration;
+        string lastInitializationError;
+
+        readonly List<RuntimeBinding> runtimeBindings =
+            new List<RuntimeBinding>();
+        readonly HashSet<BoneName> removedDefinitionBones =
+            new HashSet<BoneName>();
         #endregion
 
         #region Validation
@@ -334,12 +544,19 @@ namespace Hairibar.Ragdoll
             {
                 if (!_definition || bindings == null) return false;
                 if (bindings.Count < _definition.BoneCount) return false;
-                if (bindings.Any(pair => pair.Value == null)) return false;
-                if (bindings.Values.Distinct().Count() != bindings.Values.Count) return false;
 
                 foreach (BoneName boneName in _definition.Bones)
                 {
                     if (!bindings.ContainsKey(boneName)) return false;
+                }
+
+                List<RuntimeBinding> active = BuildActiveBindings();
+                HashSet<ConfigurableJoint> activeJoints =
+                    new HashSet<ConfigurableJoint>();
+                for (int index = 0; index < active.Count; index++)
+                {
+                    ConfigurableJoint joint = active[index].Joint;
+                    if (!joint || !activeJoints.Add(joint)) return false;
                 }
 
                 return true;
@@ -350,28 +567,27 @@ namespace Hairibar.Ragdoll
         {
             get
             {
-                if (bones == null || indexedBones == null || indexedBonesView == null || topology == null) return false;
-                if (indexedBones.Length != _definition.BoneCount) return false;
+                if (bones == null || indexedBones == null
+                    || indexedBonesView == null || topology == null)
+                {
+                    return false;
+                }
 
-                int index = 0;
-                foreach (BoneName boneName in _definition.Bones)
+                List<RuntimeBinding> active = BuildActiveBindings();
+                if (indexedBones.Length != active.Count) return false;
+
+                for (int index = 0; index < active.Count; index++)
                 {
                     RagdollBone bone = indexedBones[index];
-                    if (bone.Name != boneName || bone.Joint != GetBindingJoint(boneName))
+                    if (bone.Name != active[index].Name
+                        || bone.Joint != active[index].Joint)
                     {
                         return false;
                     }
-
-                    index++;
                 }
 
                 return true;
             }
-        }
-
-        ConfigurableJoint GetBindingJoint(BoneName name)
-        {
-            return bindings[name];
         }
 
         void ThrowExceptionIfNotInitialized()
@@ -421,12 +637,16 @@ namespace Hairibar.Ragdoll
 
         bool TryCreateRagdollBones()
         {
+            lastInitializationError = null;
             if (!BindingsAreValid)
             {
-                return FailInitialization("Ragdoll Definition Bindings aren't correctly set up.", this);
+                return FailInitialization(
+                    "Ragdoll Definition Bindings aren't correctly set up.",
+                    this);
             }
 
-            int boneCount = _definition.BoneCount;
+            List<RuntimeBinding> activeBindings = BuildActiveBindings();
+            int boneCount = activeBindings.Count;
             int nextGeneration = GetNextGeneration();
 
             bones = new Dictionary<BoneName, RagdollBone>(boneCount);
@@ -437,13 +657,19 @@ namespace Hairibar.Ragdoll
             indexByCollider = new Dictionary<Collider, int>(boneCount * 2);
             indexByJoint = new Dictionary<ConfigurableJoint, int>(boneCount);
 
-            int index = 0;
-            foreach (BoneName boneName in _definition.Bones)
+            for (int index = 0; index < activeBindings.Count; index++)
             {
-                ConfigurableJoint joint = bindings[boneName];
-                Rigidbody rigidbody = joint.GetComponent<Rigidbody>();
+                BoneName boneName = activeBindings[index].Name;
+                ConfigurableJoint joint = activeBindings[index].Joint;
+                if (!joint)
+                {
+                    return FailInitialization(
+                        "A runtime ragdoll binding references a destroyed ConfigurableJoint.",
+                        this);
+                }
 
-                if (rigidbody == null)
+                Rigidbody rigidbody = joint.GetComponent<Rigidbody>();
+                if (!rigidbody)
                 {
                     return FailInitialization(
                         "Every bound ConfigurableJoint must have a Rigidbody on the same GameObject.",
@@ -453,17 +679,15 @@ namespace Hairibar.Ragdoll
                 if (indexByName.ContainsKey(boneName))
                 {
                     return FailInitialization(
-                        "A BoneName cannot appear more than once in a RagdollDefinition.",
-                        _definition);
+                        "A BoneName cannot appear more than once in the runtime ragdoll registry.",
+                        this);
                 }
-
                 if (indexByRigidbody.ContainsKey(rigidbody))
                 {
                     return FailInitialization(
                         "A Rigidbody cannot belong to more than one ragdoll bone.",
                         rigidbody);
                 }
-
                 if (indexByJoint.ContainsKey(joint))
                 {
                     return FailInitialization(
@@ -480,27 +704,23 @@ namespace Hairibar.Ragdoll
 
                 bones.Add(boneName, bone);
                 indexedBones[index] = bone;
-
                 indexByName.Add(boneName, index);
                 indexByRigidbody.Add(rigidbody, index);
                 indexByJoint.Add(joint, index);
 
                 foreach (Collider collider in bone.Colliders)
                 {
-                    if (collider == null) continue;
-
+                    if (!collider) continue;
                     int existingIndex;
-                    if (indexByCollider.TryGetValue(collider, out existingIndex) && existingIndex != index)
+                    if (indexByCollider.TryGetValue(collider, out existingIndex)
+                        && existingIndex != index)
                     {
                         return FailInitialization(
                             "A Collider cannot belong to more than one ragdoll bone.",
                             collider);
                     }
-
                     indexByCollider[collider] = index;
                 }
-
-                index++;
             }
 
             int[] parentIndices = new int[boneCount];
@@ -529,8 +749,24 @@ namespace Hairibar.Ragdoll
             indexedBonesView = Array.AsReadOnly(indexedBones);
             topology = createdTopology;
             registryGeneration = nextGeneration;
-
+            IsInitialized = true;
             return true;
+        }
+
+        List<RuntimeBinding> BuildActiveBindings()
+        {
+            List<RuntimeBinding> active =
+                new List<RuntimeBinding>(_definition.BoneCount + runtimeBindings.Count);
+            foreach (BoneName boneName in _definition.Bones)
+            {
+                if (removedDefinitionBones.Contains(boneName)) continue;
+                active.Add(new RuntimeBinding(boneName, bindings[boneName]));
+            }
+            for (int index = 0; index < runtimeBindings.Count; index++)
+            {
+                active.Add(runtimeBindings[index]);
+            }
+            return active;
         }
 
         void ClearRuntimeRegistry()
@@ -565,6 +801,12 @@ namespace Hairibar.Ragdoll
             return nextGeneration == 0 ? 1 : nextGeneration;
         }
 
+        static int PreviousGeneration(int generation)
+        {
+            if (generation == 1) return 0;
+            return unchecked(generation - 1);
+        }
+
         void ValidateBoneIndex(int index)
         {
             if ((uint)index >= (uint)indexedBones.Length)
@@ -575,6 +817,8 @@ namespace Hairibar.Ragdoll
 
         bool FailInitialization(string message, UnityEngine.Object context)
         {
+            lastInitializationError = message;
+            IsInitialized = false;
             ClearRuntimeRegistry();
 
             if (Application.isPlaying)
@@ -585,6 +829,46 @@ namespace Hairibar.Ragdoll
             return false;
         }
         #endregion
+
+        internal sealed class RuntimeRegistrySnapshot
+        {
+            internal RuntimeBinding[] RuntimeBindings { get; }
+            internal BoneName[] RemovedDefinitionBones { get; }
+            internal int Generation { get; }
+
+            internal RuntimeRegistrySnapshot(
+                List<RuntimeBinding> runtimeBindings,
+                HashSet<BoneName> removedDefinitionBones,
+                int generation)
+            {
+                RuntimeBindings = new RuntimeBinding[runtimeBindings.Count];
+                for (int index = 0; index < runtimeBindings.Count; index++)
+                {
+                    RuntimeBindings[index] = runtimeBindings[index].Clone();
+                }
+                RemovedDefinitionBones =
+                    new BoneName[removedDefinitionBones.Count];
+                removedDefinitionBones.CopyTo(RemovedDefinitionBones);
+                Generation = generation;
+            }
+        }
+
+        internal sealed class RuntimeBinding
+        {
+            internal BoneName Name { get; }
+            internal ConfigurableJoint Joint { get; }
+
+            internal RuntimeBinding(BoneName name, ConfigurableJoint joint)
+            {
+                Name = name;
+                Joint = joint;
+            }
+
+            internal RuntimeBinding Clone()
+            {
+                return new RuntimeBinding(Name, Joint);
+            }
+        }
 
         [Serializable]
         class BoneJointBindingsDictionary : SerializableDictionary<BoneName, ConfigurableJoint>

@@ -24,6 +24,43 @@ namespace Hairibar.Ragdoll.Animation
             FadeInActive
         }
 
+        internal sealed class HierarchySnapshot
+        {
+            internal readonly RagdollSimulationMode Mode;
+            internal readonly Dictionary<BoneName, ActiveConfiguration> Active;
+
+            internal HierarchySnapshot(
+                RagdollSimulationMode mode,
+                Dictionary<BoneName, ActiveConfiguration> active)
+            {
+                Mode = mode;
+                Active = active;
+            }
+        }
+
+        internal sealed class ActiveConfiguration
+        {
+            internal readonly PowerSetting PowerSetting;
+            internal readonly bool DetectCollisions;
+            internal readonly Dictionary<Collider, bool> ColliderEnabled;
+
+            ActiveConfiguration(BoneSnapshot snapshot)
+            {
+                PowerSetting = snapshot.ActivePowerSetting;
+                DetectCollisions = snapshot.ActiveDetectCollisions;
+                ColliderEnabled = new Dictionary<Collider, bool>();
+                for (int index = 0; index < snapshot.Colliders.Length; index++)
+                {
+                    Collider collider = snapshot.Colliders[index];
+                    if (collider)
+                    {
+                        ColliderEnabled[collider] =
+                            snapshot.ColliderEnabled[index];
+                    }
+                }
+            }
+        }
+
         sealed class BoneSnapshot
         {
             internal readonly RagdollBone Bone;
@@ -149,6 +186,90 @@ namespace Hairibar.Ragdoll.Animation
             activeDriveWeight = 1f;
             transitionKind = TransitionKind.None;
             isInitialized = true;
+        }
+
+        internal HierarchySnapshot CaptureHierarchySnapshot()
+        {
+            EnsureInitialized();
+            Dictionary<BoneName, ActiveConfiguration> active =
+                new Dictionary<BoneName, ActiveConfiguration>();
+            for (int index = 0; index < boneSnapshots.Length; index++)
+            {
+                BoneSnapshot snapshot = boneSnapshots[index];
+                active[snapshot.Bone.Name] =
+                    new ActiveConfiguration(snapshot);
+            }
+            return new HierarchySnapshot(currentMode, active);
+        }
+
+        internal void RebuildHierarchy(
+            IEnumerable<RagdollAnimator.AnimatedPair> pairs,
+            HierarchySnapshot snapshot)
+        {
+            if (pairs == null) throw new ArgumentNullException(nameof(pairs));
+            if (snapshot == null) throw new ArgumentNullException(nameof(snapshot));
+            if (IsTransitioning)
+            {
+                throw new InvalidOperationException(
+                    "Simulation mode hierarchy cannot rebuild during a transition.");
+            }
+
+            UnsubscribeBoneSnapshots();
+            bindings = animator.Bindings;
+            ragdollSettings = bindings.GetComponent<RagdollSettings>();
+            CreateBoneSnapshots(pairs);
+
+            for (int index = 0; index < boneSnapshots.Length; index++)
+            {
+                BoneSnapshot bone = boneSnapshots[index];
+                ActiveConfiguration active;
+                if (snapshot.Active.TryGetValue(
+                    bone.Bone.Name,
+                    out active))
+                {
+                    bone.ActivePowerSetting = active.PowerSetting;
+                    bone.ActiveDetectCollisions = active.DetectCollisions;
+                    for (int colliderIndex = 0;
+                        colliderIndex < bone.Colliders.Length;
+                        colliderIndex++)
+                    {
+                        bool enabled;
+                        if (bone.Colliders[colliderIndex]
+                            && active.ColliderEnabled.TryGetValue(
+                                bone.Colliders[colliderIndex],
+                                out enabled))
+                        {
+                            bone.ColliderEnabled[colliderIndex] = enabled;
+                        }
+                    }
+                    continue;
+                }
+
+                RagdollBoneHandle parentHandle;
+                if (bindings.Topology.TryGetParent(
+                    bindings.GetHandleAt(index),
+                    out parentHandle))
+                {
+                    bone.ActivePowerSetting =
+                        boneSnapshots[parentHandle.Index].ActivePowerSetting;
+                }
+            }
+
+            currentMode = snapshot.Mode;
+            targetMode = snapshot.Mode;
+            transitionKind = TransitionKind.None;
+            activeDriveWeight = snapshot.Mode == RagdollSimulationMode.Active
+                ? 1f
+                : 0f;
+
+            if (snapshot.Mode == RagdollSimulationMode.Kinematic)
+            {
+                ForceAllBonesKinematic();
+            }
+            else
+            {
+                RestoreActivePowerSettings();
+            }
         }
 
         public void Modify(
@@ -732,10 +853,9 @@ namespace Hairibar.Ragdoll.Animation
             isQuitting = true;
         }
 
-        void OnDestroy()
+        void UnsubscribeBoneSnapshots()
         {
             if (boneSnapshots == null) return;
-
             for (int index = 0; index < boneSnapshots.Length; index++)
             {
                 BoneSnapshot snapshot = boneSnapshots[index];
@@ -745,6 +865,11 @@ namespace Hairibar.Ragdoll.Animation
                         snapshot.PowerChangedHandler;
                 }
             }
+        }
+
+        void OnDestroy()
+        {
+            UnsubscribeBoneSnapshots();
         }
 
         void OnValidate()

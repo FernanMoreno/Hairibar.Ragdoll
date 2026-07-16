@@ -327,6 +327,13 @@ namespace Hairibar.Ragdoll
             ApplyWeightDistribution();
         }
 
+        void OnRuntimeHierarchyChanged()
+        {
+            // Runtime additions are not part of authored power or mass profiles. Apply
+            // only generic joint, collider and Rigidbody settings to the active registry.
+            ApplySettings();
+        }
+
         void ApplyPowerProfile()
         {
             if (!bindings || !bindings.IsInitialized) return;
@@ -337,6 +344,7 @@ namespace Hairibar.Ragdoll
 
             foreach (RagdollBone bone in bindings.Bones)
             {
+                if (!bindings.IsDefinitionBoneName(bone.Name)) continue;
                 PowerSetting powerSetting = _powerProfile.GetBoneSetting(bone.Name);
 
                 switch (powerSetting)
@@ -369,7 +377,10 @@ namespace Hairibar.Ragdoll
 
             foreach (RagdollBone bone in bindings.Bones)
             {
-                bone.Rigidbody.mass = _weightDistribution.GetBoneMass(bone.Name, totalMass);
+                if (!bindings.IsDefinitionBoneName(bone.Name)) continue;
+                bone.Rigidbody.mass = _weightDistribution.GetBoneMass(
+                    bone.Name,
+                    totalMass);
             }
 
             //As we change RBs' mass, the springs have to be scaled. ApplySettings takes care of that.
@@ -398,6 +409,8 @@ namespace Hairibar.Ragdoll
         void Start()
         {
             bindings.SubscribeToOnBonesCreated(OnBindingsInitialized);
+            bindings.SubscribeToRuntimeHierarchyChanged(
+                OnRuntimeHierarchyChanged);
         }
 
         void OnEnable()
@@ -439,6 +452,8 @@ namespace Hairibar.Ragdoll
         void OnDestroy()
         {
             bindings.UnsubscribeFromOnBonesCreated(OnBindingsInitialized);
+            bindings.UnsubscribeFromRuntimeHierarchyChanged(
+                OnRuntimeHierarchyChanged);
         }
         #endregion
     }

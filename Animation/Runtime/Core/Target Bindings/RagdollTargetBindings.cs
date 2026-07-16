@@ -154,12 +154,6 @@ namespace Hairibar.Ragdoll.Animation
             }
 
             int expectedCount = expectedRagdollBindings.BoneCount;
-            if (bindings.Length != expectedCount)
-            {
-                error = "The target binding table contains " + bindings.Length
-                    + " entries but the ragdoll contains " + expectedCount + " bones.";
-                return false;
-            }
 
             Dictionary<BoneName, RagdollTargetBinding> byBone =
                 new Dictionary<BoneName, RagdollTargetBinding>(expectedCount);

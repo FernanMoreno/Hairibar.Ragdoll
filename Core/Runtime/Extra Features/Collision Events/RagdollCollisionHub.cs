@@ -130,6 +130,7 @@ namespace Hairibar.Ragdoll
         {
             bindings = GetComponent<RagdollDefinitionBindings>();
             bindings.SubscribeToOnBonesCreated(RebuildRelays);
+            bindings.SubscribeToRuntimeHierarchyChanged(RebuildRelays);
         }
 
         void OnDisable()
@@ -137,6 +138,7 @@ namespace Hairibar.Ragdoll
             if (bindings)
             {
                 bindings.UnsubscribeFromOnBonesCreated(RebuildRelays);
+                bindings.UnsubscribeFromRuntimeHierarchyChanged(RebuildRelays);
             }
         }
 
@@ -150,6 +152,7 @@ namespace Hairibar.Ragdoll
             if (bindings)
             {
                 bindings.UnsubscribeFromOnBonesCreated(RebuildRelays);
+                bindings.UnsubscribeFromRuntimeHierarchyChanged(RebuildRelays);
             }
 
             for (int i = 0; i < ownedRelays.Count; i++)

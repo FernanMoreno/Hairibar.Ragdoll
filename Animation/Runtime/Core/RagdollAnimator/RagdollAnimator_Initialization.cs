@@ -9,35 +9,17 @@ namespace Hairibar.Ragdoll.Animation
     {
         void CreateRagdollToTargetMapper()
         {
-            RagdollTargetBinding[] resolvedBindings;
             string error;
-
-            if (_targetBindings)
+            RagdollTargetBinding[] resolvedBindings =
+                ResolveCurrentTargetBindings(out error);
+            if (resolvedBindings == null)
             {
-                if (!_targetBindings.TryGetOrderedBindings(
-                    _ragdollBindings,
-                    out resolvedBindings,
-                    out error))
-                {
-                    throw new InvalidOperationException(
-                        "The explicit target bindings are invalid: " + error);
-                }
-
-                UsesLegacyTargetBindingFallback = false;
+                throw new InvalidOperationException(
+                    "Could not resolve Target bindings: " + error);
             }
-            else
-            {
-                if (!RagdollTargetBindingUtility.TryCreateByUniqueName(
-                    _ragdollBindings,
-                    transform,
-                    out resolvedBindings,
-                    out error))
-                {
-                    throw new InvalidOperationException(
-                        "Could not create legacy target bindings: " + error);
-                }
 
-                UsesLegacyTargetBindingFallback = true;
+            if (UsesLegacyTargetBindingFallback)
+            {
                 Debug.LogWarning(
                     "RagdollAnimator is using the legacy name-based Target binding fallback. "
                     + "Create and assign a RagdollTargetBindings component to make the dual-rig references explicit.",

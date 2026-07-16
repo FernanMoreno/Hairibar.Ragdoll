@@ -31,7 +31,7 @@ namespace Hairibar.Ragdoll.Animation
             internal Vector3 poseAngularVelocity;
 
             readonly RagdollBoneTargetBonePair bonePair;
-            readonly RagdollTargetDefaultPose defaultTargetPose;
+            RagdollTargetDefaultPose defaultTargetPose;
             AnimatedPoseSampler poseSampler;
 
 
@@ -85,6 +85,18 @@ namespace Hairibar.Ragdoll.Animation
             internal void FixTargetTransform()
             {
                 defaultTargetPose.Apply(TargetBone);
+            }
+
+            internal void CopyRuntimeStateFrom(AnimatedPair source)
+            {
+                if (source == null) throw new System.ArgumentNullException(nameof(source));
+                SampledTargetPose = source.SampledTargetPose;
+                currentPose = source.currentPose;
+                poseSampler = source.poseSampler;
+                poseLinearVelocity = source.poseLinearVelocity;
+                poseAngularVelocity = source.poseAngularVelocity;
+                MappingWeights = source.MappingWeights;
+                defaultTargetPose = source.defaultTargetPose;
             }
 
             internal TeleportState CaptureTeleportState()

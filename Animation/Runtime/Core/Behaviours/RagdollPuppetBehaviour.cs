@@ -619,6 +619,38 @@ namespace Hairibar.Ragdoll.Animation
             lifecycleSuspended = !Context.Animator.IsAlive;
         }
 
+        protected override void OnBehaviourHierarchyChanged(
+            IReadOnlyList<RagdollMuscleChange> added,
+            IReadOnlyList<RagdollMuscleChange> removed)
+        {
+            if (colliderSurfaceController != null)
+            {
+                colliderSurfaceController.Restore();
+            }
+
+            colliderSurfaceController =
+                new RagdollPuppetColliderSurfaceController(
+                    Context.Bindings,
+                    Context.Muscles);
+            groundProbe = new RagdollGroundProbe(Context);
+            rootPair = FindRootPair();
+            getUpReferencePair = FindGetUpReferencePair();
+            lastKnockOutBone = RagdollBoneHandle.Invalid;
+            collisionProcessor.Reset();
+            unmappedContactTracker.Reset();
+            kinematicContactTracker.Reset();
+            kinematicActivationQueue.Reset();
+            hasObservedSurfaceSimulationMode = false;
+
+            if (IsActive)
+            {
+                colliderSurfaceController.CaptureBaseline();
+                ObserveSurfaceSimulationMode();
+                ApplySurfaceConfiguration(true);
+                Context.Animator.ReapplyInternalCollisionPolicy();
+            }
+        }
+
         protected override void OnBehaviourActivated()
         {
             lifecycleSuspended = !Context.Animator.IsAlive

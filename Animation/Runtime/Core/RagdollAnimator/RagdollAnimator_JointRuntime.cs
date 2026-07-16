@@ -12,6 +12,8 @@ namespace Hairibar.Ragdoll.Animation
         [NonSerialized] bool manualAngularLimitControl;
         [NonSerialized] bool pendingManualAngularLimitWrite;
         [NonSerialized] bool pendingManualAngularLimitValue;
+        [NonSerialized] bool hasManualAngularLimitValue;
+        [NonSerialized] bool manualAngularLimitValue;
 
         JointAnchorRecord[] jointAnchorRecords;
         bool jointRuntimeInitialized;
@@ -111,6 +113,8 @@ namespace Hairibar.Ragdoll.Animation
         /// </summary>
         public void SetAngularLimitsManual(bool limited)
         {
+            hasManualAngularLimitValue = true;
+            manualAngularLimitValue = limited;
             if (lifecyclePhysicsPolicy == null)
             {
                 pendingManualAngularLimitWrite = true;
@@ -132,7 +136,14 @@ namespace Hairibar.Ragdoll.Animation
             try
             {
                 ApplyAutomaticAngularLimits();
-                if (pendingManualAngularLimitWrite)
+                if (manualAngularLimitControl
+                    && hasManualAngularLimitValue)
+                {
+                    lifecyclePhysicsPolicy.SetAngularLimits(
+                        manualAngularLimitValue);
+                    pendingManualAngularLimitWrite = false;
+                }
+                else if (pendingManualAngularLimitWrite)
                 {
                     lifecyclePhysicsPolicy.SetAngularLimits(
                         pendingManualAngularLimitValue);

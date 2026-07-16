@@ -129,6 +129,48 @@ namespace Hairibar.Ragdoll.Animation
             }
         }
 
+        internal void RebuildHierarchy(
+            IEnumerable<RagdollAnimator.AnimatedPair> pairs)
+        {
+            EnsureInitialized();
+            if (pairs == null) throw new ArgumentNullException(nameof(pairs));
+
+            context = new RagdollBehaviourContext(
+                this,
+                animator,
+                muscles,
+                collisionHub,
+                pairs);
+
+            IReadOnlyList<RagdollBehaviourBase> registered =
+                collection.Behaviours;
+            for (int index = 0; index < registered.Count; index++)
+            {
+                registered[index].RebindContextInternal(context);
+            }
+        }
+
+        internal void NotifyHierarchyChanged(
+            IReadOnlyList<RagdollMuscleChange> added,
+            IReadOnlyList<RagdollMuscleChange> removed)
+        {
+            EnsureInitialized();
+            IReadOnlyList<RagdollBehaviourBase> registered =
+                collection.Behaviours;
+            for (int index = 0; index < registered.Count; index++)
+            {
+                RagdollBehaviourBase behaviour = registered[index];
+                try
+                {
+                    behaviour.HierarchyChangedInternal(added, removed);
+                }
+                catch (Exception exception)
+                {
+                    Debug.LogException(exception, behaviour);
+                }
+            }
+        }
+
         public bool Activate(RagdollBehaviourBase behaviour)
         {
             EnsureInitialized();

@@ -150,6 +150,18 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     "Teleport Pending",
                     runtimeAnimator.HasPendingTeleport.ToString());
                 EditorGUILayout.LabelField(
+                    "Registry Generation",
+                    runtimeAnimator.Bindings.RegistryGeneration.ToString());
+                EditorGUILayout.LabelField(
+                    "Registered Muscles",
+                    runtimeAnimator.Bindings.BoneCount.ToString());
+                EditorGUILayout.LabelField(
+                    "Runtime Added Muscles",
+                    runtimeAnimator.RuntimeAddedMuscleCount.ToString());
+                EditorGUILayout.LabelField(
+                    "Hierarchy Transaction",
+                    runtimeAnimator.IsHierarchyTransactionInProgress.ToString());
+                EditorGUILayout.LabelField(
                     "Runtime Joint Anchor Records",
                     runtimeAnimator.RuntimeJointAnchorCount.ToString());
                 EditorGUILayout.LabelField(
@@ -261,6 +273,10 @@ namespace Hairibar.Ragdoll.Animation.Editor
             }
 
             EditorGUI.EndDisabledGroup();
+
+            EditorGUILayout.HelpBox(
+                "Runtime hierarchy changes invalidate existing RagdollBoneHandles and must be requested from FixedUpdate while the lifecycle is stably Alive.",
+                MessageType.Info);
         }
 
         void CreateExplicitTargetBindings(

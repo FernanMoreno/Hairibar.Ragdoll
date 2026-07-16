@@ -23,25 +23,53 @@ namespace Hairibar.Ragdoll.Animation
 
 
         Dictionary<BoneName, ValueTransitioner> transitioners;
+        readonly List<PowerSubscription> powerSubscriptions =
+            new List<PowerSubscription>();
 
 
         public void Initialize(IEnumerable<RagdollAnimator.AnimatedPair> pairs)
         {
+            Dictionary<BoneName, ValueTransitioner> previous = transitioners;
+            for (int index = 0; index < powerSubscriptions.Count; index++)
+            {
+                PowerSubscription subscription = powerSubscriptions[index];
+                if (subscription.Bone != null)
+                {
+                    subscription.Bone.OnPowerSettingChanged -=
+                        subscription.Handler;
+                }
+            }
+            powerSubscriptions.Clear();
             transitioners = new Dictionary<BoneName, ValueTransitioner>();
 
             foreach (RagdollAnimator.AnimatedPair pair in pairs)
             {
-                InitializePair(pair);
-                InitializeTransitioner(transitioners[pair.Name]);
+                ValueTransitioner retained = null;
+                bool hasRetained = previous != null
+                    && previous.TryGetValue(pair.Name, out retained);
+                ValueTransitioner transitioner = hasRetained
+                    ? retained
+                    : CreateTransitioner();
+                InitializePair(pair, transitioner);
+                if (!hasRetained) InitializeTransitioner(transitioner);
             }
         }
 
-        void InitializePair(RagdollAnimator.AnimatedPair pair)
+        void InitializePair(
+            RagdollAnimator.AnimatedPair pair,
+            ValueTransitioner transitioner)
         {
-            ValueTransitioner transitioner = CreateTransitioner();
             transitioners.Add(pair.Name, transitioner);
 
-            pair.RagdollBone.OnPowerSettingChanged += (previousSetting, newSetting) => OnPowerSettingChanged(pair, previousSetting, newSetting);
+            RagdollBone.OnPowerSettingChangedHandler handler =
+                (previousSetting, newSetting) =>
+                    OnPowerSettingChanged(
+                        pair,
+                        previousSetting,
+                        newSetting);
+            pair.RagdollBone.OnPowerSettingChanged += handler;
+            powerSubscriptions.Add(
+                new PowerSubscription(pair.RagdollBone, handler));
         }
 
         static ValueTransitioner CreateTransitioner()
@@ -82,6 +110,19 @@ namespace Hairibar.Ragdoll.Animation
             else
             {
                 transitioner.EndTransition();
+            }
+        }
+        sealed class PowerSubscription
+        {
+            internal readonly RagdollBone Bone;
+            internal readonly RagdollBone.OnPowerSettingChangedHandler Handler;
+
+            internal PowerSubscription(
+                RagdollBone bone,
+                RagdollBone.OnPowerSettingChangedHandler handler)
+            {
+                Bone = bone;
+                Handler = handler;
             }
         }
     }

@@ -13,6 +13,9 @@ namespace Hairibar.Ragdoll.Animation
         [NonSerialized] bool pendingManualInternalCollisionWrite;
         [NonSerialized] bool pendingManualInternalCollisionCollide;
         [NonSerialized] bool pendingManualInternalCollisionUseIgnores;
+        [NonSerialized] bool hasManualInternalCollisionValue;
+        [NonSerialized] bool manualInternalCollisionCollide;
+        [NonSerialized] bool manualInternalCollisionUseIgnores;
 
         RagdollInternalCollisionController internalCollisionController;
         bool internalCollisionIgnoresDirty;
@@ -103,6 +106,9 @@ namespace Hairibar.Ragdoll.Animation
             bool collide,
             bool useInternalCollisionIgnores)
         {
+            hasManualInternalCollisionValue = true;
+            manualInternalCollisionCollide = collide;
+            manualInternalCollisionUseIgnores = useInternalCollisionIgnores;
             if (internalCollisionController == null)
             {
                 pendingManualInternalCollisionWrite = true;
@@ -163,7 +169,15 @@ namespace Hairibar.Ragdoll.Animation
                 internalCollisionController.UpdateAutomatic(
                     internalCollisionSettings.InternalCollisions);
 
-                if (pendingManualInternalCollisionWrite)
+                if (manualInternalCollisionControl
+                    && hasManualInternalCollisionValue)
+                {
+                    internalCollisionController.ApplyManual(
+                        manualInternalCollisionCollide,
+                        manualInternalCollisionUseIgnores);
+                    pendingManualInternalCollisionWrite = false;
+                }
+                else if (pendingManualInternalCollisionWrite)
                 {
                     internalCollisionController.ApplyManual(
                         pendingManualInternalCollisionCollide,
@@ -242,6 +256,7 @@ namespace Hairibar.Ragdoll.Animation
             string error;
             if (!profile.TryCreateInternalCollisionRuntime(
                 Bindings,
+                ResolveRuntimeMuscleGroup,
                 out runtime,
                 out error))
             {

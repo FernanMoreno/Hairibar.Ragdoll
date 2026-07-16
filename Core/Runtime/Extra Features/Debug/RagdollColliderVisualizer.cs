@@ -159,6 +159,8 @@ namespace Hairibar.Ragdoll.Debug
 
             bindings.UnsubscribeFromOnBonesCreated(GatherColliders);
             bindings.SubscribeToOnBonesCreated(GatherColliders);
+            bindings.UnsubscribeFromRuntimeHierarchyChanged(GatherColliders);
+            bindings.SubscribeToRuntimeHierarchyChanged(GatherColliders);
 
             EnsureMaterials();
         }

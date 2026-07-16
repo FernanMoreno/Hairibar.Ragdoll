@@ -134,12 +134,14 @@ namespace Hairibar.Ragdoll.Animation
             return TryBuildInternalCollisionRuntime(
                 indicesByBone,
                 groupsByBone,
+                null,
                 out runtime,
                 out error);
         }
 
         internal bool TryCreateRuntime(
             RagdollDefinitionBindings bindings,
+            Func<BoneName, RagdollMuscleGroup?> runtimeGroupResolver,
             out RagdollMuscleProfileRuntime runtime,
             out string error)
         {
@@ -183,7 +185,20 @@ namespace Hairibar.Ragdoll.Animation
             for (int index = 0; index < count; index++)
             {
                 BoneName bone = bindings.GetBoneAt(index).Name;
-                RagdollMuscleGroup group = groupsByBone[bone];
+                RagdollMuscleGroup group;
+                if (!groupsByBone.TryGetValue(bone, out group))
+                {
+                    RagdollMuscleGroup? runtimeGroup = runtimeGroupResolver != null
+                        ? runtimeGroupResolver(bone)
+                        : null;
+                    if (!runtimeGroup.HasValue)
+                    {
+                        error = "Runtime ragdoll bone '" + bone
+                            + "' has no semantic muscle group.";
+                        return false;
+                    }
+                    group = runtimeGroup.Value;
+                }
                 RagdollMuscleBehaviourSettings groupSettings;
                 if (!overridesByGroup.TryGetValue(group, out groupSettings))
                 {
@@ -203,6 +218,7 @@ namespace Hairibar.Ragdoll.Animation
 
         internal bool TryCreateInternalCollisionRuntime(
             RagdollDefinitionBindings bindings,
+            Func<BoneName, RagdollMuscleGroup?> runtimeGroupResolver,
             out RagdollInternalCollisionIgnoreRuntime runtime,
             out string error)
         {
@@ -244,6 +260,7 @@ namespace Hairibar.Ragdoll.Animation
             return TryBuildInternalCollisionRuntime(
                 indicesByBone,
                 groupsByBone,
+                runtimeGroupResolver,
                 out runtime,
                 out error);
         }
@@ -263,6 +280,7 @@ namespace Hairibar.Ragdoll.Animation
         bool TryBuildInternalCollisionRuntime(
             Dictionary<BoneName, int> indicesByBone,
             Dictionary<BoneName, RagdollMuscleGroup> groupsByBone,
+            Func<BoneName, RagdollMuscleGroup?> runtimeGroupResolver,
             out RagdollInternalCollisionIgnoreRuntime runtime,
             out string error)
         {
@@ -276,9 +294,17 @@ namespace Hairibar.Ragdoll.Animation
                 RagdollMuscleGroup group;
                 if (!groupsByBone.TryGetValue(pair.Key, out group))
                 {
-                    error = "Ragdoll bone '" + pair.Key
-                        + "' has no semantic muscle group.";
-                    return false;
+                    RagdollMuscleGroup? runtimeGroup =
+                        runtimeGroupResolver != null
+                            ? runtimeGroupResolver(pair.Key)
+                            : null;
+                    if (!runtimeGroup.HasValue)
+                    {
+                        error = "Ragdoll bone '" + pair.Key
+                            + "' has no semantic muscle group.";
+                        return false;
+                    }
+                    group = runtimeGroup.Value;
                 }
                 groups[pair.Value] = group;
             }
@@ -310,26 +336,25 @@ namespace Hairibar.Ragdoll.Animation
                 int sourceIndex;
                 if (!indicesByBone.TryGetValue(rule.Bone, out sourceIndex))
                 {
-                    error = "Internal-collision rule " + ruleIndex
-                        + " references unknown source bone '" + rule.Bone + "'.";
-                    return false;
+                    // Authored rules for a definition muscle removed from the current
+                    // runtime generation remain valid asset data but have no pair to own.
+                    continue;
                 }
 
-                int[] muscleIndices = new int[rule.Muscles.Length];
+                List<int> resolvedMuscles = new List<int>(rule.Muscles.Length);
                 for (int targetIndex = 0;
                     targetIndex < rule.Muscles.Length;
                     targetIndex++)
                 {
-                    BoneName target = rule.Muscles[targetIndex];
                     int resolvedIndex;
-                    if (!indicesByBone.TryGetValue(target, out resolvedIndex))
+                    if (indicesByBone.TryGetValue(
+                        rule.Muscles[targetIndex],
+                        out resolvedIndex))
                     {
-                        error = "Internal-collision rule for '" + rule.Bone
-                            + "' references unknown target bone '" + target + "'.";
-                        return false;
+                        resolvedMuscles.Add(resolvedIndex);
                     }
-                    muscleIndices[targetIndex] = resolvedIndex;
                 }
+                int[] muscleIndices = resolvedMuscles.ToArray();
 
                 RagdollMuscleGroup[] ignoredGroups =
                     new RagdollMuscleGroup[rule.Groups.Length];
