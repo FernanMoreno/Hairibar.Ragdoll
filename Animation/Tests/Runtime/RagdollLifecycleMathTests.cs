@@ -1,4 +1,5 @@
 ﻿using NUnit.Framework;
+using UnityEngine;
 
 namespace Hairibar.Ragdoll.Animation.Tests
 {
@@ -13,6 +14,10 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Assert.That(settings.KillDuration, Is.EqualTo(1f));
             Assert.That(settings.DeadMuscleWeight, Is.EqualTo(0.01f));
             Assert.That(settings.DeadMuscleDamper, Is.EqualTo(2f));
+            Assert.That(settings.MaxFreezeSqrVelocity, Is.EqualTo(0.02f));
+            Assert.That(settings.FreezePermanently, Is.False);
+            Assert.That(settings.EnableAngularLimitsOnKill, Is.True);
+            Assert.That(settings.EnableInternalCollisionsOnKill, Is.True);
         }
 
         [Test]
@@ -102,6 +107,75 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Assert.That(settings.KillDuration, Is.EqualTo(1f));
             Assert.That(settings.DeadMuscleWeight, Is.EqualTo(1f));
             Assert.That(settings.DeadMuscleDamper, Is.EqualTo(2f));
+        }
+
+        [Test]
+        public void Settings_PreserveIntentionalFreezeOverrides()
+        {
+            RagdollLifecycleSettings settings =
+                new RagdollLifecycleSettings(
+                    0f,
+                    0f,
+                    0f,
+                    0f,
+                    true,
+                    false,
+                    false);
+
+            Assert.That(settings.MaxFreezeSqrVelocity, Is.Zero);
+            Assert.That(settings.FreezePermanently, Is.True);
+            Assert.That(settings.EnableAngularLimitsOnKill, Is.False);
+            Assert.That(settings.EnableInternalCollisionsOnKill, Is.False);
+        }
+
+        [Test]
+        public void Settings_MigrateSprint0026DataToFreezeDefaults()
+        {
+            RagdollLifecycleSettings settings =
+                JsonUtility.FromJson<RagdollLifecycleSettings>(
+                    "{\"killDuration\":3,"
+                    + "\"deadMuscleWeight\":0.25,"
+                    + "\"deadMuscleDamper\":4}");
+
+            settings.Normalize();
+
+            Assert.That(settings.KillDuration, Is.EqualTo(3f));
+            Assert.That(settings.DeadMuscleWeight, Is.EqualTo(0.25f));
+            Assert.That(settings.DeadMuscleDamper, Is.EqualTo(4f));
+            Assert.That(settings.MaxFreezeSqrVelocity, Is.EqualTo(0.02f));
+            Assert.That(settings.FreezePermanently, Is.False);
+            Assert.That(settings.EnableAngularLimitsOnKill, Is.True);
+            Assert.That(settings.EnableInternalCollisionsOnKill, Is.True);
+        }
+
+        [TestCase(0f, 0f, true)]
+        [TestCase(0.02f, 0.02f, true)]
+        [TestCase(0.0201f, 0.02f, false)]
+        public void FreezeVelocity_UsesInclusiveSquaredThreshold(
+            float velocity,
+            float threshold,
+            bool expected)
+        {
+            Assert.That(
+                RagdollLifecycleMath.IsFreezeVelocityReady(
+                    velocity,
+                    threshold),
+                Is.EqualTo(expected));
+        }
+
+        [Test]
+        public void FreezeVelocity_NonFiniteValuesNeverFreeze()
+        {
+            Assert.That(
+                RagdollLifecycleMath.IsFreezeVelocityReady(
+                    float.NaN,
+                    0.02f),
+                Is.False);
+            Assert.That(
+                RagdollLifecycleMath.IsFreezeVelocityReady(
+                    float.PositiveInfinity,
+                    0.02f),
+                Is.False);
         }
     }
 }

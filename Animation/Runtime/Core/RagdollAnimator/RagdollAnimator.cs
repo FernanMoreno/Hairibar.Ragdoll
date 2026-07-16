@@ -86,6 +86,7 @@ namespace Hairibar.Ragdoll.Animation
         void FixedUpdate()
         {
             if (!isActiveAndEnabled || animatedPairs is null) return;
+            if (LifecycleIsFrozenStable()) return;
 
             if (UsesFixedAnimatorUpdate()
                 && LifecycleAllowsAnimationSampling())
@@ -101,6 +102,12 @@ namespace Hairibar.Ragdoll.Animation
         void LateUpdate()
         {
             if (!isActiveAndEnabled || animatedPairs is null) return;
+
+            if (LifecycleIsFrozenStable())
+            {
+                UpdateLifecycle(Time.deltaTime);
+                return;
+            }
 
             if (!UsesFixedAnimatorUpdate()
                 && LifecycleAllowsAnimationSampling())
@@ -167,6 +174,16 @@ namespace Hairibar.Ragdoll.Animation
             {
                 behaviourController.ReactivateAfterAnimator();
             }
+        }
+
+        void OnApplicationQuit()
+        {
+            lifecycleApplicationQuitting = true;
+        }
+
+        void OnDestroy()
+        {
+            ShutdownLifecycle();
         }
 
         void OnDisable()

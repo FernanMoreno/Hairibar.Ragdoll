@@ -25,5 +25,33 @@
         {
             return mode == RagdollSimulationMode.Active ? 1f : 0f;
         }
+
+        internal static bool LifecycleOwnsSimulation(
+            RagdollLifecycleState requestedState,
+            bool isKilling,
+            bool isFreezeSuspended)
+        {
+            return isFreezeSuspended
+                || isKilling
+                || requestedState != RagdollLifecycleState.Alive;
+        }
+
+        internal static bool RequiresActiveForLifecycle(
+            RagdollLifecycleState requestedState,
+            bool isKilling,
+            bool isFreezeSuspended,
+            RagdollSimulationMode currentMode,
+            bool isTransitioning,
+            float activeDriveWeight)
+        {
+            return !isFreezeSuspended
+                && LifecycleOwnsSimulation(
+                    requestedState,
+                    isKilling,
+                    false)
+                && (currentMode != RagdollSimulationMode.Active
+                    || isTransitioning
+                    || activeDriveWeight < 1f);
+        }
     }
 }

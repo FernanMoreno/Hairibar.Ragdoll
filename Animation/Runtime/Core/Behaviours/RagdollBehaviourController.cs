@@ -21,7 +21,9 @@ namespace Hairibar.Ragdoll.Animation
         {
             KillStarted,
             KillEnded,
-            Resurrected
+            Resurrected,
+            Frozen,
+            Unfrozen
         }
 
         [Tooltip("Optional root containing the behaviour components. If left empty, the RagdollAnimator hierarchy is searched.")]
@@ -35,6 +37,7 @@ namespace Hairibar.Ragdoll.Animation
         bool collisionSubscribed;
         bool isInitialized;
         bool isChangingBehaviour;
+        bool lifecycleFrozen;
 
         public bool IsInitialized => isInitialized;
         public RagdollBehaviourBase ActiveBehaviour =>
@@ -45,6 +48,7 @@ namespace Hairibar.Ragdoll.Animation
                 : EmptyBehaviours;
         public Transform BehaviourRoot => behaviourRoot ? behaviourRoot : transform;
         public RagdollBehaviourContext Context => context;
+        public bool IsLifecycleFrozen => lifecycleFrozen;
 
         public RagdollModifierStage Stage => RagdollModifierStage.Behaviour;
         public int Priority => 0;
@@ -152,7 +156,9 @@ namespace Hairibar.Ragdoll.Animation
                 for (int index = 0; index < registered.Count; index++)
                 {
                     RagdollBehaviourBase candidate = registered[index];
-                    candidate.enabled = ReferenceEquals(candidate, behaviour);
+                    candidate.enabled = ShouldEnableBehaviour(
+                        lifecycleFrozen,
+                        ReferenceEquals(candidate, behaviour));
                 }
 
                 if (behaviour)
@@ -231,6 +237,58 @@ namespace Hairibar.Ragdoll.Animation
             NotifyLifecycle(LifecycleNotification.Resurrected);
         }
 
+        internal void NotifyFrozen()
+        {
+            EnsureInitialized();
+            if (lifecycleFrozen) return;
+
+            NotifyLifecycle(LifecycleNotification.Frozen);
+            lifecycleFrozen = true;
+            UnsubscribeCollisionEvents();
+            SetBehaviourComponentsEnabled(false);
+        }
+
+        internal void NotifyUnfrozen()
+        {
+            EnsureInitialized();
+            if (!lifecycleFrozen) return;
+
+            NotifyLifecycle(LifecycleNotification.Unfrozen);
+            lifecycleFrozen = false;
+            SetBehaviourComponentsEnabled(true);
+            SubscribeCollisionEvents();
+        }
+
+        internal void DestroyBehavioursForPermanentFreeze()
+        {
+            EnsureInitialized();
+            lifecycleFrozen = true;
+            IReadOnlyList<RagdollBehaviourBase> registered =
+                collection.Behaviours;
+            for (int index = 0; index < registered.Count; index++)
+            {
+                if (registered[index])
+                {
+                    Destroy(registered[index]);
+                }
+            }
+        }
+
+        void SetBehaviourComponentsEnabled(bool enableSelected)
+        {
+            IReadOnlyList<RagdollBehaviourBase> registered =
+                collection.Behaviours;
+            for (int index = 0; index < registered.Count; index++)
+            {
+                RagdollBehaviourBase behaviour = registered[index];
+                if (!behaviour) continue;
+
+                behaviour.enabled = ShouldEnableBehaviour(
+                    lifecycleFrozen || !enableSelected,
+                    ReferenceEquals(behaviour, ActiveBehaviour));
+            }
+        }
+
         void NotifyLifecycle(LifecycleNotification phase)
         {
             EnsureInitialized();
@@ -250,6 +308,12 @@ namespace Hairibar.Ragdoll.Animation
                         break;
                     case LifecycleNotification.Resurrected:
                         behaviour.ResurrectedInternal();
+                        break;
+                    case LifecycleNotification.Frozen:
+                        behaviour.FrozenInternal();
+                        break;
+                    case LifecycleNotification.Unfrozen:
+                        behaviour.UnfrozenInternal();
                         break;
                     default:
                         throw new ArgumentOutOfRangeException(nameof(phase));
@@ -287,7 +351,10 @@ namespace Hairibar.Ragdoll.Animation
 
         internal void ReactivateAfterAnimator()
         {
-            if (!IsInitialized || !isActiveAndEnabled) return;
+            if (!IsInitialized || !isActiveAndEnabled || lifecycleFrozen)
+            {
+                return;
+            }
 
             IReadOnlyList<RagdollBehaviourBase> registered = collection.Behaviours;
             for (int index = 0; index < registered.Count; index++)
@@ -303,7 +370,15 @@ namespace Hairibar.Ragdoll.Animation
         internal float ResolveLifecycleMuscleWeight(
             RagdollAnimator.AnimatedPair pair)
         {
-            if (!CanDispatch || pair == null) return 1f;
+            if (!isActiveAndEnabled
+                || lifecycleFrozen
+                || !ActiveBehaviour
+                || !ActiveBehaviour.isActiveAndEnabled
+                || pair == null)
+            {
+                return 1f;
+            }
+
             return ActiveBehaviour.GetLifecycleMuscleWeightInternal(pair);
         }
 
@@ -350,8 +425,33 @@ namespace Hairibar.Ragdoll.Animation
 
         bool CanDispatch =>
             isActiveAndEnabled
+            && animator
+            && LifecycleAllowsDispatch(
+                animator.State,
+                animator.ActiveState,
+                animator.IsKilling,
+                lifecycleFrozen)
             && ActiveBehaviour
             && ActiveBehaviour.isActiveAndEnabled;
+
+        internal static bool LifecycleAllowsDispatch(
+            RagdollLifecycleState requestedState,
+            RagdollLifecycleState activeState,
+            bool isKilling,
+            bool isFrozen)
+        {
+            return !isFrozen
+                && !isKilling
+                && requestedState == RagdollLifecycleState.Alive
+                && activeState == RagdollLifecycleState.Alive;
+        }
+
+        internal static bool ShouldEnableBehaviour(
+            bool isFrozen,
+            bool isSelected)
+        {
+            return !isFrozen && isSelected;
+        }
 
         void EnsureInitialized()
         {
@@ -364,7 +464,13 @@ namespace Hairibar.Ragdoll.Animation
 
         void SubscribeCollisionEvents()
         {
-            if (collisionSubscribed || !collisionHub || !isActiveAndEnabled) return;
+            if (collisionSubscribed
+                || lifecycleFrozen
+                || !collisionHub
+                || !isActiveAndEnabled)
+            {
+                return;
+            }
 
             collisionHub.CollisionReported += HandleCollision;
             collisionSubscribed = true;

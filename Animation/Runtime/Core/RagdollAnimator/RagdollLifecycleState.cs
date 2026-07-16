@@ -2,11 +2,12 @@
 
 namespace Hairibar.Ragdoll.Animation
 {
-    /// <summary>Stable high-level life state of a ragdoll.</summary>
+    /// <summary>Requested and active lifecycle states of the ragdoll core.</summary>
     [Serializable]
     public enum RagdollLifecycleState
     {
-        Alive,
-        Dead
+        Alive = 0,
+        Dead = 1,
+        Frozen = 2
     }
 }

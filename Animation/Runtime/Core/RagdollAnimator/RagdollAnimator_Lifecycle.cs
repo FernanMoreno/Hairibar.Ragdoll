@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using UnityEngine;
 
 namespace Hairibar.Ragdoll.Animation
@@ -15,8 +16,11 @@ namespace Hairibar.Ragdoll.Animation
         RagdollMuscleController lifecycleMuscles;
         RagdollBehaviourController lifecycleBehaviours;
         RagdollSimulationModeController lifecycleSimulationMode;
+        RagdollLifecyclePhysicsPolicy lifecyclePhysicsPolicy;
         bool lifecycleInitialized;
         bool lifecycleKilling;
+        bool lifecyclePermanentDestructionScheduled;
+        bool lifecycleApplicationQuitting;
         float lifecycleKillElapsed;
         float lifecycleKillStartingWeight = 1f;
 
@@ -27,6 +31,7 @@ namespace Hairibar.Ragdoll.Animation
             {
                 ValidateLifecycleState(value);
                 lifecycleState = value;
+                WakeLifecycleFromDisabledSimulation(value);
             }
         }
 
@@ -40,36 +45,82 @@ namespace Hairibar.Ragdoll.Animation
                 lifecycleSettings = value;
             }
         }
-        public bool IsAlive => activeLifecycleState == RagdollLifecycleState.Alive;
-        public bool IsDead => activeLifecycleState == RagdollLifecycleState.Dead;
+        public bool IsAlive =>
+            activeLifecycleState == RagdollLifecycleState.Alive;
+        public bool IsDead =>
+            activeLifecycleState == RagdollLifecycleState.Dead;
+        public bool IsFrozen =>
+            activeLifecycleState == RagdollLifecycleState.Frozen;
         public bool IsKilling => lifecycleKilling;
+        public bool IsWaitingForFreeze =>
+            !lifecycleKilling
+            && activeLifecycleState == RagdollLifecycleState.Dead
+            && lifecycleState == RagdollLifecycleState.Frozen;
         public bool IsSwitchingState => lifecycleKilling
             || activeLifecycleState != lifecycleState;
         public float KillProgress => !lifecycleKilling
-            ? (IsDead ? 1f : 0f)
+            ? (IsDead || IsFrozen ? 1f : 0f)
             : lifecycleSettings.KillDuration <= Mathf.Epsilon
                 ? 1f
                 : Mathf.Clamp01(
                     lifecycleKillElapsed / lifecycleSettings.KillDuration);
+        public float MaximumPuppetSqrVelocity =>
+            ResolveMaximumPuppetSqrVelocity();
+        public bool FreezeReady => IsWaitingForFreeze
+            && AreAllMusclesReadyToFreeze();
 
         public event Action DeathCompleted;
+        public event Action Frozen;
+        public event Action Unfrozen;
         public event Action Resurrected;
 
         public void Kill()
         {
-            lifecycleState = RagdollLifecycleState.Dead;
+            State = RagdollLifecycleState.Dead;
         }
 
         public void Kill(RagdollLifecycleSettings settings)
         {
             settings.Normalize();
             lifecycleSettings = settings;
-            lifecycleState = RagdollLifecycleState.Dead;
+            State = RagdollLifecycleState.Dead;
+        }
+
+        public void Freeze()
+        {
+            State = RagdollLifecycleState.Frozen;
+        }
+
+        public void Freeze(RagdollLifecycleSettings settings)
+        {
+            settings.Normalize();
+            lifecycleSettings = settings;
+            State = RagdollLifecycleState.Frozen;
         }
 
         public void Resurrect()
         {
-            lifecycleState = RagdollLifecycleState.Alive;
+            State = RagdollLifecycleState.Alive;
+        }
+
+        void WakeLifecycleFromDisabledSimulation(
+            RagdollLifecycleState requestedState)
+        {
+            if (!lifecycleInitialized
+                || requestedState == RagdollLifecycleState.Alive
+                || !lifecycleSimulationMode
+                || !lifecycleSimulationMode.IsInitialized)
+            {
+                return;
+            }
+
+            if (lifecycleSimulationMode.CurrentMode
+                    == RagdollSimulationMode.Disabled
+                || lifecycleSimulationMode.TargetMode
+                    == RagdollSimulationMode.Disabled)
+            {
+                lifecycleSimulationMode.ForceActiveForLifecycle();
+            }
         }
 
         void InitializeLifecycle()
@@ -89,9 +140,19 @@ namespace Hairibar.Ragdoll.Animation
                     "RagdollAnimator lifecycle requires an initialized "
                     + "RagdollMuscleController.");
             }
+            if (!lifecycleSimulationMode
+                || !lifecycleSimulationMode.IsInitialized)
+            {
+                throw new InvalidOperationException(
+                    "RagdollAnimator lifecycle requires an initialized "
+                    + "RagdollSimulationModeController.");
+            }
 
+            lifecyclePhysicsPolicy =
+                RagdollLifecyclePhysicsPolicy.Create(Bindings);
             activeLifecycleState = RagdollLifecycleState.Alive;
             lifecycleKilling = false;
+            lifecyclePermanentDestructionScheduled = false;
             lifecycleKillElapsed = 0f;
             lifecycleKillStartingWeight = 1f;
             lifecycleMuscles.ClearLifecycleDrive();
@@ -100,7 +161,11 @@ namespace Hairibar.Ragdoll.Animation
 
         void UpdateLifecycle(float deltaTime)
         {
-            if (!lifecycleInitialized) return;
+            if (!lifecycleInitialized
+                || lifecyclePermanentDestructionScheduled)
+            {
+                return;
+            }
 
             if (lifecycleKilling)
             {
@@ -108,19 +173,44 @@ namespace Hairibar.Ragdoll.Animation
                 return;
             }
 
-            if (activeLifecycleState == lifecycleState) return;
-
-            if (activeLifecycleState == RagdollLifecycleState.Alive
-                && lifecycleState == RagdollLifecycleState.Dead)
+            if (activeLifecycleState == lifecycleState)
             {
-                BeginKill();
+                if (activeLifecycleState == RagdollLifecycleState.Frozen
+                    && lifecycleSettings.FreezePermanently)
+                {
+                    SchedulePermanentFreezeDestruction();
+                }
                 return;
             }
 
-            if (activeLifecycleState == RagdollLifecycleState.Dead
-                && lifecycleState == RagdollLifecycleState.Alive)
+            switch (activeLifecycleState)
             {
-                CompleteResurrection();
+                case RagdollLifecycleState.Alive:
+                    BeginKill();
+                    break;
+                case RagdollLifecycleState.Dead:
+                    if (lifecycleState == RagdollLifecycleState.Alive)
+                    {
+                        CompleteResurrection();
+                    }
+                    else if (lifecycleState == RagdollLifecycleState.Frozen)
+                    {
+                        TryCompleteFreeze();
+                    }
+                    break;
+                case RagdollLifecycleState.Frozen:
+                    if (lifecycleState == RagdollLifecycleState.Alive)
+                    {
+                        CompleteUnfreeze(true);
+                    }
+                    else if (lifecycleState == RagdollLifecycleState.Dead)
+                    {
+                        CompleteUnfreeze(false);
+                    }
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(
+                        nameof(activeLifecycleState));
             }
         }
 
@@ -128,6 +218,9 @@ namespace Hairibar.Ragdoll.Animation
         {
             lifecycleSettings.Normalize();
             ForceActiveSimulationForDeath();
+            lifecyclePhysicsPolicy.BeginKill(
+                lifecycleSettings.EnableAngularLimitsOnKill,
+                lifecycleSettings.EnableInternalCollisionsOnKill);
 
             lifecycleKilling = true;
             lifecycleKillElapsed = 0f;
@@ -197,9 +290,72 @@ namespace Hairibar.Ragdoll.Animation
             DeathCompleted?.Invoke();
         }
 
+        void TryCompleteFreeze()
+        {
+            if (!AreAllMusclesReadyToFreeze()) return;
+
+            SetTargetAnimationEnabled(false);
+            lifecycleSimulationMode.SuspendForLifecycleFreeze();
+            if (lifecycleBehaviours && lifecycleBehaviours.IsInitialized)
+            {
+                lifecycleBehaviours.NotifyFrozen();
+            }
+
+            activeLifecycleState = RagdollLifecycleState.Frozen;
+            Frozen?.Invoke();
+
+            if (lifecycleSettings.FreezePermanently)
+            {
+                SchedulePermanentFreezeDestruction();
+            }
+        }
+
+        void CompleteUnfreeze(bool resurrect)
+        {
+            if (resurrect)
+            {
+                lifecycleMuscles.ClearLifecycleDrive();
+                lifecyclePhysicsPolicy.RestoreAfterDeath();
+            }
+            else
+            {
+                lifecycleMuscles.SetLifecycleDrive(
+                    0f,
+                    lifecycleSettings.DeadMuscleWeight,
+                    lifecycleSettings.DeadMuscleDamper);
+            }
+
+            lifecycleSimulationMode.ResumeFromLifecycleFreeze();
+            if (lifecycleBehaviours && lifecycleBehaviours.IsInitialized)
+            {
+                lifecycleBehaviours.NotifyUnfrozen();
+            }
+
+            if (!resurrect)
+            {
+                SetTargetAnimationEnabled(false);
+                activeLifecycleState = RagdollLifecycleState.Dead;
+                Unfrozen?.Invoke();
+                return;
+            }
+
+            if (lifecycleBehaviours && lifecycleBehaviours.IsInitialized)
+            {
+                lifecycleBehaviours.NotifyResurrected();
+            }
+            SetTargetAnimationEnabled(true);
+
+            lifecycleKillElapsed = 0f;
+            lifecycleKillStartingWeight = 1f;
+            activeLifecycleState = RagdollLifecycleState.Alive;
+            Unfrozen?.Invoke();
+            Resurrected?.Invoke();
+        }
+
         void CompleteResurrection()
         {
             lifecycleMuscles.ClearLifecycleDrive();
+            lifecyclePhysicsPolicy.RestoreAfterDeath();
             if (lifecycleBehaviours && lifecycleBehaviours.IsInitialized)
             {
                 lifecycleBehaviours.NotifyResurrected();
@@ -215,14 +371,48 @@ namespace Hairibar.Ragdoll.Animation
 
         void ForceActiveSimulationForDeath()
         {
-            if (!lifecycleSimulationMode
-                || !lifecycleSimulationMode.IsInitialized)
+            lifecycleSimulationMode.ForceActiveForLifecycle();
+        }
+
+        bool AreAllMusclesReadyToFreeze()
+        {
+            if (animatedPairs == null) return false;
+
+            for (int index = 0; index < animatedPairs.Length; index++)
             {
-                return;
+                Rigidbody rigidbody =
+                    animatedPairs[index].RagdollBone.Rigidbody;
+                if (!rigidbody) continue;
+
+                if (!RagdollLifecycleMath.IsFreezeVelocityReady(
+                    rigidbody.velocity.sqrMagnitude,
+                    lifecycleSettings.MaxFreezeSqrVelocity))
+                {
+                    return false;
+                }
             }
 
-            lifecycleSimulationMode.SetModeImmediate(
-                RagdollSimulationMode.Active);
+            return true;
+        }
+
+        float ResolveMaximumPuppetSqrVelocity()
+        {
+            if (animatedPairs == null) return 0f;
+
+            float maximum = 0f;
+            for (int index = 0; index < animatedPairs.Length; index++)
+            {
+                Rigidbody rigidbody =
+                    animatedPairs[index].RagdollBone.Rigidbody;
+                if (!rigidbody) continue;
+
+                maximum =
+                    RagdollLifecycleMath.AccumulateMaximumSqrVelocity(
+                        maximum,
+                        rigidbody.velocity.sqrMagnitude);
+            }
+
+            return maximum;
         }
 
         float ResolveStartingMuscleWeight()
@@ -293,44 +483,164 @@ namespace Hairibar.Ragdoll.Animation
                 || activeLifecycleState == RagdollLifecycleState.Alive;
         }
 
+        bool LifecycleIsFrozenStable()
+        {
+            return lifecycleInitialized
+                && activeLifecycleState == RagdollLifecycleState.Frozen;
+        }
+
         void RestoreLifecycleAfterEnable()
         {
-            if (!lifecycleInitialized) return;
-
-            if (activeLifecycleState == RagdollLifecycleState.Dead)
+            if (!lifecycleInitialized
+                || lifecyclePermanentDestructionScheduled)
             {
-                lifecycleMuscles.SetLifecycleDrive(
-                    0f,
-                    lifecycleSettings.DeadMuscleWeight,
-                    lifecycleSettings.DeadMuscleDamper);
-                SetTargetAnimationEnabled(false);
+                return;
             }
-            else
+
+            switch (activeLifecycleState)
             {
-                lifecycleMuscles.ClearLifecycleDrive();
-                SetTargetAnimationEnabled(true);
+                case RagdollLifecycleState.Alive:
+                    lifecycleMuscles.ClearLifecycleDrive();
+                    SetTargetAnimationEnabled(true);
+                    break;
+                case RagdollLifecycleState.Dead:
+                    lifecycleMuscles.SetLifecycleDrive(
+                        0f,
+                        lifecycleSettings.DeadMuscleWeight,
+                        lifecycleSettings.DeadMuscleDamper);
+                    SetTargetAnimationEnabled(false);
+                    break;
+                case RagdollLifecycleState.Frozen:
+                    lifecycleMuscles.SetLifecycleDrive(
+                        0f,
+                        lifecycleSettings.DeadMuscleWeight,
+                        lifecycleSettings.DeadMuscleDamper);
+                    SetTargetAnimationEnabled(false);
+                    lifecycleSimulationMode.SuspendForLifecycleFreeze();
+                    if (lifecycleBehaviours
+                        && lifecycleBehaviours.IsInitialized)
+                    {
+                        lifecycleBehaviours.NotifyFrozen();
+                    }
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(
+                        nameof(activeLifecycleState));
             }
         }
 
         void SettleLifecycleBeforeDisable()
         {
-            if (!lifecycleInitialized) return;
-
-            lifecycleKilling = false;
-            activeLifecycleState = lifecycleState;
-            if (activeLifecycleState == RagdollLifecycleState.Dead)
+            if (!lifecycleInitialized
+                || lifecyclePermanentDestructionScheduled)
             {
-                lifecycleMuscles.SetLifecycleDrive(
-                    0f,
-                    lifecycleSettings.DeadMuscleWeight,
-                    lifecycleSettings.DeadMuscleDamper);
-                SetTargetAnimationEnabled(false);
+                return;
             }
-            else
+
+            if (lifecycleKilling)
+            {
+                CompleteKill();
+            }
+
+            if (activeLifecycleState == RagdollLifecycleState.Frozen)
+            {
+                if (lifecycleState == RagdollLifecycleState.Alive)
+                {
+                    CompleteUnfreeze(true);
+                }
+                else if (lifecycleState == RagdollLifecycleState.Dead)
+                {
+                    CompleteUnfreeze(false);
+                }
+                return;
+            }
+
+            if (activeLifecycleState == RagdollLifecycleState.Dead
+                && lifecycleState == RagdollLifecycleState.Alive)
+            {
+                CompleteResurrection();
+                return;
+            }
+
+            if (activeLifecycleState == RagdollLifecycleState.Alive
+                && lifecycleState != RagdollLifecycleState.Alive)
+            {
+                BeginKill();
+                if (lifecycleKilling)
+                {
+                    CompleteKill();
+                }
+            }
+        }
+
+        void SchedulePermanentFreezeDestruction()
+        {
+            if (lifecyclePermanentDestructionScheduled) return;
+
+            lifecyclePermanentDestructionScheduled = true;
+            lifecyclePhysicsPolicy.AbandonForPermanentFreeze();
+            lifecycleSimulationMode
+                .AbandonLifecycleFreezeForPermanentDestruction();
+            StartCoroutine(DestroyFrozenSubsystemPermanently());
+        }
+
+        IEnumerator DestroyFrozenSubsystemPermanently()
+        {
+            if (lifecycleBehaviours && lifecycleBehaviours.IsInitialized)
+            {
+                lifecycleBehaviours.DestroyBehavioursForPermanentFreeze();
+                Destroy(lifecycleBehaviours);
+            }
+
+            // BehaviourController requires both Animator and MuscleController. Wait for
+            // its destruction before removing those required components.
+            yield return null;
+
+            if (lifecycleMuscles) Destroy(lifecycleMuscles);
+            if (lifecycleSimulationMode) Destroy(lifecycleSimulationMode);
+
+            yield return null;
+
+            if (Bindings && Bindings.gameObject != gameObject)
+            {
+                Destroy(Bindings.gameObject);
+            }
+            Destroy(this);
+        }
+
+        void ShutdownLifecycle()
+        {
+            if (!lifecycleInitialized
+                || lifecyclePermanentDestructionScheduled
+                || lifecycleApplicationQuitting
+                || !gameObject.scene.isLoaded)
+            {
+                return;
+            }
+
+            if (activeLifecycleState == RagdollLifecycleState.Frozen
+                && lifecycleSimulationMode
+                && lifecycleSimulationMode.IsInitialized
+                && lifecycleSimulationMode.IsLifecycleFreezeSuspended)
+            {
+                lifecycleSimulationMode.ResumeFromLifecycleFreeze();
+                if (lifecycleBehaviours
+                    && lifecycleBehaviours.IsInitialized)
+                {
+                    lifecycleBehaviours.NotifyUnfrozen();
+                }
+            }
+
+            if (lifecyclePhysicsPolicy != null)
+            {
+                lifecyclePhysicsPolicy.RestoreAfterDeath();
+            }
+            if (lifecycleMuscles)
             {
                 lifecycleMuscles.ClearLifecycleDrive();
-                SetTargetAnimationEnabled(true);
             }
+            SetTargetAnimationEnabled(true);
+            lifecycleInitialized = false;
         }
 
         void SetTargetAnimationEnabled(bool enabled)
@@ -344,7 +654,8 @@ namespace Hairibar.Ragdoll.Animation
         static void ValidateLifecycleState(RagdollLifecycleState state)
         {
             if (state != RagdollLifecycleState.Alive
-                && state != RagdollLifecycleState.Dead)
+                && state != RagdollLifecycleState.Dead
+                && state != RagdollLifecycleState.Frozen)
             {
                 throw new ArgumentOutOfRangeException(nameof(state));
             }

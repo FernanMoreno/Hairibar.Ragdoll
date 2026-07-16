@@ -96,6 +96,8 @@ namespace Hairibar.Ragdoll.Animation
         bool suppressPowerSettingEvents;
         bool animatorEnabledBeforeDisabled;
         bool puppetActiveBeforeDisabled;
+        bool lifecycleFreezeSuspended;
+        bool lifecyclePermanentDestruction;
 
         RagdollSimulationMode currentMode = RagdollSimulationMode.Active;
         RagdollSimulationMode targetMode = RagdollSimulationMode.Active;
@@ -114,6 +116,7 @@ namespace Hairibar.Ragdoll.Animation
             : 1f;
         public float ActiveDriveWeight => activeDriveWeight;
         public Transform PuppetRoot => bindings ? bindings.transform : null;
+        public bool IsLifecycleFreezeSuspended => lifecycleFreezeSuspended;
 
         public RagdollModifierStage Stage => RagdollModifierStage.Final;
         public int Priority => 1000;
@@ -172,6 +175,14 @@ namespace Hairibar.Ragdoll.Animation
         {
             EnsureInitialized();
             ValidateMode(mode);
+            if (animator
+                && RagdollSimulationModePolicy.LifecycleOwnsSimulation(
+                    animator.State,
+                    animator.IsKilling,
+                    lifecycleFreezeSuspended))
+            {
+                return false;
+            }
             if (isChangingMode)
             {
                 throw new InvalidOperationException(
@@ -217,6 +228,72 @@ namespace Hairibar.Ragdoll.Animation
             return SetMode(mode, 0f);
         }
 
+        internal void ForceActiveForLifecycle()
+        {
+            EnsureInitialized();
+            if (lifecycleFreezeSuspended)
+            {
+                throw new InvalidOperationException(
+                    "Lifecycle Frozen must be resumed before forcing Active simulation.");
+            }
+
+            bool wasTransitioning = IsTransitioning;
+            if (currentMode != RagdollSimulationMode.Active)
+            {
+                PrepareActiveMode();
+            }
+
+            activeDriveWeight = 1f;
+            transitionKind = TransitionKind.None;
+            targetMode = RagdollSimulationMode.Active;
+            if (wasTransitioning)
+            {
+                TransitionCompleted?.Invoke(RagdollSimulationMode.Active);
+            }
+        }
+
+        internal bool SuspendForLifecycleFreeze()
+        {
+            EnsureInitialized();
+            if (lifecyclePermanentDestruction)
+            {
+                throw new InvalidOperationException(
+                    "A permanently frozen simulation cannot be resumed or suspended again.");
+            }
+            if (lifecycleFreezeSuspended) return false;
+
+            ForceActiveForLifecycle();
+
+            lifecycleFreezeSuspended = true;
+            bindings.gameObject.SetActive(false);
+            return true;
+        }
+
+        internal bool ResumeFromLifecycleFreeze()
+        {
+            EnsureInitialized();
+            if (!lifecycleFreezeSuspended) return false;
+            if (lifecyclePermanentDestruction)
+            {
+                throw new InvalidOperationException(
+                    "A permanently frozen simulation cannot be resumed.");
+            }
+
+            bindings.gameObject.SetActive(true);
+            ForceAllBonesKinematic();
+            RestoreCollisionConfiguration();
+            animator.SnapToTargetPose();
+            ZeroVelocities(true);
+            RestoreActivePowerSettings();
+            lifecycleFreezeSuspended = false;
+            return true;
+        }
+
+        internal void AbandonLifecycleFreezeForPermanentDestruction()
+        {
+            lifecyclePermanentDestruction = true;
+        }
+
         /// <summary>
         /// Captures current per-bone power and collision values as the configuration that
         /// will be restored after Kinematic or Disabled mode.
@@ -242,6 +319,12 @@ namespace Hairibar.Ragdoll.Animation
             }
 
             hasStarted = true;
+            if (animator.State != RagdollLifecycleState.Alive)
+            {
+                ForceActiveForLifecycle();
+                return;
+            }
+
             if (initialMode != RagdollSimulationMode.Active
                 && currentMode == RagdollSimulationMode.Active
                 && !IsTransitioning)
@@ -252,7 +335,24 @@ namespace Hairibar.Ragdoll.Animation
 
         void FixedUpdate()
         {
-            if (!isInitialized || !hasStarted || !IsTransitioning) return;
+            if (!isInitialized || !hasStarted) return;
+
+            if (animator
+                && RagdollSimulationModePolicy.RequiresActiveForLifecycle(
+                    animator.State,
+                    animator.IsKilling,
+                    lifecycleFreezeSuspended,
+                    currentMode,
+                    IsTransitioning,
+                    activeDriveWeight))
+            {
+                ForceActiveForLifecycle();
+                return;
+            }
+
+            if (lifecycleFreezeSuspended) return;
+
+            if (!IsTransitioning) return;
 
             activeDriveWeight = transition.Value;
             if (!transition.Advance(Time.fixedDeltaTime))
@@ -490,9 +590,9 @@ namespace Hairibar.Ragdoll.Animation
             }
         }
 
-        void ZeroVelocities()
+        void ZeroVelocities(bool force = false)
         {
-            if (!zeroVelocitiesOnTransition) return;
+            if (!force && !zeroVelocitiesOnTransition) return;
 
             for (int index = 0; index < boneSnapshots.Length; index++)
             {
@@ -616,6 +716,8 @@ namespace Hairibar.Ragdoll.Animation
             if (!Application.isPlaying
                 || isQuitting
                 || !isInitialized
+                || lifecycleFreezeSuspended
+                || lifecyclePermanentDestruction
                 || !restoreActiveWhenComponentDisabled
                 || !gameObject.activeInHierarchy)
             {

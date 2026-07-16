@@ -42,6 +42,59 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 Is.EqualTo(0f));
         }
 
+
+        [Test]
+        public void LifecycleOwnership_BlocksUserModeChangesOutsideAlive()
+        {
+            Assert.That(
+                RagdollSimulationModePolicy.LifecycleOwnsSimulation(
+                    RagdollLifecycleState.Dead,
+                    false,
+                    false),
+                Is.True);
+            Assert.That(
+                RagdollSimulationModePolicy.LifecycleOwnsSimulation(
+                    RagdollLifecycleState.Frozen,
+                    false,
+                    false),
+                Is.True);
+            Assert.That(
+                RagdollSimulationModePolicy.LifecycleOwnsSimulation(
+                    RagdollLifecycleState.Alive,
+                    true,
+                    false),
+                Is.True);
+            Assert.That(
+                RagdollSimulationModePolicy.LifecycleOwnsSimulation(
+                    RagdollLifecycleState.Alive,
+                    false,
+                    false),
+                Is.False);
+        }
+
+        [Test]
+        public void LifecycleRequest_CancelsPendingNonActiveMode()
+        {
+            Assert.That(
+                RagdollSimulationModePolicy.RequiresActiveForLifecycle(
+                    RagdollLifecycleState.Frozen,
+                    false,
+                    false,
+                    RagdollSimulationMode.Active,
+                    true,
+                    0.5f),
+                Is.True);
+            Assert.That(
+                RagdollSimulationModePolicy.RequiresActiveForLifecycle(
+                    RagdollLifecycleState.Frozen,
+                    false,
+                    true,
+                    RagdollSimulationMode.Active,
+                    false,
+                    1f),
+                Is.False);
+        }
+
         [Test]
         public void DisabledDeactivatesHierarchyAndHasNoDriveWeight()
         {

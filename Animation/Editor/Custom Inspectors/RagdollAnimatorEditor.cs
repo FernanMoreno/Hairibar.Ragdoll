@@ -90,7 +90,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 serializedObject.FindProperty("lifecycleState"),
                 new GUIContent(
                     "State",
-                    "Alive runs animation matching normally. Dead releases position pinning, blends rotational muscle strength and disables the Animator when the kill blend completes."));
+                    "Alive runs animation matching normally. Dead releases position pinning and blends rotational muscle strength. Frozen first completes Dead, waits until every ragdoll bone is below Max Freeze Sqr Velocity, then suspends the Puppet hierarchy."));
             EditorGUILayout.PropertyField(
                 serializedObject.FindProperty("lifecycleSettings"),
                 new GUIContent("State Settings"),
@@ -105,6 +105,15 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 EditorGUILayout.LabelField(
                     "Killing",
                     runtimeAnimator.IsKilling.ToString());
+                EditorGUILayout.LabelField(
+                    "Waiting For Freeze",
+                    runtimeAnimator.IsWaitingForFreeze.ToString());
+                EditorGUILayout.LabelField(
+                    "Freeze Ready",
+                    runtimeAnimator.FreezeReady.ToString());
+                EditorGUILayout.LabelField(
+                    "Maximum Puppet Sqr Velocity",
+                    runtimeAnimator.MaximumPuppetSqrVelocity.ToString("0.####"));
                 EditorGUILayout.LabelField(
                     "Kill Progress",
                     runtimeAnimator.KillProgress.ToString("P0"));

@@ -115,6 +115,53 @@ namespace Hairibar.Ragdoll.Animation.Tests
             }
         }
 
+        [Test]
+        public void LifecycleDispatch_RequiresRequestedAndActiveAlive()
+        {
+            Assert.That(
+                RagdollBehaviourController.LifecycleAllowsDispatch(
+                    RagdollLifecycleState.Alive,
+                    RagdollLifecycleState.Alive,
+                    false,
+                    false),
+                Is.True);
+            Assert.That(
+                RagdollBehaviourController.LifecycleAllowsDispatch(
+                    RagdollLifecycleState.Frozen,
+                    RagdollLifecycleState.Alive,
+                    false,
+                    false),
+                Is.False);
+            Assert.That(
+                RagdollBehaviourController.LifecycleAllowsDispatch(
+                    RagdollLifecycleState.Alive,
+                    RagdollLifecycleState.Frozen,
+                    false,
+                    false),
+                Is.False);
+            Assert.That(
+                RagdollBehaviourController.LifecycleAllowsDispatch(
+                    RagdollLifecycleState.Alive,
+                    RagdollLifecycleState.Alive,
+                    true,
+                    false),
+                Is.False);
+        }
+
+        [Test]
+        public void FrozenState_DisablesEvenTheSelectedBehaviour()
+        {
+            Assert.That(
+                RagdollBehaviourController.ShouldEnableBehaviour(false, true),
+                Is.True);
+            Assert.That(
+                RagdollBehaviourController.ShouldEnableBehaviour(false, false),
+                Is.False);
+            Assert.That(
+                RagdollBehaviourController.ShouldEnableBehaviour(true, true),
+                Is.False);
+        }
+
         RagdollBehaviourCollection CreateCollection()
         {
             return new RagdollBehaviourCollection(

@@ -134,6 +134,18 @@ namespace Hairibar.Ragdoll.Animation
             OnBehaviourResurrected();
         }
 
+        internal void FrozenInternal()
+        {
+            if (!IsInitialized) return;
+            OnBehaviourFrozen();
+        }
+
+        internal void UnfrozenInternal()
+        {
+            if (!IsInitialized) return;
+            OnBehaviourUnfrozen();
+        }
+
         internal void TeleportInternal(
             Quaternion deltaRotation,
             Vector3 deltaPosition,
@@ -226,6 +238,22 @@ namespace Hairibar.Ragdoll.Animation
 
         /// <summary>Called while restoring the core from Dead to Alive.</summary>
         protected virtual void OnBehaviourResurrected()
+        {
+        }
+
+        /// <summary>
+        /// Called after the physical Puppet has settled and immediately before this
+        /// behaviour is suspended for the Frozen state.
+        /// </summary>
+        protected virtual void OnBehaviourFrozen()
+        {
+        }
+
+        /// <summary>
+        /// Called after the physical Puppet hierarchy has been restored but before the
+        /// selected behaviour component resumes dispatch.
+        /// </summary>
+        protected virtual void OnBehaviourUnfrozen()
         {
         }
 

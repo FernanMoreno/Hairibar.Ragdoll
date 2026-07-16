@@ -69,6 +69,31 @@ namespace Hairibar.Ragdoll.Animation
             return Mathf.Clamp01(value);
         }
 
+        internal static bool IsFreezeVelocityReady(
+            float sqrVelocity,
+            float maximumSqrVelocity)
+        {
+            if (float.IsNaN(sqrVelocity) || float.IsInfinity(sqrVelocity))
+            {
+                return false;
+            }
+
+            float threshold = SanitizeNonNegative(maximumSqrVelocity, 0.02f);
+            return sqrVelocity <= threshold;
+        }
+
+        internal static float AccumulateMaximumSqrVelocity(
+            float currentMaximum,
+            float candidate)
+        {
+            if (float.IsNaN(candidate) || float.IsInfinity(candidate))
+            {
+                return float.PositiveInfinity;
+            }
+
+            return Mathf.Max(Mathf.Max(0f, currentMaximum), candidate);
+        }
+
         internal static float SanitizeNonNegative(float value, float fallback)
         {
             if (float.IsNaN(value) || float.IsInfinity(value))
