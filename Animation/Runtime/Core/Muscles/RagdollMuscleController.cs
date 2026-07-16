@@ -23,6 +23,9 @@ namespace Hairibar.Ragdoll.Animation
         // Runtime owner multiplier. BehaviourPuppet sets this while active and restores 1 on exit.
         float positionSuppressionRecoveryMultiplier = 1f;
         float minimumPositionAuthorityMultiplier = 1f;
+        float lifecyclePositionAuthorityMultiplier = 1f;
+        float lifecycleMuscleWeightMultiplier = 1f;
+        float lifecycleMuscleDamperAdd;
         bool hasActiveBoosts;
         bool combatBoostsEnabled;
 
@@ -59,6 +62,11 @@ namespace Hairibar.Ragdoll.Animation
             positionSuppressionRecoveryMultiplier;
         public float MinimumPositionAuthorityMultiplier =>
             minimumPositionAuthorityMultiplier;
+        public float LifecyclePositionAuthorityMultiplier =>
+            lifecyclePositionAuthorityMultiplier;
+        public float LifecycleMuscleWeightMultiplier =>
+            lifecycleMuscleWeightMultiplier;
+        public float LifecycleMuscleDamperAdd => lifecycleMuscleDamperAdd;
         public bool HasActiveBoosts => hasActiveBoosts;
         internal bool CombatBoostsEnabled => combatBoostsEnabled;
         public float MaximumImmunity => GetMaximumImmunity();
@@ -98,6 +106,9 @@ namespace Hairibar.Ragdoll.Animation
                 states[i] = MuscleRuntimeState.Default;
                 lastRecoveryTimes[i] = now;
             }
+            lifecyclePositionAuthorityMultiplier = 1f;
+            lifecycleMuscleWeightMultiplier = 1f;
+            lifecycleMuscleDamperAdd = 0f;
             hasActiveBoosts = false;
             combatBoostsEnabled = false;
 
@@ -279,6 +290,41 @@ namespace Hairibar.Ragdoll.Animation
         internal void SetCombatBoostsEnabled(bool enabled)
         {
             combatBoostsEnabled = enabled;
+        }
+
+        internal void SetLifecycleDrive(
+            float positionAuthorityMultiplier,
+            float muscleWeightMultiplier,
+            float muscleDamperAdd)
+        {
+            lifecyclePositionAuthorityMultiplier =
+                RagdollLifecycleMath.SanitizeWeight(
+                    positionAuthorityMultiplier,
+                    1f);
+            lifecycleMuscleWeightMultiplier =
+                RagdollLifecycleMath.SanitizeWeight(
+                    muscleWeightMultiplier,
+                    1f);
+            lifecycleMuscleDamperAdd =
+                RagdollLifecycleMath.SanitizeNonNegative(
+                    muscleDamperAdd,
+                    0f);
+        }
+
+        internal void ClearLifecycleDrive()
+        {
+            SetLifecycleDrive(1f, 1f, 0f);
+        }
+
+        internal void ClearAllImmunity()
+        {
+            if (states == null) return;
+
+            for (int index = 0; index < states.Length; index++)
+            {
+                states[index].ClearImmunity();
+            }
+            RecalculateHasActiveBoosts();
         }
 
         internal void AdvanceBoostFalloff(float falloff, float deltaTime)

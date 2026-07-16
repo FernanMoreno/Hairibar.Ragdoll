@@ -94,6 +94,14 @@ namespace Hairibar.Ragdoll.Animation
                 gameObject.AddComponent<RagdollMuscleController>();
             }
 
+            // Alive/Dead transitions must always be able to force the physical rig back
+            // to Active before releasing pins, even when the user never configured global
+            // Kinematic/Disabled mode switching explicitly.
+            if (!GetComponent<RagdollSimulationModeController>())
+            {
+                gameObject.AddComponent<RagdollSimulationModeController>();
+            }
+
             boneProfileModifiers = GetComponents<IBoneProfileModifier>();
             RagdollModifierOrdering.StableSort(boneProfileModifiers);
         }

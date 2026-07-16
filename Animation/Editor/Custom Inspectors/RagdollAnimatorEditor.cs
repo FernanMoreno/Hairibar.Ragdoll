@@ -85,6 +85,31 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 true);
             EditorGUILayout.PropertyField(serializedObject.FindProperty("forceTargetPose"));
 
+            ExtraNaughtyEditorGUILayout.Header("Lifecycle");
+            EditorGUILayout.PropertyField(
+                serializedObject.FindProperty("lifecycleState"),
+                new GUIContent(
+                    "State",
+                    "Alive runs animation matching normally. Dead releases position pinning, blends rotational muscle strength and disables the Animator when the kill blend completes."));
+            EditorGUILayout.PropertyField(
+                serializedObject.FindProperty("lifecycleSettings"),
+                new GUIContent("State Settings"),
+                true);
+
+            if (Application.isPlaying && !serializedObject.isEditingMultipleObjects)
+            {
+                RagdollAnimator runtimeAnimator = (RagdollAnimator)target;
+                EditorGUILayout.LabelField(
+                    "Active State",
+                    runtimeAnimator.ActiveState.ToString());
+                EditorGUILayout.LabelField(
+                    "Killing",
+                    runtimeAnimator.IsKilling.ToString());
+                EditorGUILayout.LabelField(
+                    "Kill Progress",
+                    runtimeAnimator.KillProgress.ToString("P0"));
+            }
+
             ExtraNaughtyEditorGUILayout.Header("Debug Features (Editor Only)");
             if (serializedObject.isEditingMultipleObjects)
             {

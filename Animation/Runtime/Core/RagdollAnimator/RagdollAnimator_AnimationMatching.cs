@@ -54,6 +54,7 @@ namespace Hairibar.Ragdoll.Animation
 
             ModifyBoneProfile(ref boneProfile, pair, dt);
             ApplyMasterParameters(ref boneProfile);
+            ApplyLifecycleParameters(ref boneProfile);
 
             DoPoweredPositionMatching(pair, boneProfile, dt);
             DoPoweredRotationMatching(pair, boneProfile, dt);

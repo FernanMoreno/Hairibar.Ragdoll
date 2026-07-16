@@ -116,6 +116,24 @@ namespace Hairibar.Ragdoll.Animation
             OnBehaviourReactivated();
         }
 
+        internal void KillStartedInternal()
+        {
+            if (!IsInitialized) return;
+            OnBehaviourKillStarted();
+        }
+
+        internal void KillEndedInternal()
+        {
+            if (!IsInitialized) return;
+            OnBehaviourKillEnded();
+        }
+
+        internal void ResurrectedInternal()
+        {
+            if (!IsInitialized) return;
+            OnBehaviourResurrected();
+        }
+
         internal void TeleportInternal(
             Quaternion deltaRotation,
             Vector3 deltaPosition,
@@ -138,6 +156,13 @@ namespace Hairibar.Ragdoll.Animation
         internal void CollisionInternal(RagdollCollisionEvent collisionEvent)
         {
             OnBehaviourCollision(collisionEvent);
+        }
+
+        internal float GetLifecycleMuscleWeightInternal(
+            RagdollAnimator.AnimatedPair pair)
+        {
+            if (!IsInitialized) return 1f;
+            return Mathf.Clamp01(OnGetLifecycleMuscleWeight(pair));
         }
 
         internal void ModifyBoneProfileInternal(
@@ -189,6 +214,21 @@ namespace Hairibar.Ragdoll.Animation
         {
         }
 
+        /// <summary>Called when the core starts blending Alive to Dead.</summary>
+        protected virtual void OnBehaviourKillStarted()
+        {
+        }
+
+        /// <summary>Called after the core has completed the transition to Dead.</summary>
+        protected virtual void OnBehaviourKillEnded()
+        {
+        }
+
+        /// <summary>Called while restoring the core from Dead to Alive.</summary>
+        protected virtual void OnBehaviourResurrected()
+        {
+        }
+
         /// <summary>
         /// Called after an external teleport operation has moved the rig. The hook receives
         /// the exact world-space delta so cached behaviour state can be transformed without
@@ -211,6 +251,16 @@ namespace Hairibar.Ragdoll.Animation
         protected virtual void OnBehaviourCollision(
             RagdollCollisionEvent collisionEvent)
         {
+        }
+
+        /// <summary>
+        /// Returns the active behaviour's current root muscle-weight multiplier so a core
+        /// lifecycle transition can start without increasing strength first.
+        /// </summary>
+        protected virtual float OnGetLifecycleMuscleWeight(
+            RagdollAnimator.AnimatedPair pair)
+        {
+            return 1f;
         }
 
         /// <summary>Adjusts one bone's effective drive profile before forces are applied.</summary>

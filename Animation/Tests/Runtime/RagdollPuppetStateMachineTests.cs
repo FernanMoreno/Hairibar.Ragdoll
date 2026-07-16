@@ -63,6 +63,32 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Assert.That(machine.State, Is.EqualTo(RagdollPuppetState.Puppet));
         }
 
+
+        [Test]
+        public void ElapsedTime_CanBePrimedForImmediateResurrectionGetUp()
+        {
+            RagdollPuppetStateMachine machine =
+                new RagdollPuppetStateMachine();
+            machine.Reset(RagdollPuppetState.Unpinned);
+
+            machine.SetElapsedTime(float.PositiveInfinity);
+
+            Assert.That(
+                machine.StateElapsedTime,
+                Is.EqualTo(float.PositiveInfinity));
+        }
+
+        [Test]
+        public void ElapsedTime_NaNResetsToZero()
+        {
+            RagdollPuppetStateMachine machine =
+                new RagdollPuppetStateMachine();
+
+            machine.SetElapsedTime(float.NaN);
+
+            Assert.That(machine.StateElapsedTime, Is.Zero);
+        }
+
         [Test]
         public void ZeroDurationGetUpCompletesOnNextAdvance()
         {

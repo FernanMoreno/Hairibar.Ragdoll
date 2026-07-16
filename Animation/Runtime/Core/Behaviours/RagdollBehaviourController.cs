@@ -17,6 +17,13 @@ namespace Hairibar.Ragdoll.Animation
         ITargetPoseModifier,
         IOrderedRagdollModifier
     {
+        enum LifecycleNotification
+        {
+            KillStarted,
+            KillEnded,
+            Resurrected
+        }
+
         [Tooltip("Optional root containing the behaviour components. If left empty, the RagdollAnimator hierarchy is searched.")]
         [SerializeField] Transform behaviourRoot;
 
@@ -209,6 +216,47 @@ namespace Hairibar.Ragdoll.Animation
             return Activate(null);
         }
 
+        internal void NotifyKillStarted()
+        {
+            NotifyLifecycle(LifecycleNotification.KillStarted);
+        }
+
+        internal void NotifyKillEnded()
+        {
+            NotifyLifecycle(LifecycleNotification.KillEnded);
+        }
+
+        internal void NotifyResurrected()
+        {
+            NotifyLifecycle(LifecycleNotification.Resurrected);
+        }
+
+        void NotifyLifecycle(LifecycleNotification phase)
+        {
+            EnsureInitialized();
+            IReadOnlyList<RagdollBehaviourBase> registered = collection.Behaviours;
+            for (int index = 0; index < registered.Count; index++)
+            {
+                RagdollBehaviourBase behaviour = registered[index];
+                if (!behaviour) continue;
+
+                switch (phase)
+                {
+                    case LifecycleNotification.KillStarted:
+                        behaviour.KillStartedInternal();
+                        break;
+                    case LifecycleNotification.KillEnded:
+                        behaviour.KillEndedInternal();
+                        break;
+                    case LifecycleNotification.Resurrected:
+                        behaviour.ResurrectedInternal();
+                        break;
+                    default:
+                        throw new ArgumentOutOfRangeException(nameof(phase));
+                }
+            }
+        }
+
         /// <summary>
         /// Notifies all initialized behaviours after an external system has teleported the
         /// Target and Puppet. This method does not move Transforms or Rigidbodies itself.
@@ -250,6 +298,13 @@ namespace Hairibar.Ragdoll.Animation
                     behaviour.ReactivateInternal();
                 }
             }
+        }
+
+        internal float ResolveLifecycleMuscleWeight(
+            RagdollAnimator.AnimatedPair pair)
+        {
+            if (!CanDispatch || pair == null) return 1f;
+            return ActiveBehaviour.GetLifecycleMuscleWeightInternal(pair);
         }
 
         public void Modify(

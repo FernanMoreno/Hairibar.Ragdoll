@@ -112,6 +112,11 @@ namespace Hairibar.Ragdoll.Animation
             return true;
         }
 
+        internal void ClearImmunity()
+        {
+            immunity = 0f;
+        }
+
         internal void AdvanceBoostFalloff(float falloff, float deltaTime)
         {
             immunity = RagdollMuscleBoostMath.StepImmunity(

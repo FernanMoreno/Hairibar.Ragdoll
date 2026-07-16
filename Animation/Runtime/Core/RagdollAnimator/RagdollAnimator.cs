@@ -87,7 +87,8 @@ namespace Hairibar.Ragdoll.Animation
         {
             if (!isActiveAndEnabled || animatedPairs is null) return;
 
-            if (UsesFixedAnimatorUpdate())
+            if (UsesFixedAnimatorUpdate()
+                && LifecycleAllowsAnimationSampling())
             {
                 ReadAnimatedPose();
             }
@@ -101,7 +102,8 @@ namespace Hairibar.Ragdoll.Animation
         {
             if (!isActiveAndEnabled || animatedPairs is null) return;
 
-            if (!UsesFixedAnimatorUpdate())
+            if (!UsesFixedAnimatorUpdate()
+                && LifecycleAllowsAnimationSampling())
             {
                 ReadAnimatedPose();
             }
@@ -110,6 +112,8 @@ namespace Hairibar.Ragdoll.Animation
             {
                 MapRagdollToTarget();
             }
+
+            UpdateLifecycle(Time.deltaTime);
         }
         #endregion
 
@@ -144,13 +148,18 @@ namespace Hairibar.Ragdoll.Animation
             InitializeTargetPoseModifiers(targetPoseModifiers, animatedPairs);
 
             GatherMappingModifiers();
+            InitializeLifecycle();
 
             SnapToTargetPose();
         }
 
         void OnEnable()
         {
-            SnapToTargetPose();
+            if (LifecycleAllowsEnableSnap())
+            {
+                SnapToTargetPose();
+            }
+            RestoreLifecycleAfterEnable();
 
             RagdollBehaviourController behaviourController =
                 GetComponent<RagdollBehaviourController>();
@@ -162,6 +171,7 @@ namespace Hairibar.Ragdoll.Animation
 
         void OnDisable()
         {
+            SettleLifecycleBeforeDisable();
             UnpowerAllJoints();
         }
         #endregion

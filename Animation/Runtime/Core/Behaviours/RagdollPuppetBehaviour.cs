@@ -120,6 +120,7 @@ namespace Hairibar.Ragdoll.Animation
         Vector3 preparedGroundNormal = Vector3.up;
         bool targetAlignmentPending;
         bool getUpBlendCompletedByTeleport;
+        bool lifecycleSuspended;
         long acceptedCollisionCount;
         long rejectedCollisionCount;
         RagdollBoneHandle lastAcceptedCollisionBone = RagdollBoneHandle.Invalid;
@@ -615,11 +616,17 @@ namespace Hairibar.Ragdoll.Animation
             kinematicModeManaged = false;
             rootPair = FindRootPair();
             getUpReferencePair = FindGetUpReferencePair();
+            lifecycleSuspended = !Context.Animator.IsAlive;
         }
 
         protected override void OnBehaviourActivated()
         {
-            stateMachine.Reset(RagdollPuppetState.Puppet);
+            lifecycleSuspended = !Context.Animator.IsAlive
+                || Context.Animator.IsKilling;
+            stateMachine.Reset(
+                lifecycleSuspended
+                    ? RagdollPuppetState.Unpinned
+                    : RagdollPuppetState.Puppet);
             groundProbe.Reset();
             lastKnockOutBone = RagdollBoneHandle.Invalid;
             getUpOrientation = RagdollGetUpOrientation.Unknown;
@@ -641,7 +648,7 @@ namespace Hairibar.Ragdoll.Animation
             lastKinematicActivationImpulse = 0f;
             lastKinematicActivationFixedTime = 0f;
             kinematicActivationCount = 0L;
-            Context.Muscles.SetCombatBoostsEnabled(true);
+            Context.Muscles.SetCombatBoostsEnabled(!lifecycleSuspended);
             ApplyRecoveryConfiguration();
             hasObservedSurfaceSimulationMode = false;
             colliderSurfaceController.CaptureBaseline();
@@ -652,7 +659,12 @@ namespace Hairibar.Ragdoll.Animation
 
         protected override void OnBehaviourReactivated()
         {
-            stateMachine.Reset(RagdollPuppetState.Puppet);
+            lifecycleSuspended = !Context.Animator.IsAlive
+                || Context.Animator.IsKilling;
+            stateMachine.Reset(
+                lifecycleSuspended
+                    ? RagdollPuppetState.Unpinned
+                    : RagdollPuppetState.Puppet);
             groundProbe.Reset();
             lastKnockOutBone = RagdollBoneHandle.Invalid;
             getUpOrientation = RagdollGetUpOrientation.Unknown;
@@ -678,8 +690,11 @@ namespace Hairibar.Ragdoll.Animation
 
             if (!IsActive) return;
 
-            Context.Muscles.SetCombatBoostsEnabled(true);
-            Context.Muscles.ClearAllSuppressions();
+            Context.Muscles.SetCombatBoostsEnabled(!lifecycleSuspended);
+            if (!lifecycleSuspended)
+            {
+                Context.Muscles.ClearAllSuppressions();
+            }
             ApplyRecoveryConfiguration();
             hasObservedSurfaceSimulationMode = false;
             if (!colliderSurfaceController.BaselineCaptured)
@@ -689,6 +704,64 @@ namespace Hairibar.Ragdoll.Animation
             ObserveSurfaceSimulationMode();
             ApplySurfaceConfiguration(true);
             ResetCollisionProcessing(true);
+        }
+
+        protected override void OnBehaviourKillStarted()
+        {
+            lifecycleSuspended = true;
+            if (!IsActive) return;
+
+            Context.Muscles.SetCombatBoostsEnabled(true);
+            ReleaseKinematicSimulationMode(true);
+            ResetCollisionProcessing(false);
+            unmappedContactTracker.Reset();
+            kinematicContactTracker.Reset();
+            kinematicActivationQueue.Reset();
+            targetAlignmentPending = false;
+            getUpBlendCompletedByTeleport = false;
+            ApplyRecoveryConfiguration();
+            ApplySurfaceConfiguration(true);
+        }
+
+        protected override void OnBehaviourKillEnded()
+        {
+            lifecycleSuspended = true;
+            if (!IsActive) return;
+
+            Context.Muscles.SetCombatBoostsEnabled(false);
+            if (State != RagdollPuppetState.Unpinned)
+            {
+                RagdollPuppetState previous = State;
+                stateMachine.Reset(RagdollPuppetState.Unpinned);
+                ApplyRecoveryConfiguration();
+                ApplySurfaceConfiguration(true);
+                RaiseStateChanged(
+                    previous,
+                    RagdollPuppetState.Unpinned,
+                    RagdollPuppetTransitionReason.LifecycleDeath);
+            }
+            else
+            {
+                ApplySurfaceConfiguration(true);
+            }
+        }
+
+        protected override void OnBehaviourResurrected()
+        {
+            lifecycleSuspended = false;
+            if (!IsActive) return;
+
+            stateMachine.Reset(RagdollPuppetState.Unpinned);
+            stateMachine.SetElapsedTime(float.PositiveInfinity);
+            groundProbe.Reset();
+            targetAlignmentPending = false;
+            getUpBlendCompletedByTeleport = false;
+            getUpOrientation = RagdollGetUpOrientation.Unknown;
+            Context.Muscles.SetAllPositionSuppressions(1f);
+            Context.Muscles.SetCombatBoostsEnabled(true);
+            ApplyRecoveryConfiguration();
+            ApplySurfaceConfiguration(true);
+            ResetCollisionProcessing(false);
         }
 
         protected override void OnBehaviourTeleported(
@@ -758,6 +831,7 @@ namespace Hairibar.Ragdoll.Animation
         protected override void OnBehaviourCollision(
             RagdollCollisionEvent collisionEvent)
         {
+            if (lifecycleSuspended) return;
             RagdollPuppetCollisionResponseMath.LayerResolution layerResolution =
                 RagdollPuppetCollisionResponseMath.ResolveLayer(
                     collisionResistanceMultipliers,
@@ -803,6 +877,18 @@ namespace Hairibar.Ragdoll.Animation
 
         protected override void OnBehaviourFixedUpdate(float deltaTime)
         {
+            if (lifecycleSuspended)
+            {
+                if (Context.Animator.IsKilling)
+                {
+                    Context.Muscles.AdvanceBoostFalloff(
+                        boostFalloff,
+                        deltaTime);
+                }
+                ApplySurfaceConfiguration(false);
+                return;
+            }
+
             Context.Muscles.AdvanceBoostFalloff(boostFalloff, deltaTime);
             ApplyRecoveryConfiguration();
             ApplySurfaceConfiguration(false);
@@ -900,10 +986,31 @@ namespace Hairibar.Ragdoll.Animation
             targetAlignmentPending = false;
         }
 
+        protected override float OnGetLifecycleMuscleWeight(
+            RagdollAnimator.AnimatedPair pair)
+        {
+            return ResolveStateRotationAuthority(pair);
+        }
+
         protected override void OnModifyBoneProfile(
             ref BoneProfile boneProfile,
             RagdollAnimator.AnimatedPair pair,
             float deltaTime)
+        {
+            if (lifecycleSuspended) return;
+
+            RagdollPuppetStateWeights weights =
+                RagdollPuppetStateWeights.Evaluate(
+                    State,
+                    GetUpProgress,
+                    unpinnedMuscleWeightMultiplier);
+
+            boneProfile.positionAlpha *= weights.PositionAuthority;
+            boneProfile.rotationAlpha *= ResolveStateRotationAuthority(pair);
+        }
+
+        float ResolveStateRotationAuthority(
+            RagdollAnimator.AnimatedPair pair)
         {
             RagdollPuppetStateWeights weights =
                 RagdollPuppetStateWeights.Evaluate(
@@ -912,18 +1019,17 @@ namespace Hairibar.Ragdoll.Animation
                     unpinnedMuscleWeightMultiplier);
 
             float rotationAuthority = weights.RotationAuthority;
-            if (State == RagdollPuppetState.Puppet)
+            if (State != RagdollPuppetState.Puppet)
             {
-                float effectivePinAuthority =
-                    Context.Muscles.GetEffectivePositionAuthority(pair.Handle);
-                rotationAuthority *=
-                    RagdollMuscleRecoveryMath.ResolveRelativeMuscleWeight(
-                        effectivePinAuthority,
-                        muscleWeightRelativeToPinWeight);
+                return rotationAuthority;
             }
 
-            boneProfile.positionAlpha *= weights.PositionAuthority;
-            boneProfile.rotationAlpha *= rotationAuthority;
+            float effectivePinAuthority =
+                Context.Muscles.GetEffectivePositionAuthority(pair.Handle);
+            return rotationAuthority
+                * RagdollMuscleRecoveryMath.ResolveRelativeMuscleWeight(
+                    effectivePinAuthority,
+                    muscleWeightRelativeToPinWeight);
         }
 
         protected override void OnModifyMapping(
@@ -1709,7 +1815,11 @@ namespace Hairibar.Ragdoll.Animation
                 hasObservedSurfaceSimulationMode = true;
             }
 
-            colliderSurfaceController.Apply(State, force);
+            colliderSurfaceController.Apply(
+                lifecycleSuspended
+                    ? RagdollPuppetState.Unpinned
+                    : State,
+                force);
         }
 
         void ObserveSurfaceSimulationMode()

@@ -24,6 +24,13 @@ namespace Hairibar.Ragdoll.Animation
             StateElapsedTime = 0f;
         }
 
+        internal void SetElapsedTime(float elapsedTime)
+        {
+            StateElapsedTime = float.IsNaN(elapsedTime)
+                ? 0f
+                : Mathf.Max(0f, elapsedTime);
+        }
+
         internal bool TryTransition(RagdollPuppetState next)
         {
             if (next == State || !IsTransitionAllowed(State, next))

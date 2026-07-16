@@ -41,8 +41,8 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     if (!simulation)
                     {
                         EditorGUILayout.HelpBox(
-                            "NormalMode.Kinematic requires RagdollSimulationModeController on the same GameObject as RagdollAnimator and RagdollBehaviourController. Add and enable it before entering Play Mode so RagdollAnimator can initialize the modifier.",
-                            MessageType.Error);
+                            "RagdollAnimator will create a default RagdollSimulationModeController at runtime. Add the component explicitly if you need to author its transition duration, initial mode or lifetime policy.",
+                            MessageType.Info);
                     }
                     else if (!simulation.enabled)
                     {

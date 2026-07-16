@@ -167,6 +167,20 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [Test]
+        public void ClearingImmunity_PreservesOutgoingImpulseBoost()
+        {
+            MuscleRuntimeState state = MuscleRuntimeState.Default;
+            state.BoostImmunity(1f);
+            state.BoostImpulseMultiplier(3f);
+
+            state.ClearImmunity();
+
+            Assert.That(state.Immunity, Is.Zero);
+            Assert.That(state.ImpulseMultiplier, Is.EqualTo(3f));
+            Assert.That(state.HasActiveBoost, Is.True);
+        }
+
+        [Test]
         public void BoostFalloff_ReturnsToSeparateNeutralValues()
         {
             MuscleRuntimeState state = MuscleRuntimeState.Default;
