@@ -25,6 +25,8 @@ namespace Hairibar.Ragdoll.Animation
 
             foreach (AnimatedPair pair in animatedPairs)
             {
+                if (IsMuscleUnavailable(pair)) continue;
+
                 switch (pair.RagdollBone.PowerSetting)
                 {
                     case PowerSetting.Kinematic:
@@ -305,6 +307,8 @@ namespace Hairibar.Ragdoll.Animation
 
             foreach (AnimatedPair pair in animatedPairs)
             {
+                if (IsMuscleUnavailable(pair)) continue;
+
                 Rigidbody rb = pair.RagdollBone.Rigidbody;
                 AnimatedPose targetPose = AnimatedPose.Read(pair.TargetBone);
                 AnimatedPose ragdollPose = pair.ConvertTargetPoseToRagdoll(targetPose);

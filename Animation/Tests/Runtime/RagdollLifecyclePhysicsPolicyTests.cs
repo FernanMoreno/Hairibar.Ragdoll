@@ -117,6 +117,30 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [Test]
+        public void DisconnectedJoint_IsExcludedFromGlobalAndLifecycleWrites()
+        {
+            RagdollLifecyclePhysicsPolicy policy = CreatePolicy();
+            policy.SetDisconnectedBones(new[] { false, true });
+
+            secondJoint.angularXMotion = ConfigurableJointMotion.Free;
+            secondJoint.angularYMotion = ConfigurableJointMotion.Free;
+            secondJoint.angularZMotion = ConfigurableJointMotion.Free;
+
+            policy.SetAngularLimits(true);
+            Assert.That(secondJoint.angularXMotion,
+                Is.EqualTo(ConfigurableJointMotion.Free));
+            Assert.That(secondJoint.angularYMotion,
+                Is.EqualTo(ConfigurableJointMotion.Free));
+            Assert.That(secondJoint.angularZMotion,
+                Is.EqualTo(ConfigurableJointMotion.Free));
+
+            policy.BeginKill(true);
+            Assert.That(secondJoint.angularXMotion,
+                Is.EqualTo(ConfigurableJointMotion.Free));
+            policy.RestoreAfterDeath();
+        }
+
+        [Test]
         public void PermanentFreeze_AbandonsRollbackWithoutMutatingFrozenState()
         {
             RagdollLifecyclePhysicsPolicy policy = CreatePolicy();
@@ -135,8 +159,8 @@ namespace Hairibar.Ragdoll.Animation.Tests
             return new RagdollLifecyclePhysicsPolicy(
                 new[]
                 {
-                    new RagdollLifecyclePhysicsPolicy.JointRecord(firstJoint),
-                    new RagdollLifecyclePhysicsPolicy.JointRecord(secondJoint)
+                    new RagdollLifecyclePhysicsPolicy.JointRecord(0, firstJoint),
+                    new RagdollLifecyclePhysicsPolicy.JointRecord(1, secondJoint)
                 });
         }
     }

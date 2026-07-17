@@ -53,9 +53,30 @@ namespace Hairibar.Ragdoll.Animation
 
         struct RemovedPhysicalSnapshot
         {
+            internal BoneName Bone;
+            internal Transform MuscleTransform;
+            internal Transform MuscleParent;
+            internal int MuscleSiblingIndex;
+            internal Vector3 MuscleLocalPosition;
+            internal Quaternion MuscleLocalRotation;
+            internal Vector3 MuscleLocalScale;
+            internal bool MuscleActiveSelf;
             internal ConfigurableJoint Joint;
             internal Rigidbody Rigidbody;
+            internal bool IsKinematic;
+            internal bool DetectCollisions;
+            internal Vector3 Velocity;
+            internal Vector3 AngularVelocity;
             internal bool WasSleeping;
+            internal Rigidbody ConnectedBody;
+            internal ConfigurableJointMotion XMotion;
+            internal ConfigurableJointMotion YMotion;
+            internal ConfigurableJointMotion ZMotion;
+            internal ConfigurableJointMotion AngularXMotion;
+            internal ConfigurableJointMotion AngularYMotion;
+            internal ConfigurableJointMotion AngularZMotion;
+            internal Vector3 ConnectedAnchor;
+            internal bool AutoConfigureConnectedAnchor;
             internal JointDrive SlerpDrive;
             internal Vector3 TargetAngularVelocity;
             internal Transform Target;
@@ -64,6 +85,8 @@ namespace Hairibar.Ragdoll.Animation
             internal Vector3 TargetLocalPosition;
             internal Quaternion TargetLocalRotation;
             internal Vector3 TargetLocalScale;
+            internal Vector3 TargetWorldPosition;
+            internal Quaternion TargetWorldRotation;
         }
 
         readonly Dictionary<BoneName, RuntimeMuscleData> runtimeMuscles =
@@ -294,19 +317,23 @@ namespace Hairibar.Ragdoll.Animation
         }
 
         /// <summary>
-        /// Removes a registered muscle and every descendant connected through the
-        /// current Rigidbody topology. The joints are released from animation matching
-        /// but are not disconnected or destroyed in this sprint.
+        /// Removes a registered muscle and every descendant from runtime management.
+        /// Sever releases the branch root, Explode releases every joint and Numb keeps
+        /// the physical connections while disabling their drives.
         /// </summary>
         public RagdollMuscleChange[] RemoveMuscleRecursive(
             ConfigurableJoint joint,
-            bool attachTargets = false)
+            bool attachTargets = false,
+            bool blockTargetAnimation = false,
+            RagdollMuscleRemoveMode removeMode = RagdollMuscleRemoveMode.Sever)
         {
             RagdollMuscleChange[] removed;
             string error;
             if (!TryRemoveMuscleRecursive(
                 joint,
                 attachTargets,
+                blockTargetAnimation,
+                removeMode,
                 out removed,
                 out error))
             {
@@ -315,33 +342,89 @@ namespace Hairibar.Ragdoll.Animation
             return removed;
         }
 
-        /// <summary>
-        /// Non-throwing variant of RemoveMuscleRecursive.
-        /// </summary>
         public bool TryRemoveMuscleRecursive(
             ConfigurableJoint joint,
             bool attachTargets,
             out RagdollMuscleChange[] removedChanges,
             out string error)
         {
+            return TryRemoveMuscleRecursive(
+                joint,
+                attachTargets,
+                false,
+                RagdollMuscleRemoveMode.Sever,
+                out removedChanges,
+                out error);
+        }
+
+        public bool TryRemoveMuscleRecursive(
+            ConfigurableJoint joint,
+            bool attachTargets,
+            bool blockTargetAnimation,
+            RagdollMuscleRemoveMode removeMode,
+            out RagdollMuscleChange[] removedChanges,
+            out string error)
+        {
             removedChanges = new RagdollMuscleChange[0];
             error = null;
-            if (!ValidateHierarchyMutation(out error)) return false;
             if (!joint)
             {
-                error = "RemoveMuscleRecursive requires a ConfigurableJoint.";
+                error = "RemoveMuscleRecursive requires a live ConfigurableJoint.";
                 return false;
             }
-
             RagdollBone requested;
             if (!Bindings.TryGetBone(joint, out requested))
             {
                 error = "No registered muscle uses the supplied ConfigurableJoint.";
                 return false;
             }
+            return TryRemoveMuscleRecursiveByBone(
+                requested.Name,
+                attachTargets,
+                blockTargetAnimation,
+                removeMode,
+                false,
+                out removedChanges,
+                out error);
+        }
+
+        internal bool TryRemoveMuscleRecursiveByBone(
+            BoneName rootName,
+            bool attachTargets,
+            bool blockTargetAnimation,
+            RagdollMuscleRemoveMode removeMode,
+            bool irreversibleJointBreak,
+            out RagdollMuscleChange[] removedChanges,
+            out string error)
+        {
+            removedChanges = new RagdollMuscleChange[0];
+            error = null;
+            if (!ValidateHierarchyMutation(
+                irreversibleJointBreak,
+                out error))
+            {
+                return false;
+            }
+            if (!Enum.IsDefined(typeof(RagdollMuscleRemoveMode), removeMode))
+            {
+                error = "The muscle removal mode is not supported.";
+                return false;
+            }
+
+            RagdollBone requested;
+            if (!Bindings.TryGetBone(rootName, out requested))
+            {
+                error = "No registered muscle is named '" + rootName + "'.";
+                return false;
+            }
             if (requested.IsRoot)
             {
                 error = "The root muscle cannot be removed at runtime.";
+                return false;
+            }
+            if (!irreversibleJointBreak && !requested.Joint)
+            {
+                error = "The requested muscle no longer has a ConfigurableJoint.";
                 return false;
             }
 
@@ -354,28 +437,38 @@ namespace Hairibar.Ragdoll.Animation
                 new Dictionary<BoneName, RuntimeMuscleData>(runtimeMuscles);
             RemovedPhysicalSnapshot[] physicalSnapshots =
                 new RemovedPhysicalSnapshot[0];
+            bool registryMutated = false;
 
             hierarchyTransactionInProgress = true;
             try
             {
                 RagdollBone[] removedBones;
                 if (!Bindings.TryRemoveRuntimeSubtree(
-                    joint,
+                    rootName,
                     out removedBones,
                     out error))
                 {
                     return false;
                 }
+                registryMutated = true;
 
                 removedChanges = CreateRemovedChanges(removedBones, oldPairs);
-                physicalSnapshots = CaptureRemovedSnapshots(removedChanges);
+                physicalSnapshots = CaptureRemovedSnapshots(
+                    removedBones,
+                    removedChanges,
+                    oldPairs);
                 for (int index = 0; index < removedBones.Length; index++)
                 {
                     runtimeMuscles.Remove(removedBones[index].Name);
                 }
 
                 RebuildRuntimeHierarchy(oldPairs, subsystemSnapshot);
-                ReleaseRemovedMuscles(removedChanges, attachTargets);
+                ReleaseRemovedMuscles(
+                    rootName,
+                    physicalSnapshots,
+                    attachTargets,
+                    blockTargetAnimation,
+                    removeMode);
                 NotifyHierarchyCommitted(
                     new RagdollMuscleChange[0],
                     removedChanges);
@@ -383,10 +476,43 @@ namespace Hairibar.Ragdoll.Animation
             }
             catch (Exception exception)
             {
-                error = "The runtime muscle removal was rolled back: "
+                error = "The runtime muscle removal failed: "
                     + exception.Message;
+
+                if (irreversibleJointBreak && registryMutated)
+                {
+                    // A Unity joint break has already destroyed the connection. Restoring
+                    // the old registry would reintroduce a bone with a missing joint, so
+                    // the reduced registry is authoritative. Retry rebuilding it and
+                    // disable the animator if even the degraded commit cannot be formed.
+                    try
+                    {
+                        RebuildRuntimeHierarchy(oldPairs, subsystemSnapshot);
+                        ReleaseRemovedMuscles(
+                            rootName,
+                            physicalSnapshots,
+                            attachTargets,
+                            blockTargetAnimation,
+                            removeMode);
+                        NotifyHierarchyCommitted(
+                            new RagdollMuscleChange[0],
+                            removedChanges);
+                        error = null;
+                        return true;
+                    }
+                    catch (Exception degradedException)
+                    {
+                        Debug.LogException(degradedException, this);
+                        enabled = false;
+                        error += " The broken branch could not be rebuilt and RagdollAnimator was disabled: "
+                            + degradedException.Message;
+                        return false;
+                    }
+                }
+
                 try
                 {
+                    ShutdownMuscleConnections();
                     ShutdownInternalCollisions();
                     ShutdownJointRuntime();
                     runtimeMuscles.Clear();
@@ -415,6 +541,13 @@ namespace Hairibar.Ragdoll.Animation
 
         bool ValidateHierarchyMutation(out string error)
         {
+            return ValidateHierarchyMutation(false, out error);
+        }
+
+        bool ValidateHierarchyMutation(
+            bool allowExistingConnectionState,
+            out string error)
+        {
             error = null;
             if (hierarchyTransactionInProgress)
             {
@@ -424,6 +557,13 @@ namespace Hairibar.Ragdoll.Animation
             if (animatedPairs == null || !Bindings.IsInitialized)
             {
                 error = "RagdollAnimator has not completed initialization.";
+                return false;
+            }
+            if (!allowExistingConnectionState
+                && (HasDisconnectedMuscles
+                    || PendingMuscleConnectionOperationCount > 0))
+            {
+                error = "Runtime hierarchy mutations require all muscles connected and no pending connection operations.";
                 return false;
             }
             if (Application.isPlaying && !Time.inFixedTimeStep)
@@ -579,39 +719,71 @@ namespace Hairibar.Ragdoll.Animation
         }
 
         static RemovedPhysicalSnapshot[] CaptureRemovedSnapshots(
-            RagdollMuscleChange[] removed)
+            RagdollBone[] removedBones,
+            RagdollMuscleChange[] removed,
+            AnimatedPair[] oldPairs)
         {
+            Dictionary<BoneName, AnimatedPair> pairByName =
+                new Dictionary<BoneName, AnimatedPair>();
+            for (int index = 0; index < oldPairs.Length; index++)
+            {
+                pairByName[oldPairs[index].Name] = oldPairs[index];
+            }
+
             RemovedPhysicalSnapshot[] snapshots =
                 new RemovedPhysicalSnapshot[removed.Length];
             for (int index = 0; index < removed.Length; index++)
             {
-                ConfigurableJoint joint = removed[index].Joint;
+                RagdollBone bone = removedBones[index];
+                ConfigurableJoint joint = bone.Joint;
+                Rigidbody body = bone.Rigidbody;
                 Transform target = removed[index].Target;
+                AnimatedPair pair;
+                Vector3 targetWorldPosition = target ? target.position : Vector3.zero;
+                Quaternion targetWorldRotation = target ? target.rotation : Quaternion.identity;
+                if (pairByName.TryGetValue(bone.Name, out pair))
+                {
+                    pair.GetMappedTargetWorldPose(
+                        out targetWorldPosition,
+                        out targetWorldRotation);
+                }
+
                 snapshots[index] = new RemovedPhysicalSnapshot
                 {
+                    Bone = bone.Name,
+                    MuscleTransform = bone.Transform,
+                    MuscleParent = bone.Transform ? bone.Transform.parent : null,
+                    MuscleSiblingIndex = bone.Transform ? bone.Transform.GetSiblingIndex() : 0,
+                    MuscleLocalPosition = bone.Transform ? bone.Transform.localPosition : Vector3.zero,
+                    MuscleLocalRotation = bone.Transform ? bone.Transform.localRotation : Quaternion.identity,
+                    MuscleLocalScale = bone.Transform ? bone.Transform.localScale : Vector3.one,
+                    MuscleActiveSelf = bone.Transform && bone.Transform.gameObject.activeSelf,
                     Joint = joint,
-                    Rigidbody = joint ? joint.GetComponent<Rigidbody>() : null,
-                    WasSleeping = joint
-                        && joint.GetComponent<Rigidbody>()
-                        && joint.GetComponent<Rigidbody>().IsSleeping(),
+                    Rigidbody = body,
+                    IsKinematic = body && body.isKinematic,
+                    DetectCollisions = body && body.detectCollisions,
+                    Velocity = body ? body.velocity : Vector3.zero,
+                    AngularVelocity = body ? body.angularVelocity : Vector3.zero,
+                    WasSleeping = body && body.IsSleeping(),
+                    ConnectedBody = joint ? joint.connectedBody : null,
+                    XMotion = joint ? joint.xMotion : ConfigurableJointMotion.Free,
+                    YMotion = joint ? joint.yMotion : ConfigurableJointMotion.Free,
+                    ZMotion = joint ? joint.zMotion : ConfigurableJointMotion.Free,
+                    AngularXMotion = joint ? joint.angularXMotion : ConfigurableJointMotion.Free,
+                    AngularYMotion = joint ? joint.angularYMotion : ConfigurableJointMotion.Free,
+                    AngularZMotion = joint ? joint.angularZMotion : ConfigurableJointMotion.Free,
+                    ConnectedAnchor = joint ? joint.connectedAnchor : Vector3.zero,
+                    AutoConfigureConnectedAnchor = joint && joint.autoConfigureConnectedAnchor,
                     SlerpDrive = joint ? joint.slerpDrive : new JointDrive(),
-                    TargetAngularVelocity = joint
-                        ? joint.targetAngularVelocity
-                        : Vector3.zero,
+                    TargetAngularVelocity = joint ? joint.targetAngularVelocity : Vector3.zero,
                     Target = target,
                     TargetParent = target ? target.parent : null,
-                    TargetSiblingIndex = target
-                        ? target.GetSiblingIndex()
-                        : 0,
-                    TargetLocalPosition = target
-                        ? target.localPosition
-                        : Vector3.zero,
-                    TargetLocalRotation = target
-                        ? target.localRotation
-                        : Quaternion.identity,
-                    TargetLocalScale = target
-                        ? target.localScale
-                        : Vector3.one
+                    TargetSiblingIndex = target ? target.GetSiblingIndex() : 0,
+                    TargetLocalPosition = target ? target.localPosition : Vector3.zero,
+                    TargetLocalRotation = target ? target.localRotation : Quaternion.identity,
+                    TargetLocalScale = target ? target.localScale : Vector3.one,
+                    TargetWorldPosition = targetWorldPosition,
+                    TargetWorldRotation = targetWorldRotation
                 };
             }
             return snapshots;
@@ -624,16 +796,43 @@ namespace Hairibar.Ragdoll.Animation
             for (int index = 0; index < snapshots.Length; index++)
             {
                 RemovedPhysicalSnapshot snapshot = snapshots[index];
+                if (snapshot.MuscleTransform)
+                {
+                    snapshot.MuscleTransform.SetParent(snapshot.MuscleParent, false);
+                    snapshot.MuscleTransform.localPosition = snapshot.MuscleLocalPosition;
+                    snapshot.MuscleTransform.localRotation = snapshot.MuscleLocalRotation;
+                    snapshot.MuscleTransform.localScale = snapshot.MuscleLocalScale;
+                    snapshot.MuscleTransform.SetSiblingIndex(snapshot.MuscleSiblingIndex);
+                    snapshot.MuscleTransform.gameObject.SetActive(snapshot.MuscleActiveSelf);
+                }
                 if (snapshot.Joint)
                 {
+                    snapshot.Joint.connectedBody = snapshot.ConnectedBody;
+                    snapshot.Joint.xMotion = snapshot.XMotion;
+                    snapshot.Joint.yMotion = snapshot.YMotion;
+                    snapshot.Joint.zMotion = snapshot.ZMotion;
+                    snapshot.Joint.angularXMotion = snapshot.AngularXMotion;
+                    snapshot.Joint.angularYMotion = snapshot.AngularYMotion;
+                    snapshot.Joint.angularZMotion = snapshot.AngularZMotion;
+                    snapshot.Joint.connectedAnchor = snapshot.ConnectedAnchor;
+                    snapshot.Joint.autoConfigureConnectedAnchor = snapshot.AutoConfigureConnectedAnchor;
                     snapshot.Joint.slerpDrive = snapshot.SlerpDrive;
-                    snapshot.Joint.targetAngularVelocity =
-                        snapshot.TargetAngularVelocity;
+                    snapshot.Joint.targetAngularVelocity = snapshot.TargetAngularVelocity;
                 }
-                if (snapshot.Rigidbody && !snapshot.Rigidbody.isKinematic)
+                if (snapshot.Rigidbody)
                 {
-                    if (snapshot.WasSleeping) snapshot.Rigidbody.Sleep();
-                    else snapshot.Rigidbody.WakeUp();
+                    snapshot.Rigidbody.isKinematic = snapshot.IsKinematic;
+                    snapshot.Rigidbody.detectCollisions = snapshot.DetectCollisions;
+                    snapshot.Rigidbody.velocity = snapshot.Velocity;
+                    snapshot.Rigidbody.angularVelocity = snapshot.AngularVelocity;
+                    if (snapshot.WasSleeping && !snapshot.Rigidbody.isKinematic)
+                    {
+                        snapshot.Rigidbody.Sleep();
+                    }
+                    else if (!snapshot.Rigidbody.isKinematic)
+                    {
+                        snapshot.Rigidbody.WakeUp();
+                    }
                 }
                 if (snapshot.Target)
                 {
@@ -647,19 +846,54 @@ namespace Hairibar.Ragdoll.Animation
         }
 
         static void ReleaseRemovedMuscles(
-            RagdollMuscleChange[] removed,
-            bool attachTargets)
+            BoneName rootName,
+            RemovedPhysicalSnapshot[] removed,
+            bool attachTargets,
+            bool blockTargetAnimation,
+            RagdollMuscleRemoveMode removeMode)
         {
             for (int index = 0; index < removed.Length; index++)
             {
-                ConfigurableJoint joint = removed[index].Joint;
-                if (!joint) continue;
-                joint.slerpDrive = new JointDrive();
-                joint.targetAngularVelocity = Vector3.zero;
+                RemovedPhysicalSnapshot snapshot = removed[index];
+                ConfigurableJoint joint = snapshot.Joint;
+                bool disconnectJoint = removeMode == RagdollMuscleRemoveMode.Explode
+                    || (removeMode == RagdollMuscleRemoveMode.Sever
+                        && snapshot.Bone == rootName);
 
-                if (attachTargets && removed[index].Target)
+                if (joint)
                 {
-                    removed[index].Target.SetParent(joint.transform, true);
+                    joint.slerpDrive = new JointDrive();
+                    joint.targetAngularVelocity = Vector3.zero;
+                    if (disconnectJoint)
+                    {
+                        joint.connectedBody = null;
+                        joint.xMotion = ConfigurableJointMotion.Free;
+                        joint.yMotion = ConfigurableJointMotion.Free;
+                        joint.zMotion = ConfigurableJointMotion.Free;
+                        joint.angularXMotion = ConfigurableJointMotion.Free;
+                        joint.angularYMotion = ConfigurableJointMotion.Free;
+                        joint.angularZMotion = ConfigurableJointMotion.Free;
+                    }
+                }
+
+                if (attachTargets && snapshot.Target && snapshot.MuscleTransform)
+                {
+                    snapshot.Target.SetPositionAndRotation(
+                        snapshot.TargetWorldPosition,
+                        snapshot.TargetWorldRotation);
+                    snapshot.Target.SetParent(snapshot.MuscleTransform, true);
+                }
+
+                if (blockTargetAnimation && snapshot.Target)
+                {
+                    RagdollTargetAnimationBlocker blocker =
+                        snapshot.Target.GetComponent<RagdollTargetAnimationBlocker>();
+                    if (!blocker)
+                    {
+                        blocker = snapshot.Target.gameObject
+                            .AddComponent<RagdollTargetAnimationBlocker>();
+                    }
+                    blocker.Configure(new[] { snapshot.Target });
                 }
             }
         }

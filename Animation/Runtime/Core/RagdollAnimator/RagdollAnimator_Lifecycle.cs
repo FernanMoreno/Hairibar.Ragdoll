@@ -326,7 +326,16 @@ namespace Hairibar.Ragdoll.Animation
             if (!AreAllMusclesReadyToFreeze()) return;
 
             SetTargetAnimationEnabled(false);
-            lifecycleSimulationMode.SuspendForLifecycleFreeze();
+            SuspendDisconnectedMusclesForLifecycleFreeze();
+            try
+            {
+                lifecycleSimulationMode.SuspendForLifecycleFreeze();
+            }
+            catch
+            {
+                ResumeDisconnectedMusclesAfterLifecycleFreeze();
+                throw;
+            }
             if (lifecycleBehaviours && lifecycleBehaviours.IsInitialized)
             {
                 lifecycleBehaviours.NotifyFrozen();
@@ -364,6 +373,7 @@ namespace Hairibar.Ragdoll.Animation
             }
 
             lifecycleSimulationMode.ResumeFromLifecycleFreeze();
+            ResumeDisconnectedMusclesAfterLifecycleFreeze();
             ReapplyInternalCollisionPolicy();
             if (lifecycleBehaviours && lifecycleBehaviours.IsInitialized)
             {
@@ -633,6 +643,8 @@ namespace Hairibar.Ragdoll.Animation
 
         IEnumerator DestroyFrozenSubsystemPermanently()
         {
+            DestroyDisconnectedMusclesForPermanentFreeze();
+
             if (lifecycleBehaviours && lifecycleBehaviours.IsInitialized)
             {
                 lifecycleBehaviours.DestroyBehavioursForPermanentFreeze();
@@ -671,6 +683,7 @@ namespace Hairibar.Ragdoll.Animation
                 && lifecycleSimulationMode.IsLifecycleFreezeSuspended)
             {
                 lifecycleSimulationMode.ResumeFromLifecycleFreeze();
+                ResumeDisconnectedMusclesAfterLifecycleFreeze();
                 ReapplyInternalCollisionPolicy();
                 if (lifecycleBehaviours
                     && lifecycleBehaviours.IsInitialized)

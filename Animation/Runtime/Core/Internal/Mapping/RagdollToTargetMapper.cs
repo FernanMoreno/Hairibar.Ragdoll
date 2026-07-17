@@ -19,7 +19,27 @@ namespace Hairibar.Ragdoll.Animation
             float masterMappingWeight,
             IReadOnlyList<IRagdollMappingModifier> modifiers)
         {
+            MapRagdollToTarget(
+                pairs,
+                masterMappingWeight,
+                modifiers,
+                null);
+        }
+
+        internal void MapRagdollToTarget(
+            IReadOnlyList<RagdollAnimator.AnimatedPair> pairs,
+            float masterMappingWeight,
+            IReadOnlyList<IRagdollMappingModifier> modifiers,
+            bool[] suppressedBones)
+        {
             if (pairs == null) throw new ArgumentNullException(nameof(pairs));
+            if (suppressedBones != null
+                && suppressedBones.Length != pairs.Count)
+            {
+                throw new ArgumentException(
+                    "The suppressed-bone mask must match the mapped pair count.",
+                    nameof(suppressedBones));
+            }
 
             // Restore the exact sampled visual animation first. This prevents additive
             // drift when a Target bone is not overwritten by its Animator every frame.
@@ -44,6 +64,11 @@ namespace Hairibar.Ragdoll.Animation
                 }
 
                 weights.Clamp();
+                if (suppressedBones != null
+                    && suppressedBones[pair.Handle.Index])
+                {
+                    continue;
+                }
                 MapPair(pair, weights);
             }
         }

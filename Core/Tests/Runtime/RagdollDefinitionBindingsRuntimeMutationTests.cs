@@ -78,6 +78,39 @@ namespace Hairibar.Ragdoll.Tests
         }
 
         [Test]
+        public void RemoveSubtreeByName_WorksAfterJointReferenceIsUnavailable()
+        {
+            using (RagdollBindingsTestRig rig = new RagdollBindingsTestRig())
+            using (RuntimeBone runtime = new RuntimeBone(rig.ChildBody))
+            {
+                RagdollBoneHandle ignored;
+                string error;
+                Assert.That(
+                    rig.Bindings.TryAddRuntimeBinding(
+                        runtime.Name,
+                        runtime.Joint,
+                        out ignored,
+                        out error),
+                    Is.True,
+                    error);
+
+                RagdollBone[] removed;
+                Assert.That(
+                    rig.Bindings.TryRemoveRuntimeSubtree(
+                        rig.ChildName,
+                        out removed,
+                        out error),
+                    Is.True,
+                    error);
+
+                Assert.That(removed.Length, Is.EqualTo(2));
+                Assert.That(removed[0].Name, Is.EqualTo(rig.ChildName));
+                Assert.That(removed[1].Name, Is.EqualTo(runtime.Name));
+                Assert.That(rig.Bindings.BoneCount, Is.EqualTo(1));
+            }
+        }
+
+        [Test]
         public void RestoreSnapshot_ReinstatesExactGenerationAndMembership()
         {
             using (RagdollBindingsTestRig rig = new RagdollBindingsTestRig())

@@ -310,6 +310,57 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [Test]
+        public void DisconnectedBone_ForcesItsPairsToCollideAcrossAutomaticAndManualPolicies()
+        {
+            RagdollInternalCollisionController controller =
+                CreateController(CreateRuntimeWithFirstSecondForced());
+            controller.UpdateAutomatic(false);
+            AssertAllIgnored(true, true, true);
+
+            controller.SetDisconnectedBones(
+                new[] { false, true, false });
+            controller.ReapplyCurrentPolicy();
+            AssertAllIgnored(false, true, false);
+
+            controller.SetManualControl(true);
+            controller.ApplyManual(false, true);
+            AssertAllIgnored(false, true, false);
+        }
+
+        [Test]
+        public void SameDisconnectedIsland_PreservesItsInternalPolicy()
+        {
+            RagdollInternalCollisionController controller =
+                CreateController(CreateRuntimeWithFirstSecondForced());
+            controller.UpdateAutomatic(true);
+            AssertAllIgnored(true, false, false);
+
+            controller.SetDisconnectedBones(
+                new[] { true, true, false },
+                new[] { 7, 7, 0 });
+            controller.ReapplyCurrentPolicy();
+
+            // First/second remain one Sever island and retain their authored ignore.
+            // Both still collide with the third, managed muscle.
+            AssertAllIgnored(true, false, false);
+        }
+
+        [Test]
+        public void DifferentDisconnectedIslands_ForceCollisionBetweenPieces()
+        {
+            RagdollInternalCollisionController controller =
+                CreateController(CreateRuntimeWithFirstSecondForced());
+            controller.UpdateAutomatic(false);
+
+            controller.SetDisconnectedBones(
+                new[] { true, true, false },
+                new[] { 7, 8, 0 });
+            controller.ReapplyCurrentPolicy();
+
+            AssertAllIgnored(false, false, false);
+        }
+
+        [Test]
         public void PermanentFreeze_AbandonsBaselineRollback()
         {
             RagdollInternalCollisionController controller =

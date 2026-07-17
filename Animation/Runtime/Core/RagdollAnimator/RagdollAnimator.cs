@@ -164,11 +164,13 @@ namespace Hairibar.Ragdoll.Animation
                 ProcessPendingTeleportAtFixedBoundary();
             }
 
+            ProcessPendingMuscleConnectionOperations();
             if (LifecycleIsFrozenStable()) return;
 
             RestoreAnimatedPose();
             ModifyTargetPose();
             UpdateJointRuntimeBeforeSimulation();
+            ReapplyDisconnectedPhysicalPolicies();
             UpdateInternalCollisionsBeforeSimulation();
             DoAnimationMatching();
         }
@@ -242,6 +244,7 @@ namespace Hairibar.Ragdoll.Animation
             InitializeLifecycle();
             InitializeInternalCollisions();
             InitializeJointRuntime();
+            InitializeMuscleConnections();
 
             SnapToTargetPose();
         }
@@ -254,6 +257,8 @@ namespace Hairibar.Ragdoll.Animation
             }
             RestoreLifecycleAfterEnable();
             RefreshJointRuntimeConfiguration();
+            ApplyDisconnectedMasksToPhysicalOwners();
+            ReapplyDisconnectedPhysicalPolicies();
             ReapplyInternalCollisionPolicy();
 
             RagdollBehaviourController behaviourController =
@@ -272,6 +277,7 @@ namespace Hairibar.Ragdoll.Animation
         void OnDestroy()
         {
             ShutdownLifecycle();
+            ShutdownMuscleConnections();
             ShutdownInternalCollisions();
             ShutdownJointRuntime();
         }

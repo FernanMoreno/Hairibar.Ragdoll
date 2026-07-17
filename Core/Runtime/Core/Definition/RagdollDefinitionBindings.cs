@@ -374,6 +374,24 @@ namespace Hairibar.Ragdoll
                 error = "No registered ragdoll bone uses the supplied ConfigurableJoint.";
                 return false;
             }
+            return TryRemoveRuntimeSubtree(root.Name, out removedBones, out error);
+        }
+
+        internal bool TryRemoveRuntimeSubtree(
+            BoneName rootName,
+            out RagdollBone[] removedBones,
+            out string error)
+        {
+            removedBones = new RagdollBone[0];
+            error = null;
+            ThrowExceptionIfNotInitialized();
+
+            RagdollBone root;
+            if (!TryGetBone(rootName, out root))
+            {
+                error = "No registered ragdoll bone is named '" + rootName + "'.";
+                return false;
+            }
             if (root.IsRoot)
             {
                 error = "The root ragdoll bone cannot be removed at runtime.";
@@ -381,7 +399,7 @@ namespace Hairibar.Ragdoll
             }
 
             RagdollBoneHandle rootHandle;
-            TryGetBoneHandle(joint, out rootHandle);
+            TryGetBoneHandle(rootName, out rootHandle);
             List<RagdollBone> removed = new List<RagdollBone>();
             for (int index = 0; index < indexedBones.Length; index++)
             {

@@ -651,6 +651,36 @@ namespace Hairibar.Ragdoll.Animation
             }
         }
 
+        protected override void OnBehaviourMuscleDisconnected(
+            RagdollMuscleConnectionChange change)
+        {
+            ResetAfterMuscleConnectionChange();
+        }
+
+        protected override void OnBehaviourMuscleReconnected(
+            RagdollMuscleConnectionChange change)
+        {
+            ResetAfterMuscleConnectionChange();
+        }
+
+        void ResetAfterMuscleConnectionChange()
+        {
+            lastKnockOutBone = RagdollBoneHandle.Invalid;
+            if (groundProbe != null) groundProbe.Reset();
+            if (collisionProcessor != null) collisionProcessor.Reset();
+            if (unmappedContactTracker != null) unmappedContactTracker.Reset();
+            if (kinematicContactTracker != null) kinematicContactTracker.Reset();
+            if (kinematicActivationQueue != null) kinematicActivationQueue.Reset();
+            unmappedContactActive = false;
+            kinematicActivationContactActive = false;
+            targetAlignmentPending = false;
+            getUpBlendCompletedByTeleport = false;
+
+            if (!IsActive) return;
+            ApplySurfaceConfiguration(true);
+            Context.Animator.ReapplyInternalCollisionPolicy();
+        }
+
         protected override void OnBehaviourActivated()
         {
             lifecycleSuspended = !Context.Animator.IsAlive

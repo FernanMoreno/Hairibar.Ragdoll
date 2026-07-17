@@ -171,6 +171,49 @@ namespace Hairibar.Ragdoll.Animation
             }
         }
 
+
+        internal void NotifyMuscleDisconnected(
+            RagdollMuscleConnectionChange change)
+        {
+            EnsureInitialized();
+            IReadOnlyList<RagdollBehaviourBase> registered =
+                collection.Behaviours;
+            for (int index = 0; index < registered.Count; index++)
+            {
+                RagdollBehaviourBase behaviour = registered[index];
+                if (!behaviour) continue;
+                try
+                {
+                    behaviour.MuscleDisconnectedInternal(change);
+                }
+                catch (Exception exception)
+                {
+                    Debug.LogException(exception, behaviour);
+                }
+            }
+        }
+
+        internal void NotifyMuscleReconnected(
+            RagdollMuscleConnectionChange change)
+        {
+            EnsureInitialized();
+            IReadOnlyList<RagdollBehaviourBase> registered =
+                collection.Behaviours;
+            for (int index = 0; index < registered.Count; index++)
+            {
+                RagdollBehaviourBase behaviour = registered[index];
+                if (!behaviour) continue;
+                try
+                {
+                    behaviour.MuscleReconnectedInternal(change);
+                }
+                catch (Exception exception)
+                {
+                    Debug.LogException(exception, behaviour);
+                }
+            }
+        }
+
         public bool Activate(RagdollBehaviourBase behaviour)
         {
             EnsureInitialized();

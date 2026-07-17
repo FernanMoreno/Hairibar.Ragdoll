@@ -240,6 +240,11 @@ namespace Hairibar.Ragdoll.Animation
             for (int index = 0; index < jointAnchorRecords.Length; index++)
             {
                 JointAnchorRecord record = jointAnchorRecords[index];
+                if (IsMuscleUnavailable(record.Child))
+                {
+                    lastJointAnchorSkippedCount++;
+                    continue;
+                }
                 bool shouldUpdate = RagdollJointAnchorMath.ShouldUpdateAnchor(
                     settings.UpdateJointAnchors,
                     settings.SupportTranslationAnimation,
@@ -329,6 +334,7 @@ namespace Hairibar.Ragdoll.Animation
             readonly ConfigurableJoint joint;
             readonly RagdollJointAnchorState anchorState;
 
+            internal AnimatedPair Child => child;
             internal bool DirectTargetParent { get; }
 
             internal JointAnchorRecord(

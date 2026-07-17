@@ -42,14 +42,17 @@ namespace Hairibar.Ragdoll.Animation
 
         internal sealed class JointRecord
         {
+            internal readonly int BoneIndex;
             internal readonly ConfigurableJoint Joint;
             internal readonly AngularMotionState Authored;
             internal AngularMotionState BeforeKill;
             internal bool CapturedBeforeKill;
 
-            internal JointRecord(ConfigurableJoint joint)
+            internal JointRecord(int boneIndex, ConfigurableJoint joint)
             {
+                if (boneIndex < 0) throw new ArgumentOutOfRangeException(nameof(boneIndex));
                 if (!joint) throw new ArgumentNullException(nameof(joint));
+                BoneIndex = boneIndex;
                 Joint = joint;
                 Authored = new AngularMotionState(joint);
                 BeforeKill = Authored;
@@ -57,6 +60,7 @@ namespace Hairibar.Ragdoll.Animation
         }
 
         readonly JointRecord[] joints;
+        bool[] disconnectedBones;
         bool active;
         bool angularLimitsApplied;
 
@@ -80,11 +84,12 @@ namespace Hairibar.Ragdoll.Animation
             }
 
             List<JointRecord> jointRecords = new List<JointRecord>();
-            foreach (RagdollBone bone in bindings.Bones)
+            for (int index = 0; index < bindings.BoneCount; index++)
             {
+                RagdollBone bone = bindings.GetBoneAt(index);
                 if (bone.Joint)
                 {
-                    jointRecords.Add(new JointRecord(bone.Joint));
+                    jointRecords.Add(new JointRecord(index, bone.Joint));
                 }
             }
 
@@ -92,11 +97,30 @@ namespace Hairibar.Ragdoll.Animation
                 jointRecords.ToArray());
         }
 
+        internal void SetDisconnectedBones(bool[] disconnected)
+        {
+            int requiredLength = 0;
+            for (int index = 0; index < joints.Length; index++)
+            {
+                requiredLength = Math.Max(requiredLength, joints[index].BoneIndex + 1);
+            }
+            if (disconnected != null && disconnected.Length < requiredLength)
+            {
+                throw new ArgumentException(
+                    "The disconnected-bone mask must cover every joint policy bone index.",
+                    nameof(disconnected));
+            }
+            disconnectedBones = disconnected == null
+                ? null
+                : (bool[])disconnected.Clone();
+        }
+
         internal void SetAngularLimits(bool limited)
         {
             for (int index = 0; index < joints.Length; index++)
             {
                 JointRecord record = joints[index];
+                if (IsDisconnected(record.BoneIndex)) continue;
                 if (!record.Joint) continue;
 
                 if (limited)
@@ -120,6 +144,7 @@ namespace Hairibar.Ragdoll.Animation
             for (int index = 0; index < joints.Length; index++)
             {
                 JointRecord record = joints[index];
+                if (IsDisconnected(record.BoneIndex)) continue;
                 if (!record.Joint) continue;
 
                 if (limited)
@@ -161,6 +186,7 @@ namespace Hairibar.Ragdoll.Animation
                 for (int index = 0; index < joints.Length; index++)
                 {
                     JointRecord record = joints[index];
+                    if (IsDisconnected(record.BoneIndex)) continue;
                     if (!record.Joint) continue;
 
                     record.BeforeKill =
@@ -185,6 +211,7 @@ namespace Hairibar.Ragdoll.Animation
                 for (int index = 0; index < joints.Length; index++)
                 {
                     JointRecord record = joints[index];
+                    if (IsDisconnected(record.BoneIndex)) continue;
                     if (record.CapturedBeforeKill && record.Joint)
                     {
                         record.BeforeKill.Apply(record.Joint);
@@ -198,6 +225,14 @@ namespace Hairibar.Ragdoll.Animation
         internal void AbandonForPermanentFreeze()
         {
             ClearState();
+        }
+
+        bool IsDisconnected(int index)
+        {
+            return disconnectedBones != null
+                && index >= 0
+                && index < disconnectedBones.Length
+                && disconnectedBones[index];
         }
 
         void ClearState()

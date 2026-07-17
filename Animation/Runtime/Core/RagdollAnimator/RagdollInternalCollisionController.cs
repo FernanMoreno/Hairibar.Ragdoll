@@ -94,6 +94,8 @@ namespace Hairibar.Ragdoll.Animation
         bool automaticDirty = true;
         bool hasAutomaticValue;
         bool automaticCollide;
+        bool[] disconnectedBones;
+        int[] disconnectedCollisionIslands;
         bool[] lifecycleSnapshot;
         bool[] lifecycleSnapshotValid;
         readonly bool[] transactionSnapshot;
@@ -210,6 +212,50 @@ namespace Hairibar.Ragdoll.Animation
             return new RagdollInternalCollisionController(
                 resolvedPairs.ToArray(),
                 authoredIgnores);
+        }
+
+        internal void SetDisconnectedBones(bool[] disconnected)
+        {
+            int[] uniqueIslands = null;
+            if (disconnected != null)
+            {
+                uniqueIslands = new int[disconnected.Length];
+                for (int index = 0; index < disconnected.Length; index++)
+                {
+                    uniqueIslands[index] = disconnected[index]
+                        ? index + 1
+                        : 0;
+                }
+            }
+            SetDisconnectedBones(disconnected, uniqueIslands);
+        }
+
+        internal void SetDisconnectedBones(
+            bool[] disconnected,
+            int[] collisionIslands)
+        {
+            if (disconnected != null
+                && disconnected.Length != authoredIgnores.BoneCount)
+            {
+                throw new ArgumentException(
+                    "The disconnected-bone mask belongs to a different ragdoll registry.",
+                    nameof(disconnected));
+            }
+            if (collisionIslands != null
+                && (disconnected == null
+                    || collisionIslands.Length != disconnected.Length))
+            {
+                throw new ArgumentException(
+                    "Disconnected collision islands must match the disconnected-bone mask.",
+                    nameof(collisionIslands));
+            }
+            disconnectedBones = disconnected == null
+                ? null
+                : (bool[])disconnected.Clone();
+            disconnectedCollisionIslands = collisionIslands == null
+                ? null
+                : (int[])collisionIslands.Clone();
+            automaticDirty = true;
         }
 
         internal void SetAuthoredIgnores(
@@ -461,11 +507,28 @@ namespace Hairibar.Ragdoll.Animation
                 for (int index = 0; index < pairs.Length; index++)
                 {
                     RagdollInternalCollisionPair pair = pairs[index];
+                    bool firstDisconnected = disconnectedBones != null
+                        && disconnectedBones[pair.FirstBoneIndex];
+                    bool secondDisconnected = disconnectedBones != null
+                        && disconnectedBones[pair.SecondBoneIndex];
+                    bool disconnectedBoundary = firstDisconnected
+                        != secondDisconnected;
+                    bool differentDisconnectedIslands = firstDisconnected
+                        && secondDisconnected
+                        && disconnectedCollisionIslands != null
+                        && disconnectedCollisionIslands[pair.FirstBoneIndex]
+                            != disconnectedCollisionIslands[pair.SecondBoneIndex];
+                    bool forceDisconnectedCollision = disconnectedBoundary
+                        || differentDisconnectedIslands;
                     bool forced = useAuthoredIgnores
                         && authoredIgnores.IsForcedIgnore(
                             pair.FirstBoneIndex,
                             pair.SecondBoneIndex);
-                    bool ignored = !collide || forced;
+                    // Disconnected physical pieces must collide with the managed body
+                    // and with one another, regardless of the automatic/manual baseline.
+                    bool ignored = forceDisconnectedCollision
+                        ? false
+                        : !collide || forced;
                     if (pair.Apply(ignored)) writes++;
                 }
                 return writes;

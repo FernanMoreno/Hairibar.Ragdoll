@@ -102,6 +102,20 @@ namespace Hairibar.Ragdoll.Animation
             OnBehaviourHierarchyChanged(added, removed);
         }
 
+        internal void MuscleDisconnectedInternal(
+            RagdollMuscleConnectionChange change)
+        {
+            if (!IsInitialized) return;
+            OnBehaviourMuscleDisconnected(change);
+        }
+
+        internal void MuscleReconnectedInternal(
+            RagdollMuscleConnectionChange change)
+        {
+            if (!IsInitialized) return;
+            OnBehaviourMuscleReconnected(change);
+        }
+
         internal void ShutdownInternal()
         {
             if (!IsInitialized) return;
@@ -256,6 +270,18 @@ namespace Hairibar.Ragdoll.Animation
         protected virtual void OnBehaviourHierarchyChanged(
             IReadOnlyList<RagdollMuscleChange> added,
             IReadOnlyList<RagdollMuscleChange> removed)
+        {
+        }
+
+        /// <summary>Called after a registered muscle has been physically disconnected.</summary>
+        protected virtual void OnBehaviourMuscleDisconnected(
+            RagdollMuscleConnectionChange change)
+        {
+        }
+
+        /// <summary>Called after a disconnected muscle has been restored.</summary>
+        protected virtual void OnBehaviourMuscleReconnected(
+            RagdollMuscleConnectionChange change)
         {
         }
 

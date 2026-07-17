@@ -60,8 +60,10 @@ namespace Hairibar.Ragdoll.Animation
             mapper.MapRagdollToTarget(
                 animatedPairs,
                 _masterMappingWeight,
-                mappingModifiers);
+                mappingModifiers,
+                GetMappingSuppressedBoneMask());
             InvokeWriteHooks();
+            MapDisconnectedMusclesToTarget();
         }
 
         void GatherMappingModifiers()

@@ -660,6 +660,7 @@ namespace Hairibar.Ragdoll.Animation
                 for (int index = 0; index < boneSnapshots.Length; index++)
                 {
                     BoneSnapshot snapshot = boneSnapshots[index];
+                    if (IsDisconnected(snapshot)) continue;
                     snapshot.Bone.PowerSetting = PowerSetting.Kinematic;
                     snapshot.Rigidbody.isKinematic = true;
                 }
@@ -680,6 +681,7 @@ namespace Hairibar.Ragdoll.Animation
                 for (int index = 0; index < boneSnapshots.Length; index++)
                 {
                     BoneSnapshot snapshot = boneSnapshots[index];
+                    if (IsDisconnected(snapshot)) continue;
                     snapshot.Bone.PowerSetting = snapshot.ActivePowerSetting;
                     snapshot.Rigidbody.isKinematic =
                         snapshot.ActivePowerSetting == PowerSetting.Kinematic;
@@ -698,6 +700,7 @@ namespace Hairibar.Ragdoll.Animation
             for (int index = 0; index < boneSnapshots.Length; index++)
             {
                 BoneSnapshot snapshot = boneSnapshots[index];
+                if (IsDisconnected(snapshot)) continue;
                 snapshot.ActivePowerSetting = snapshot.Bone.PowerSetting;
                 snapshot.CaptureCollisionConfiguration();
             }
@@ -707,6 +710,7 @@ namespace Hairibar.Ragdoll.Animation
         {
             for (int index = 0; index < boneSnapshots.Length; index++)
             {
+                if (IsDisconnected(boneSnapshots[index])) continue;
                 boneSnapshots[index].RestoreCollisionConfiguration();
             }
         }
@@ -717,6 +721,7 @@ namespace Hairibar.Ragdoll.Animation
 
             for (int index = 0; index < boneSnapshots.Length; index++)
             {
+                if (IsDisconnected(boneSnapshots[index])) continue;
                 Rigidbody rigidbody = boneSnapshots[index].Rigidbody;
                 rigidbody.velocity = Vector3.zero;
                 rigidbody.angularVelocity = Vector3.zero;
@@ -794,6 +799,13 @@ namespace Hairibar.Ragdoll.Animation
             {
                 ragdollSettings.ReapplyRigidbodySettings();
             }
+        }
+
+        bool IsDisconnected(BoneSnapshot snapshot)
+        {
+            return snapshot != null
+                && animator
+                && animator.IsMuscleDisconnected(snapshot.Bone.Name);
         }
 
         void ValidatePuppetRootOwnership()

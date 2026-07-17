@@ -10,13 +10,16 @@ namespace Hairibar.Ragdoll.Animation
         {
             internal readonly RagdollMuscleController.HierarchySnapshot Muscles;
             internal readonly RagdollSimulationModeController.HierarchySnapshot Mode;
+            internal readonly MuscleConnectionHierarchySnapshot Connections;
 
             internal RagdollHierarchySubsystemSnapshot(
                 RagdollMuscleController.HierarchySnapshot muscles,
-                RagdollSimulationModeController.HierarchySnapshot mode)
+                RagdollSimulationModeController.HierarchySnapshot mode,
+                MuscleConnectionHierarchySnapshot connections)
             {
                 Muscles = muscles;
                 Mode = mode;
+                Connections = connections;
             }
         }
 
@@ -40,7 +43,8 @@ namespace Hairibar.Ragdoll.Animation
 
             return new RagdollHierarchySubsystemSnapshot(
                 muscles.CaptureHierarchySnapshot(pairs),
-                mode.CaptureHierarchySnapshot());
+                mode.CaptureHierarchySnapshot(),
+                CaptureMuscleConnectionHierarchySnapshot());
         }
 
         void RebuildRuntimeHierarchy(
@@ -56,6 +60,7 @@ namespace Hairibar.Ragdoll.Animation
                 throw new ArgumentNullException(nameof(subsystemSnapshot));
             }
 
+            ShutdownMuscleConnections();
             ShutdownInternalCollisions();
             ShutdownJointRuntime();
 
@@ -69,6 +74,7 @@ namespace Hairibar.Ragdoll.Animation
 
             mapper = new RagdollToTargetMapper(Bindings, resolvedBindings);
             CreateAnimatedPairs(mapper.BonePairs);
+            RestoreMuscleConnectionRegistry(subsystemSnapshot.Connections);
             RestoreRetainedAnimatedPairState(stateSourcePairs);
             InitializeAddedAnimatedPairs(stateSourcePairs);
             InheritAddedPowerSettings(stateSourcePairs);
@@ -93,7 +99,9 @@ namespace Hairibar.Ragdoll.Animation
                 RagdollLifecyclePhysicsPolicy.Create(Bindings);
             InitializeJointRuntime();
             InitializeInternalCollisions();
+            FinalizeMuscleConnectionRebuild();
             RefreshJointRuntimeConfiguration();
+            ApplyDisconnectedMasksToPhysicalOwners();
             ReapplyInternalCollisionPolicy();
         }
 
