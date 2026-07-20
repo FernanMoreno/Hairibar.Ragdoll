@@ -11,7 +11,7 @@ namespace Hairibar.Ragdoll.Animation
     /// </summary>
     [AddComponentMenu("Ragdoll/Behaviours/Ragdoll Puppet Behaviour")]
     [DisallowMultipleComponent]
-    public sealed class RagdollPuppetBehaviour : RagdollBehaviourBase
+    public sealed partial class RagdollPuppetBehaviour : RagdollBehaviourBase
     {
         [Header("Losing Balance")]
         [SerializeField] bool loseBalanceOnTargetDrift = true;
@@ -689,6 +689,7 @@ namespace Hairibar.Ragdoll.Animation
                 lifecycleSuspended
                     ? RagdollPuppetState.Unpinned
                     : RagdollPuppetState.Puppet);
+            ApplyPropDropPolicyForCurrentState();
             groundProbe.Reset();
             lastKnockOutBone = RagdollBoneHandle.Invalid;
             getUpOrientation = RagdollGetUpOrientation.Unknown;
@@ -727,6 +728,7 @@ namespace Hairibar.Ragdoll.Animation
                 lifecycleSuspended
                     ? RagdollPuppetState.Unpinned
                     : RagdollPuppetState.Puppet);
+            ApplyPropDropPolicyForCurrentState();
             groundProbe.Reset();
             lastKnockOutBone = RagdollBoneHandle.Invalid;
             getUpOrientation = RagdollGetUpOrientation.Unknown;
@@ -814,6 +816,7 @@ namespace Hairibar.Ragdoll.Animation
             if (!IsActive) return;
 
             stateMachine.Reset(RagdollPuppetState.Unpinned);
+            ApplyPropDropPolicyForCurrentState();
             stateMachine.SetElapsedTime(float.PositiveInfinity);
             groundProbe.Reset();
             targetAlignmentPending = false;
@@ -1798,6 +1801,7 @@ namespace Hairibar.Ragdoll.Animation
             RagdollPuppetState current,
             RagdollPuppetTransitionReason reason)
         {
+            ApplyPropDropPolicy(previous, current);
             StateChanged?.Invoke(previous, current, reason);
         }
 

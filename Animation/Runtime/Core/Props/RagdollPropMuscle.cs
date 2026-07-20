@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace Hairibar.Ragdoll.Animation
@@ -26,7 +27,7 @@ namespace Hairibar.Ragdoll.Animation
     /// Assigning <see cref="CurrentProp"/> is asynchronous. The latest request wins and
     /// switches always complete the old drop before starting the new pickup.
     /// </summary>
-    [DefaultExecutionOrder(-900)]
+    [DefaultExecutionOrder(2000)]
     [AddComponentMenu("Ragdoll/Props/Ragdoll Prop Muscle")]
     [DisallowMultipleComponent]
     public sealed class RagdollPropMuscle : MonoBehaviour
@@ -53,10 +54,14 @@ namespace Hairibar.Ragdoll.Animation
         bool releaseStateCaptured;
         bool currentPropReported;
         string lastError;
+        string collisionPolicyError;
         bool slotRegistered;
         bool applicationQuitting;
 
         IRagdollPropMuscleRuntime runtime;
+
+        static readonly List<RagdollPropMuscle> RegisteredMuscles =
+            new List<RagdollPropMuscle>();
 
         public RagdollAnimator Animator => animator;
         public ConfigurableJoint Joint => propJoint;
@@ -64,6 +69,7 @@ namespace Hairibar.Ragdoll.Animation
         public RagdollBoneHandle Handle => handle;
         public RagdollPropMuscleState State => state;
         public string LastError => lastError;
+        public string CollisionPolicyError => collisionPolicyError;
         public bool IsInitialized => slotRegistered
             && state != RagdollPropMuscleState.Uninitialized
             && state != RagdollPropMuscleState.Faulted;
@@ -102,6 +108,14 @@ namespace Hairibar.Ragdoll.Animation
             requestedProp = initialProp;
         }
 
+        void OnEnable()
+        {
+            if (!RegisteredMuscles.Contains(this))
+            {
+                RegisteredMuscles.Add(this);
+            }
+        }
+
         void OnApplicationQuit()
         {
             applicationQuitting = true;
@@ -119,15 +133,19 @@ namespace Hairibar.Ragdoll.Animation
 
         void OnDisable()
         {
+            RegisteredMuscles.Remove(this);
             if (applicationQuitting) return;
             requestedProp = null;
+            collisionPolicyError = null;
             StabilizeInterruptedTransition(false);
         }
 
         void OnDestroy()
         {
+            RegisteredMuscles.Remove(this);
             if (applicationQuitting) return;
             requestedProp = null;
+            collisionPolicyError = null;
 
             RagdollProp prop = transitionProp ? transitionProp : currentProp;
             if (prop && prop.CurrentMuscle == this)
@@ -250,6 +268,7 @@ namespace Hairibar.Ragdoll.Animation
             }
 
             lastError = null;
+            collisionPolicyError = null;
             if (currentProp && currentProp.IsPickupCommitted)
             {
                 releaseState = currentProp.CaptureReleaseState(
@@ -265,6 +284,21 @@ namespace Hairibar.Ragdoll.Animation
             try
             {
                 TickStateMachine();
+                RagdollProp held = currentProp ? currentProp : transitionProp;
+                if (held && held.IsPickupCommitted)
+                {
+                    string collisionError;
+                    collisionPolicyError = held.TryReapplyHeldCollisionIgnores(
+                        animator,
+                        handle,
+                        out collisionError)
+                            ? null
+                            : collisionError;
+                }
+                else
+                {
+                    collisionPolicyError = null;
+                }
             }
             catch (Exception exception)
             {
@@ -322,6 +356,7 @@ namespace Hairibar.Ragdoll.Animation
         void TryRegisterSlot()
         {
             lastError = null;
+            collisionPolicyError = null;
             if (!TryValidateConfiguration(out lastError)) return;
 
             if (runtime == null)
@@ -503,7 +538,17 @@ namespace Hairibar.Ragdoll.Animation
                 runtime.GetConnectionState(handle);
             if (connection != RagdollMuscleConnectionState.Connected) return;
 
-            transitionProp.CommitPickup(this);
+            string error;
+            if (!transitionProp.TryCommitPickup(
+                this,
+                propJoint.GetComponent<Rigidbody>(),
+                animator,
+                handle,
+                out error))
+            {
+                Fail(error);
+                return;
+            }
             currentProp = transitionProp;
             transitionProp = null;
             lastError = null;
@@ -787,6 +832,34 @@ namespace Hairibar.Ragdoll.Animation
             runtime = value;
         }
 
+        internal static int GetRegistered(
+            RagdollAnimator ownerAnimator,
+            List<RagdollPropMuscle> results,
+            HashSet<RagdollPropMuscle> unique = null)
+        {
+            if (results == null) throw new ArgumentNullException(nameof(results));
+            int added = 0;
+            for (int index = RegisteredMuscles.Count - 1; index >= 0; index--)
+            {
+                RagdollPropMuscle muscle = RegisteredMuscles[index];
+                if (!muscle)
+                {
+                    RegisteredMuscles.RemoveAt(index);
+                    continue;
+                }
+                if (!muscle.animator)
+                {
+                    muscle.animator =
+                        muscle.GetComponentInParent<RagdollAnimator>();
+                }
+                if (muscle.animator != ownerAnimator) continue;
+                if (unique != null && !unique.Add(muscle)) continue;
+                results.Add(muscle);
+                added++;
+            }
+            return added;
+        }
+
         internal void ConfigureForTesting(
             ConfigurableJoint joint,
             Transform target,
@@ -797,6 +870,11 @@ namespace Hairibar.Ragdoll.Animation
             targetParent = target ? target.parent : null;
             propBone = bone;
             autoInitialize = true;
+        }
+
+        internal void SetAnimatorForTesting(RagdollAnimator value)
+        {
+            animator = value;
         }
 
         internal void TickForTesting()

@@ -23,10 +23,40 @@ namespace Hairibar.Ragdoll.Animation
         [Tooltip("Standalone Rigidbody on this GameObject. If omitted it is resolved automatically.")]
         Rigidbody standaloneRigidbody;
 
+        [Header("Held Overrides")]
+        [SerializeField, Min(0.0001f)]
+        [Tooltip("Mass assigned to the permanent PropMuscle Rigidbody while this prop is held. The slot's previous mass is restored exactly on drop or rollback.")]
+        float pickedUpMass = 1f;
+
+        [SerializeField]
+        [Tooltip("When enabled, the physical hierarchy follows the PropMuscle layer and the visual Mesh Root follows the Target slot layer while held. Original layers are restored on drop.")]
+        bool forceLayers = true;
+
+        [SerializeField]
+        [Tooltip("Shared PhysicMaterial assigned to non-trigger physical colliders while held. Null preserves the per-pickup baseline.")]
+        PhysicMaterial pickedUpMaterial;
+
+        [SerializeField]
+        [Tooltip("Shared PhysicMaterial assigned after a committed drop. Null restores the per-pickup baseline exactly.")]
+        PhysicMaterial droppedMaterial;
+
+        [SerializeField]
+        RagdollPropInternalCollisionSettings internalCollisionIgnores =
+            new RagdollPropInternalCollisionSettings();
+
         RagdollPropMuscle owner;
         Rigidbody bodyPendingDestruction;
         PropHierarchySnapshot hierarchySnapshot;
         RagdollPropRigidbodySnapshot rigidbodySnapshot;
+        PropSurfaceSnapshot surfaceSnapshot;
+        bool surfaceSnapshotCaptured;
+        bool heldForceLayers;
+        PhysicMaterial heldPickedUpMaterial;
+        Rigidbody heldSlotBody;
+        float heldSlotBaselineMass;
+        bool heldSlotMassCaptured;
+        RagdollPropInternalCollisionSession collisionSession;
+        int collisionSessionGeneration = -1;
         bool pickupPrepared;
         bool pickupCommitted;
 
@@ -39,6 +69,33 @@ namespace Hairibar.Ragdoll.Animation
         bool emergencySlotCleanupPending;
 
         public Transform MeshRoot => meshRoot;
+        public float PickedUpMass
+        {
+            get => pickedUpMass;
+            set => pickedUpMass = SanitizeMass(value);
+        }
+        public bool ForceLayers
+        {
+            get => forceLayers;
+            set => forceLayers = value;
+        }
+        public PhysicMaterial PickedUpMaterial
+        {
+            get => pickedUpMaterial;
+            set => pickedUpMaterial = value;
+        }
+        public PhysicMaterial DroppedMaterial
+        {
+            get => droppedMaterial;
+            set => droppedMaterial = value;
+        }
+        public RagdollPropInternalCollisionSettings InternalCollisionIgnores =>
+            internalCollisionIgnores;
+        public int ActiveInternalCollisionIgnorePairCount =>
+            collisionSession != null ? collisionSession.PairCount : 0;
+        public bool IsCollisionRestorePending => collisionSession != null
+            && collisionSession.ReleaseRequested
+            && !collisionSession.IsReleased;
         public Rigidbody StandaloneRigidbody => standaloneRigidbody
             ? standaloneRigidbody
             : GetComponent<Rigidbody>();
@@ -64,6 +121,13 @@ namespace Hairibar.Ragdoll.Animation
 
         void OnValidate()
         {
+            pickedUpMass = SanitizeMass(pickedUpMass);
+            if (internalCollisionIgnores == null)
+            {
+                internalCollisionIgnores =
+                    new RagdollPropInternalCollisionSettings();
+            }
+            internalCollisionIgnores.Normalize();
             if (!pickupPrepared && !standaloneRigidbody)
             {
                 standaloneRigidbody = GetComponent<Rigidbody>();
@@ -77,6 +141,7 @@ namespace Hairibar.Ragdoll.Animation
 
         void ProcessEmergencyOperations()
         {
+            AdvanceCollisionSessionRestore();
             if (emergencyRestorePending)
             {
                 bool pending;
@@ -170,6 +235,22 @@ namespace Hairibar.Ragdoll.Animation
                 error = "Standalone prop Joint hierarchies are not supported by Props I.";
                 return false;
             }
+            if (!IsFinite(pickedUpMass) || pickedUpMass <= 0f)
+            {
+                error = "Picked Up Mass must be finite and greater than zero.";
+                return false;
+            }
+            if (internalCollisionIgnores == null)
+            {
+                error = "Internal Collision Ignores settings cannot be null.";
+                return false;
+            }
+            internalCollisionIgnores.Normalize();
+            if (IsCollisionRestorePending)
+            {
+                error = "The prop is still restoring internal-collision baselines from its previous owner.";
+                return false;
+            }
             return true;
         }
 
@@ -225,6 +306,10 @@ namespace Hairibar.Ragdoll.Animation
             Rigidbody body = StandaloneRigidbody;
             hierarchySnapshot = PropHierarchySnapshot.Capture(transform, meshRoot);
             rigidbodySnapshot = RagdollPropRigidbodySnapshot.Capture(body);
+            surfaceSnapshot = PropSurfaceSnapshot.Capture(transform);
+            surfaceSnapshotCaptured = true;
+            heldForceLayers = forceLayers;
+            heldPickedUpMaterial = pickedUpMaterial;
             owner = muscle;
             pickupPrepared = true;
             pickupCommitted = false;
@@ -236,6 +321,7 @@ namespace Hairibar.Ragdoll.Animation
                 if (!gameObject.activeSelf) gameObject.SetActive(true);
 
                 MoveToHeldHierarchy(physicalSlot, targetSlot);
+                ApplyHeldSurfaceOverrides(physicalSlot, targetSlot);
 
                 body.detectCollisions = false;
                 body.isKinematic = true;
@@ -289,14 +375,100 @@ namespace Hairibar.Ragdoll.Animation
                 sleeping);
         }
 
-        internal void CommitPickup(RagdollPropMuscle muscle)
+        internal bool TryCommitPickup(
+            RagdollPropMuscle muscle,
+            Rigidbody slotBody,
+            RagdollAnimator animator,
+            RagdollBoneHandle slotHandle,
+            out string error)
         {
+            error = null;
             if (!pickupPrepared || owner != muscle)
             {
-                throw new InvalidOperationException(
-                    "The prop pickup was committed by a slot that does not own it.");
+                error = "The prop pickup was committed by a slot that does not own it.";
+                return false;
             }
-            pickupCommitted = true;
+            if (!slotBody)
+            {
+                error = "The PropMuscle requires a live Rigidbody before committing pickup.";
+                return false;
+            }
+
+            RagdollPropInternalCollisionSession createdSession;
+            if (!RagdollPropInternalCollisionSession.TryCreate(
+                this,
+                animator,
+                slotHandle,
+                internalCollisionIgnores,
+                out createdSession,
+                out error))
+            {
+                return false;
+            }
+
+            try
+            {
+                collisionSession = createdSession;
+                collisionSessionGeneration = animator && animator.Bindings
+                    ? animator.Bindings.RegistryGeneration
+                    : -1;
+                heldSlotBody = slotBody;
+                heldSlotBaselineMass = slotBody.mass;
+                heldSlotMassCaptured = true;
+                slotBody.mass = SanitizeMass(pickedUpMass);
+                pickupCommitted = true;
+                return true;
+            }
+            catch (Exception exception)
+            {
+                RestoreHeldSlotMass();
+                if (collisionSession != null) collisionSession.RequestRelease();
+                error = "Held prop overrides could not be committed: "
+                    + exception.Message;
+                return false;
+            }
+        }
+
+        internal bool TryReapplyHeldCollisionIgnores(
+            RagdollAnimator animator,
+            RagdollBoneHandle slotHandle,
+            out string error)
+        {
+            error = null;
+            if (!pickupCommitted || collisionSession == null) return true;
+
+            int generation = animator && animator.Bindings
+                ? animator.Bindings.RegistryGeneration
+                : -1;
+            if (generation != collisionSessionGeneration
+                && internalCollisionIgnores != null
+                && internalCollisionIgnores.HasRules)
+            {
+                collisionSession.RequestRelease();
+                if (!collisionSession.TryRestoreBaselines())
+                {
+                    error = "Waiting to restore the previous prop collision generation.";
+                    return false;
+                }
+
+                RagdollPropInternalCollisionSession rebuilt;
+                if (!RagdollPropInternalCollisionSession.TryCreate(
+                    this,
+                    animator,
+                    slotHandle,
+                    internalCollisionIgnores,
+                    out rebuilt,
+                    out error))
+                {
+                    collisionSession.ResumeForcedIgnores();
+                    return false;
+                }
+                collisionSession = rebuilt;
+                collisionSessionGeneration = generation;
+            }
+
+            collisionSession.ReapplyForcedIgnores();
+            return true;
         }
 
         internal bool TryCancelPreparedPickup(
@@ -482,6 +654,8 @@ namespace Hairibar.Ragdoll.Animation
                 return false;
             }
 
+            RestoreHeldSlotMass();
+            if (collisionSession != null) collisionSession.RequestRelease();
             RefreshPendingBodyDestruction();
             if (bodyPendingDestruction)
             {
@@ -508,6 +682,8 @@ namespace Hairibar.Ragdoll.Animation
                     release.WasSleeping);
                 standaloneRigidbody = createdBody;
                 gameObject.SetActive(hierarchySnapshot.RootActiveSelf);
+                RestoreStandaloneSurface(restoreOriginalPose);
+                AdvanceCollisionSessionRestore();
 
                 pickupPrepared = false;
                 pickupCommitted = false;
@@ -515,6 +691,9 @@ namespace Hairibar.Ragdoll.Animation
                 bodyPendingDestruction = null;
                 emergencyRestorePending = false;
                 emergencyRestoreError = null;
+                surfaceSnapshotCaptured = false;
+                heldForceLayers = false;
+                heldPickedUpMaterial = null;
                 return true;
             }
             catch (Exception exception)
@@ -540,6 +719,14 @@ namespace Hairibar.Ragdoll.Animation
                         MoveToHeldHierarchy(
                             muscle.Joint.transform,
                             muscle.TargetSlot);
+                        ApplyHeldSurfaceOverrides(
+                            muscle.Joint.transform,
+                            muscle.TargetSlot);
+                        ReapplyHeldSlotMass(muscle.Joint.GetComponent<Rigidbody>());
+                        if (collisionSession != null)
+                        {
+                            collisionSession.ResumeForcedIgnores();
+                        }
                         gameObject.SetActive(true);
                     }
                     catch (Exception rollbackException)
@@ -557,6 +744,100 @@ namespace Hairibar.Ragdoll.Animation
                 }
                 return false;
             }
+        }
+
+        internal Collider[] GetPhysicalColliders()
+        {
+            Collider[] all = GetComponentsInChildren<Collider>(true);
+            if (!meshRoot) return all;
+            System.Collections.Generic.List<Collider> physical =
+                new System.Collections.Generic.List<Collider>(all.Length);
+            for (int index = 0; index < all.Length; index++)
+            {
+                Collider collider = all[index];
+                if (!collider || collider.transform == meshRoot
+                    || collider.transform.IsChildOf(meshRoot))
+                {
+                    continue;
+                }
+                physical.Add(collider);
+            }
+            return physical.ToArray();
+        }
+
+        void ApplyHeldSurfaceOverrides(
+            Transform physicalSlot,
+            Transform targetSlot)
+        {
+            if (!surfaceSnapshotCaptured) return;
+            if (heldForceLayers)
+            {
+                surfaceSnapshot.ApplyHeldLayers(
+                    meshRoot,
+                    physicalSlot.gameObject.layer,
+                    targetSlot.gameObject.layer);
+            }
+            if (heldPickedUpMaterial)
+            {
+                surfaceSnapshot.ApplyMaterial(heldPickedUpMaterial);
+            }
+        }
+
+        void RestoreStandaloneSurface(bool restoreOriginalPose)
+        {
+            if (!surfaceSnapshotCaptured) return;
+            if (heldForceLayers) surfaceSnapshot.RestoreLayers();
+            if (restoreOriginalPose || !droppedMaterial)
+            {
+                surfaceSnapshot.RestoreMaterials();
+            }
+            else
+            {
+                surfaceSnapshot.ApplyMaterial(droppedMaterial);
+            }
+        }
+
+        void RestoreHeldSlotMass()
+        {
+            if (heldSlotMassCaptured && heldSlotBody)
+            {
+                heldSlotBody.mass = heldSlotBaselineMass;
+            }
+            heldSlotBody = null;
+            heldSlotBaselineMass = 0f;
+            heldSlotMassCaptured = false;
+        }
+
+        void ReapplyHeldSlotMass(Rigidbody slotBody)
+        {
+            if (!pickupCommitted || !slotBody) return;
+            if (!heldSlotMassCaptured)
+            {
+                heldSlotBody = slotBody;
+                heldSlotBaselineMass = slotBody.mass;
+                heldSlotMassCaptured = true;
+            }
+            slotBody.mass = SanitizeMass(pickedUpMass);
+        }
+
+        void AdvanceCollisionSessionRestore()
+        {
+            if (collisionSession == null || !collisionSession.ReleaseRequested) return;
+            if (collisionSession.TryRestoreBaselines())
+            {
+                collisionSession = null;
+                collisionSessionGeneration = -1;
+            }
+        }
+
+        static float SanitizeMass(float value)
+        {
+            return IsFinite(value) && value > 0f ? value : 1f;
+        }
+
+        static bool IsFinite(float value)
+        {
+            return !float.IsNaN(value) && !float.IsInfinity(value);
         }
 
         void MoveToHeldHierarchy(
@@ -647,6 +928,91 @@ namespace Hairibar.Ragdoll.Animation
         internal void ProcessEmergencyForTesting()
         {
             ProcessEmergencyOperations();
+        }
+
+        [Serializable]
+        struct PropSurfaceSnapshot
+        {
+            internal GameObject[] Objects;
+            internal int[] Layers;
+            internal Collider[] Colliders;
+            internal PhysicMaterial[] Materials;
+
+            internal static PropSurfaceSnapshot Capture(Transform root)
+            {
+                Transform[] transforms = root.GetComponentsInChildren<Transform>(true);
+                GameObject[] objects = new GameObject[transforms.Length];
+                int[] layers = new int[transforms.Length];
+                for (int index = 0; index < transforms.Length; index++)
+                {
+                    objects[index] = transforms[index].gameObject;
+                    layers[index] = transforms[index].gameObject.layer;
+                }
+
+                Collider[] colliders = root.GetComponentsInChildren<Collider>(true);
+                PhysicMaterial[] materials = new PhysicMaterial[colliders.Length];
+                for (int index = 0; index < colliders.Length; index++)
+                {
+                    materials[index] = colliders[index]
+                        ? colliders[index].sharedMaterial
+                        : null;
+                }
+                return new PropSurfaceSnapshot
+                {
+                    Objects = objects,
+                    Layers = layers,
+                    Colliders = colliders,
+                    Materials = materials
+                };
+            }
+
+            internal void ApplyHeldLayers(
+                Transform mesh,
+                int physicalLayer,
+                int targetLayer)
+            {
+                for (int index = 0; index < Objects.Length; index++)
+                {
+                    GameObject value = Objects[index];
+                    if (!value) continue;
+                    Transform valueTransform = value.transform;
+                    bool visual = mesh && (valueTransform == mesh
+                        || valueTransform.IsChildOf(mesh));
+                    value.layer = visual ? targetLayer : physicalLayer;
+                }
+            }
+
+            internal void RestoreLayers()
+            {
+                for (int index = 0; index < Objects.Length; index++)
+                {
+                    if (Objects[index]) Objects[index].layer = Layers[index];
+                }
+            }
+
+            internal void ApplyMaterial(PhysicMaterial material)
+            {
+                if (!material) return;
+                for (int index = 0; index < Colliders.Length; index++)
+                {
+                    Collider collider = Colliders[index];
+                    if (collider && !collider.isTrigger)
+                    {
+                        collider.sharedMaterial = material;
+                    }
+                }
+            }
+
+            internal void RestoreMaterials()
+            {
+                for (int index = 0; index < Colliders.Length; index++)
+                {
+                    if (Colliders[index])
+                    {
+                        Colliders[index].sharedMaterial = Materials[index];
+                    }
+                }
+            }
         }
 
         [Serializable]
