@@ -44,6 +44,11 @@ namespace Hairibar.Ragdoll.Animation
         RagdollPropInternalCollisionSettings internalCollisionIgnores =
             new RagdollPropInternalCollisionSettings();
 
+        [Header("Additional Pin")]
+        [SerializeField]
+        RagdollPropAdditionalPinSettings additionalPin =
+            new RagdollPropAdditionalPinSettings();
+
         RagdollPropMuscle owner;
         Rigidbody bodyPendingDestruction;
         PropHierarchySnapshot hierarchySnapshot;
@@ -52,11 +57,20 @@ namespace Hairibar.Ragdoll.Animation
         bool surfaceSnapshotCaptured;
         bool heldForceLayers;
         PhysicMaterial heldPickedUpMaterial;
+        float heldPickedUpMass;
+        RagdollPropAdditionalPinSnapshot heldAdditionalPin;
+        readonly RagdollPropAdditionalPinSolver additionalPinSolver =
+            new RagdollPropAdditionalPinSolver();
+        RagdollPropAdditionalPinStep lastAdditionalPinStep;
+        int additionalPinApplicationCount;
         Rigidbody heldSlotBody;
         float heldSlotBaselineMass;
         bool heldSlotMassCaptured;
         RagdollPropInternalCollisionSession collisionSession;
         int collisionSessionGeneration = -1;
+        IRagdollPropMuscleRuntime heldRuntime;
+        bool coreCollisionPolicyReapplyPending;
+        string coreCollisionPolicyReapplyError;
         bool pickupPrepared;
         bool pickupCommitted;
 
@@ -91,11 +105,20 @@ namespace Hairibar.Ragdoll.Animation
         }
         public RagdollPropInternalCollisionSettings InternalCollisionIgnores =>
             internalCollisionIgnores;
+        public RagdollPropAdditionalPinSettings AdditionalPin => additionalPin;
+        public RagdollPropAdditionalPinStep LastAdditionalPinStep =>
+            lastAdditionalPinStep;
+        public int AdditionalPinApplicationCount =>
+            additionalPinApplicationCount;
         public int ActiveInternalCollisionIgnorePairCount =>
             collisionSession != null ? collisionSession.PairCount : 0;
         public bool IsCollisionRestorePending => collisionSession != null
             && collisionSession.ReleaseRequested
             && !collisionSession.IsReleased;
+        public bool IsCoreCollisionPolicyReapplyPending =>
+            coreCollisionPolicyReapplyPending;
+        public string CoreCollisionPolicyReapplyError =>
+            coreCollisionPolicyReapplyError;
         public Rigidbody StandaloneRigidbody => standaloneRigidbody
             ? standaloneRigidbody
             : GetComponent<Rigidbody>();
@@ -128,6 +151,11 @@ namespace Hairibar.Ragdoll.Animation
                     new RagdollPropInternalCollisionSettings();
             }
             internalCollisionIgnores.Normalize();
+            if (additionalPin == null)
+            {
+                additionalPin = new RagdollPropAdditionalPinSettings();
+            }
+            additionalPin.Normalize();
             if (!pickupPrepared && !standaloneRigidbody)
             {
                 standaloneRigidbody = GetComponent<Rigidbody>();
@@ -142,6 +170,7 @@ namespace Hairibar.Ragdoll.Animation
         void ProcessEmergencyOperations()
         {
             AdvanceCollisionSessionRestore();
+            AdvanceCoreCollisionPolicyReapply();
             if (emergencyRestorePending)
             {
                 bool pending;
@@ -246,9 +275,20 @@ namespace Hairibar.Ragdoll.Animation
                 return false;
             }
             internalCollisionIgnores.Normalize();
+            if (additionalPin == null)
+            {
+                error = "Additional Pin settings cannot be null.";
+                return false;
+            }
+            additionalPin.Normalize();
             if (IsCollisionRestorePending)
             {
                 error = "The prop is still restoring internal-collision baselines from its previous owner.";
+                return false;
+            }
+            if (coreCollisionPolicyReapplyPending)
+            {
+                error = "The prop is still reconciling the Puppet internal-collision policy from its previous owner.";
                 return false;
             }
             return true;
@@ -310,6 +350,13 @@ namespace Hairibar.Ragdoll.Animation
             surfaceSnapshotCaptured = true;
             heldForceLayers = forceLayers;
             heldPickedUpMaterial = pickedUpMaterial;
+            heldPickedUpMass = SanitizeMass(pickedUpMass);
+            heldAdditionalPin = additionalPin != null
+                ? additionalPin.Capture()
+                : RagdollPropAdditionalPinSnapshot.Disabled;
+            additionalPinSolver.Reset();
+            lastAdditionalPinStep = RagdollPropAdditionalPinStep.Empty;
+            additionalPinApplicationCount = 0;
             owner = muscle;
             pickupPrepared = true;
             pickupCommitted = false;
@@ -415,7 +462,10 @@ namespace Hairibar.Ragdoll.Animation
                 heldSlotBody = slotBody;
                 heldSlotBaselineMass = slotBody.mass;
                 heldSlotMassCaptured = true;
-                slotBody.mass = SanitizeMass(pickedUpMass);
+                heldRuntime = muscle.RuntimeForCleanup;
+                slotBody.mass = heldPickedUpMass;
+                additionalPinSolver.Reset();
+                lastAdditionalPinStep = RagdollPropAdditionalPinStep.Empty;
                 pickupCommitted = true;
                 return true;
             }
@@ -450,6 +500,17 @@ namespace Hairibar.Ragdoll.Animation
                     error = "Waiting to restore the previous prop collision generation.";
                     return false;
                 }
+                if (heldRuntime != null)
+                {
+                    string policyError;
+                    if (!heldRuntime.TryReapplyInternalCollisionPolicy(
+                        out policyError))
+                    {
+                        collisionSession.ResumeForcedIgnores();
+                        error = policyError;
+                        return false;
+                    }
+                }
 
                 RagdollPropInternalCollisionSession rebuilt;
                 if (!RagdollPropInternalCollisionSession.TryCreate(
@@ -469,6 +530,46 @@ namespace Hairibar.Ragdoll.Animation
 
             collisionSession.ReapplyForcedIgnores();
             return true;
+        }
+
+        internal bool TryApplyAdditionalPin(
+            Transform targetSlot,
+            Rigidbody slotBody,
+            float effectivePositionAuthority,
+            float deltaTime,
+            out string error)
+        {
+            error = null;
+            if (!pickupCommitted || owner == null)
+            {
+                additionalPinSolver.Reset();
+                lastAdditionalPinStep = RagdollPropAdditionalPinStep.Empty;
+                return true;
+            }
+
+            RagdollPropAdditionalPinStep step;
+            if (!additionalPinSolver.TryApply(
+                slotBody,
+                targetSlot,
+                heldAdditionalPin,
+                effectivePositionAuthority,
+                deltaTime,
+                out step,
+                out error))
+            {
+                lastAdditionalPinStep = RagdollPropAdditionalPinStep.Empty;
+                return false;
+            }
+
+            lastAdditionalPinStep = step;
+            if (step.Applied) additionalPinApplicationCount++;
+            return true;
+        }
+
+        internal void SuspendAdditionalPin()
+        {
+            additionalPinSolver.Reset();
+            lastAdditionalPinStep = RagdollPropAdditionalPinStep.Empty;
         }
 
         internal bool TryCancelPreparedPickup(
@@ -647,6 +748,7 @@ namespace Hairibar.Ragdoll.Animation
         {
             pending = false;
             error = null;
+            SuspendAdditionalPin();
             if (!pickupPrepared) return true;
             if (muscle && owner != muscle)
             {
@@ -694,6 +796,10 @@ namespace Hairibar.Ragdoll.Animation
                 surfaceSnapshotCaptured = false;
                 heldForceLayers = false;
                 heldPickedUpMaterial = null;
+                heldPickedUpMass = 0f;
+                heldAdditionalPin = RagdollPropAdditionalPinSnapshot.Disabled;
+                additionalPinSolver.Reset();
+                lastAdditionalPinStep = RagdollPropAdditionalPinStep.Empty;
                 return true;
             }
             catch (Exception exception)
@@ -723,6 +829,8 @@ namespace Hairibar.Ragdoll.Animation
                             muscle.Joint.transform,
                             muscle.TargetSlot);
                         ReapplyHeldSlotMass(muscle.Joint.GetComponent<Rigidbody>());
+                        additionalPinSolver.Reset();
+                        lastAdditionalPinStep = RagdollPropAdditionalPinStep.Empty;
                         if (collisionSession != null)
                         {
                             collisionSession.ResumeForcedIgnores();
@@ -817,7 +925,9 @@ namespace Hairibar.Ragdoll.Animation
                 heldSlotBaselineMass = slotBody.mass;
                 heldSlotMassCaptured = true;
             }
-            slotBody.mass = SanitizeMass(pickedUpMass);
+            slotBody.mass = heldPickedUpMass > 0f
+                ? heldPickedUpMass
+                : SanitizeMass(pickedUpMass);
         }
 
         void AdvanceCollisionSessionRestore()
@@ -827,7 +937,37 @@ namespace Hairibar.Ragdoll.Animation
             {
                 collisionSession = null;
                 collisionSessionGeneration = -1;
+                coreCollisionPolicyReapplyPending = heldRuntime != null;
+                coreCollisionPolicyReapplyError = null;
+                AdvanceCoreCollisionPolicyReapply();
             }
+        }
+
+        void AdvanceCoreCollisionPolicyReapply()
+        {
+            if (!coreCollisionPolicyReapplyPending) return;
+            if (heldRuntime == null)
+            {
+                coreCollisionPolicyReapplyPending = false;
+                coreCollisionPolicyReapplyError = null;
+                return;
+            }
+
+            string error;
+            if (!heldRuntime.TryReapplyInternalCollisionPolicy(out error))
+            {
+                coreCollisionPolicyReapplyError = error;
+                return;
+            }
+
+            heldRuntime = null;
+            coreCollisionPolicyReapplyPending = false;
+            coreCollisionPolicyReapplyError = null;
+        }
+
+        internal void AdvanceCoreCollisionPolicyForTesting()
+        {
+            AdvanceCoreCollisionPolicyReapply();
         }
 
         static float SanitizeMass(float value)

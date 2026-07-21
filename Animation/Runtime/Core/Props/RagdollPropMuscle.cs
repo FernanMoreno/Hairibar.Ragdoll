@@ -55,6 +55,7 @@ namespace Hairibar.Ragdoll.Animation
         bool currentPropReported;
         string lastError;
         string collisionPolicyError;
+        string additionalPinError;
         bool slotRegistered;
         bool applicationQuitting;
 
@@ -70,6 +71,7 @@ namespace Hairibar.Ragdoll.Animation
         public RagdollPropMuscleState State => state;
         public string LastError => lastError;
         public string CollisionPolicyError => collisionPolicyError;
+        public string AdditionalPinError => additionalPinError;
         public bool IsInitialized => slotRegistered
             && state != RagdollPropMuscleState.Uninitialized
             && state != RagdollPropMuscleState.Faulted;
@@ -91,6 +93,18 @@ namespace Hairibar.Ragdoll.Animation
 
         public RagdollProp RequestedProp => requestedProp;
         internal IRagdollPropMuscleRuntime RuntimeForCleanup => runtime;
+
+        /// <summary>
+        /// Clears additional-pin Target sampling after an external teleport or any
+        /// discontinuous transform move. Call this after the completed teleport and
+        /// after RagdollBehaviourController.NotifyTeleported.
+        /// </summary>
+        public void ResetAdditionalPinSampling()
+        {
+            RagdollProp held = currentProp ? currentProp : transitionProp;
+            if (held) held.SuspendAdditionalPin();
+            additionalPinError = null;
+        }
 
         public event Action<RagdollProp> PropPickedUp;
         public event Action<RagdollProp> PropDropped;
@@ -137,6 +151,8 @@ namespace Hairibar.Ragdoll.Animation
             if (applicationQuitting) return;
             requestedProp = null;
             collisionPolicyError = null;
+            additionalPinError = null;
+            if (currentProp) currentProp.SuspendAdditionalPin();
             StabilizeInterruptedTransition(false);
         }
 
@@ -146,8 +162,10 @@ namespace Hairibar.Ragdoll.Animation
             if (applicationQuitting) return;
             requestedProp = null;
             collisionPolicyError = null;
+            additionalPinError = null;
 
             RagdollProp prop = transitionProp ? transitionProp : currentProp;
+            if (prop) prop.SuspendAdditionalPin();
             if (prop && prop.CurrentMuscle == this)
             {
                 bool restoreOriginal = !prop.IsPickupCommitted;
@@ -269,6 +287,7 @@ namespace Hairibar.Ragdoll.Animation
 
             lastError = null;
             collisionPolicyError = null;
+            additionalPinError = null;
             if (currentProp && currentProp.IsPickupCommitted)
             {
                 releaseState = currentProp.CaptureReleaseState(
@@ -284,6 +303,8 @@ namespace Hairibar.Ragdoll.Animation
             try
             {
                 TickStateMachine();
+                ApplyAdditionalPinAfterAnimationMatching();
+
                 RagdollProp held = currentProp ? currentProp : transitionProp;
                 if (held && held.IsPickupCommitted)
                 {
@@ -306,6 +327,45 @@ namespace Hairibar.Ragdoll.Animation
                     + exception.Message);
                 Debug.LogException(exception, this);
             }
+        }
+
+        void ApplyAdditionalPinAfterAnimationMatching()
+        {
+            if (state != RagdollPropMuscleState.Holding
+                || !currentProp
+                || !currentProp.IsPickupCommitted
+                || runtime == null
+                || !propJoint
+                || !targetSlot)
+            {
+                if (currentProp) currentProp.SuspendAdditionalPin();
+                additionalPinError = null;
+                return;
+            }
+
+            Rigidbody slotBody = propJoint.GetComponent<Rigidbody>();
+            float authority;
+            string contextError;
+            if (!runtime.TryGetAdditionalPinAuthority(
+                handle,
+                slotBody,
+                out authority,
+                out contextError))
+            {
+                currentProp.SuspendAdditionalPin();
+                additionalPinError = contextError;
+                return;
+            }
+
+            string solverError;
+            additionalPinError = currentProp.TryApplyAdditionalPin(
+                targetSlot,
+                slotBody,
+                authority,
+                Time.fixedDeltaTime,
+                out solverError)
+                    ? null
+                    : solverError;
         }
 
         void TickStateMachine()
@@ -357,6 +417,7 @@ namespace Hairibar.Ragdoll.Animation
         {
             lastError = null;
             collisionPolicyError = null;
+            additionalPinError = null;
             if (!TryValidateConfiguration(out lastError)) return;
 
             if (runtime == null)
@@ -763,6 +824,9 @@ namespace Hairibar.Ragdoll.Animation
 
         void Fail(string error)
         {
+            RagdollProp held = currentProp ? currentProp : transitionProp;
+            if (held) held.SuspendAdditionalPin();
+            additionalPinError = null;
             lastError = string.IsNullOrEmpty(error)
                 ? "Unknown prop transition failure."
                 : error;
@@ -880,6 +944,11 @@ namespace Hairibar.Ragdoll.Animation
         internal void TickForTesting()
         {
             TickSafely();
+        }
+
+        internal void ApplyAdditionalPinForTesting()
+        {
+            ApplyAdditionalPinAfterAnimationMatching();
         }
 
         internal void EnterFaultForTesting(string error)

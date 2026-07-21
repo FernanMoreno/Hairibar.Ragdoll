@@ -62,6 +62,14 @@ namespace Hairibar.Ragdoll.Animation
 
         public bool Matches(BoneName bone, RagdollMuscleGroup group)
         {
+            return Matches(bone, group, true);
+        }
+
+        internal bool Matches(
+            BoneName bone,
+            RagdollMuscleGroup group,
+            bool hasSemanticGroup)
+        {
             Normalize();
             if (ignoreAll) return true;
 
@@ -69,6 +77,7 @@ namespace Hairibar.Ragdoll.Animation
             {
                 if (muscles[index] == bone) return true;
             }
+            if (!hasSemanticGroup) return false;
             for (int index = 0; index < groups.Length; index++)
             {
                 if (groups[index] == group) return true;

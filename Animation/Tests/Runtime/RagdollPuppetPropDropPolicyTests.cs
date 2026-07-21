@@ -176,6 +176,39 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [Test]
+        public void LoseBalance_PublicTransitionQueuesDropBeforeReturning()
+        {
+            using (RagdollPropTestRig rig = new RagdollPropTestRig())
+            {
+                rig.PrimeEmptySlot();
+                rig.PickUp(rig.PropA);
+                RagdollPuppetBehaviour behaviour = CreateBehaviour(rig.Muscle);
+                try
+                {
+                    RagdollPropTestRig.SetField(
+                        behaviour,
+                        "stateMachine",
+                        new RagdollPuppetStateMachine());
+                    RagdollPropTestRig.SetField(
+                        behaviour,
+                        "maxRigidbodyVelocity",
+                        float.PositiveInfinity);
+
+                    Assert.That(behaviour.LoseBalance(), Is.True);
+                    Assert.That(behaviour.State,
+                        Is.EqualTo(RagdollPuppetState.Unpinned));
+                    Assert.That(rig.Muscle.RequestedProp, Is.Null);
+                    Assert.That(behaviour.LastRequestedPropDropCount,
+                        Is.EqualTo(1));
+                }
+                finally
+                {
+                    RagdollPropTestRig.DestroyObject(behaviour.gameObject);
+                }
+            }
+        }
+
+        [Test]
         public void ActivePropMuscleRegistry_DeduplicatesWithCallerSet()
         {
             using (RagdollPropTestRig rig = new RagdollPropTestRig())

@@ -9,6 +9,7 @@ namespace Hairibar.Ragdoll.Animation
         internal readonly RagdollBoneHandle Handle;
         internal readonly BoneName Bone;
         internal readonly RagdollMuscleGroup Group;
+        internal readonly bool HasSemanticGroup;
         internal readonly Collider[] Colliders;
 
         internal RagdollPropCollisionMuscle(
@@ -16,10 +17,21 @@ namespace Hairibar.Ragdoll.Animation
             BoneName bone,
             RagdollMuscleGroup group,
             Collider[] colliders)
+            : this(handle, bone, group, true, colliders)
+        {
+        }
+
+        internal RagdollPropCollisionMuscle(
+            RagdollBoneHandle handle,
+            BoneName bone,
+            RagdollMuscleGroup group,
+            bool hasSemanticGroup,
+            Collider[] colliders)
         {
             Handle = handle;
             Bone = bone;
             Group = group;
+            HasSemanticGroup = hasSemanticGroup;
             Colliders = colliders ?? new Collider[0];
         }
     }
@@ -141,7 +153,10 @@ namespace Hairibar.Ragdoll.Animation
             {
                 RagdollPropCollisionMuscle target = targets[muscleIndex];
                 if ((slotHandle.HasValue && target.Handle == slotHandle.Value)
-                    || !settings.Matches(target.Bone, target.Group))
+                    || !settings.Matches(
+                        target.Bone,
+                        target.Group,
+                        target.HasSemanticGroup))
                 {
                     continue;
                 }
@@ -279,12 +294,8 @@ namespace Hairibar.Ragdoll.Animation
                 RagdollBoneHandle handle = bindings.GetHandleAt(index);
                 RagdollBone bone = bindings.GetBoneAt(index);
                 RagdollMuscleGroup group;
-                if (!muscles.TryGetMuscleGroup(handle, out group))
-                {
-                    group = bone.IsRoot
-                        ? RagdollMuscleGroup.Hips
-                        : RagdollMuscleGroup.Spine;
-                }
+                bool hasSemanticGroup =
+                    muscles.TryGetMuscleGroup(handle, out group);
 
                 List<Collider> colliders = new List<Collider>();
                 foreach (Collider collider in bone.Colliders)
@@ -295,6 +306,7 @@ namespace Hairibar.Ragdoll.Animation
                     handle,
                     bone.Name,
                     group,
+                    hasSemanticGroup,
                     colliders.ToArray()));
             }
             return result.ToArray();

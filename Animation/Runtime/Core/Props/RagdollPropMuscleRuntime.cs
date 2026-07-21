@@ -40,6 +40,14 @@ namespace Hairibar.Ragdoll.Animation
         bool TryReconnect(
             RagdollBoneHandle handle,
             out string error);
+
+        bool TryGetAdditionalPinAuthority(
+            RagdollBoneHandle handle,
+            Rigidbody slotBody,
+            out float authority,
+            out string error);
+
+        bool TryReapplyInternalCollisionPolicy(out string error);
     }
 
     internal sealed class RagdollPropMuscleRuntimeAdapter :
@@ -159,6 +167,74 @@ namespace Hairibar.Ragdoll.Animation
             out string error)
         {
             return animator.TryReconnectMuscleRecursive(handle, out error);
+        }
+
+        public bool TryGetAdditionalPinAuthority(
+            RagdollBoneHandle handle,
+            Rigidbody slotBody,
+            out float authority,
+            out string error)
+        {
+            authority = 0f;
+            error = null;
+            if (!IsReady)
+            {
+                error = "RagdollAnimator is not ready for additional prop pinning.";
+                return false;
+            }
+            if (!slotBody || !slotBody.gameObject.activeInHierarchy
+                || slotBody.isKinematic)
+            {
+                return false;
+            }
+            if (!animator.IsAlive || animator.IsKilling || animator.IsFrozen)
+            {
+                return false;
+            }
+
+            RagdollSimulationModeController mode =
+                animator.GetComponent<RagdollSimulationModeController>();
+            if (mode && mode.IsInitialized
+                && (mode.CurrentMode != RagdollSimulationMode.Active
+                    || mode.TargetMode != RagdollSimulationMode.Active))
+            {
+                return false;
+            }
+            if (animator.GetMuscleConnectionState(handle)
+                != RagdollMuscleConnectionState.Connected)
+            {
+                return false;
+            }
+
+            RagdollMuscleController muscles =
+                animator.GetComponent<RagdollMuscleController>();
+            if (!muscles || !muscles.IsInitialized)
+            {
+                error = "Additional prop pinning requires an initialized RagdollMuscleController.";
+                return false;
+            }
+
+            authority = Mathf.Clamp01(
+                muscles.GetEffectivePositionAuthority(handle));
+            return true;
+        }
+
+        public bool TryReapplyInternalCollisionPolicy(out string error)
+        {
+            error = null;
+            if (!animator) return true;
+            try
+            {
+                animator.ReapplyInternalCollisionPolicy();
+                return true;
+            }
+            catch (Exception exception)
+            {
+                error = "The core internal-collision policy could not be reapplied: "
+                    + exception.Message;
+                Debug.LogException(exception, animator);
+                return false;
+            }
         }
     }
 }

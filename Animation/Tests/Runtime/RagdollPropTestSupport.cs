@@ -11,6 +11,11 @@ namespace Hairibar.Ragdoll.Animation.Tests
         public bool IsSimulationDisabled { get; set; }
         public bool HasRegisteredSlot { get; set; }
         public bool GroupValid { get; set; } = true;
+        public bool AdditionalPinAvailable { get; set; } = true;
+        public float EffectivePositionAuthority { get; set; } = 1f;
+        public string AdditionalPinContextError { get; set; }
+        public int InternalCollisionPolicyReapplyCount { get; private set; }
+        public bool InternalCollisionPolicyReapplySucceeds { get; set; } = true;
         public RagdollMuscleConnectionState ConnectionState { get; set; } =
             RagdollMuscleConnectionState.Connected;
         public bool PendingDisconnect { get; private set; }
@@ -95,6 +100,28 @@ namespace Hairibar.Ragdoll.Animation.Tests
             PendingDisconnect = false;
             PendingDeactivate = false;
             return true;
+        }
+
+        public bool TryGetAdditionalPinAuthority(
+            RagdollBoneHandle handle,
+            Rigidbody slotBody,
+            out float authority,
+            out string error)
+        {
+            authority = AdditionalPinAvailable
+                ? Mathf.Clamp01(EffectivePositionAuthority)
+                : 0f;
+            error = AdditionalPinContextError;
+            return AdditionalPinAvailable && string.IsNullOrEmpty(error);
+        }
+
+        public bool TryReapplyInternalCollisionPolicy(out string error)
+        {
+            InternalCollisionPolicyReapplyCount++;
+            error = InternalCollisionPolicyReapplySucceeds
+                ? null
+                : "Synthetic core collision-policy failure.";
+            return InternalCollisionPolicyReapplySucceeds;
         }
 
         public void CommitPending()
