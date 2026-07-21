@@ -80,6 +80,27 @@ namespace Hairibar.Ragdoll.Animation
             out RagdollPropAdditionalPinStep step,
             out string error)
         {
+            return TryApply(
+                body,
+                targetSlot,
+                settings,
+                effectivePositionAuthority,
+                1f,
+                deltaTime,
+                out step,
+                out error);
+        }
+
+        internal bool TryApply(
+            Rigidbody body,
+            Transform targetSlot,
+            RagdollPropAdditionalPinSnapshot settings,
+            float effectivePositionAuthority,
+            float weightMultiplier,
+            float deltaTime,
+            out RagdollPropAdditionalPinStep step,
+            out string error)
+        {
             step = RagdollPropAdditionalPinStep.Empty;
             error = null;
             if (!body || !targetSlot)
@@ -107,8 +128,14 @@ namespace Hairibar.Ragdoll.Animation
 
             Vector3 positionError = targetPoint - physicalPoint;
             Vector3 pointVelocity = body.GetPointVelocity(physicalPoint);
+            float safeWeightMultiplier =
+                RagdollPropAdditionalPinSettings.IsFinite(weightMultiplier)
+                    ? Mathf.Max(0f, weightMultiplier)
+                    : 0f;
             float appliedWeight = settings.Enabled
-                ? settings.Weight * Mathf.Clamp01(effectivePositionAuthority)
+                ? settings.Weight
+                    * Mathf.Clamp01(effectivePositionAuthority)
+                    * safeWeightMultiplier
                 : 0f;
             Vector3 desiredVelocityChange = (
                 targetVelocity

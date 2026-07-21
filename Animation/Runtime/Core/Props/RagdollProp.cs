@@ -49,6 +49,11 @@ namespace Hairibar.Ragdoll.Animation
         RagdollPropAdditionalPinSettings additionalPin =
             new RagdollPropAdditionalPinSettings();
 
+        [Header("Melee")]
+        [SerializeField]
+        [Tooltip("Optional melee owner that creates the action collider and action boosts while held.")]
+        RagdollPropMelee melee;
+
         RagdollPropMuscle owner;
         Rigidbody bodyPendingDestruction;
         PropHierarchySnapshot hierarchySnapshot;
@@ -65,7 +70,9 @@ namespace Hairibar.Ragdoll.Animation
         int additionalPinApplicationCount;
         Rigidbody heldSlotBody;
         float heldSlotBaselineMass;
+        Vector3 heldSlotBaselineCenterOfMass;
         bool heldSlotMassCaptured;
+        bool heldSlotCenterOfMassOverridden;
         RagdollPropInternalCollisionSession collisionSession;
         int collisionSessionGeneration = -1;
         IRagdollPropMuscleRuntime heldRuntime;
@@ -106,6 +113,16 @@ namespace Hairibar.Ragdoll.Animation
         public RagdollPropInternalCollisionSettings InternalCollisionIgnores =>
             internalCollisionIgnores;
         public RagdollPropAdditionalPinSettings AdditionalPin => additionalPin;
+        public RagdollPropMelee Melee
+        {
+            get
+            {
+                if (!melee) melee = GetComponent<RagdollPropMelee>();
+                return melee;
+            }
+        }
+        public bool IsHeldCenterOfMassOverridden =>
+            heldSlotCenterOfMassOverridden;
         public RagdollPropAdditionalPinStep LastAdditionalPinStep =>
             lastAdditionalPinStep;
         public int AdditionalPinApplicationCount =>
@@ -124,6 +141,9 @@ namespace Hairibar.Ragdoll.Animation
             : GetComponent<Rigidbody>();
         public RagdollPropMuscle CurrentMuscle => owner;
         public bool IsHeld => pickupPrepared && pickupCommitted && owner;
+        internal bool CanBeginMeleeAction => IsHeld
+            && owner.State == RagdollPropMuscleState.Holding
+            && owner.CurrentProp == this;
         public bool IsReserved => pickupPrepared;
         public bool IsPickupPrepared => pickupPrepared;
         public bool IsPickupCommitted => pickupCommitted;
@@ -156,6 +176,7 @@ namespace Hairibar.Ragdoll.Animation
                 additionalPin = new RagdollPropAdditionalPinSettings();
             }
             additionalPin.Normalize();
+            if (!melee) melee = GetComponent<RagdollPropMelee>();
             if (!pickupPrepared && !standaloneRigidbody)
             {
                 standaloneRigidbody = GetComponent<Rigidbody>();
@@ -281,6 +302,16 @@ namespace Hairibar.Ragdoll.Animation
                 return false;
             }
             additionalPin.Normalize();
+            RagdollPropMelee meleeOwner = Melee;
+            if (meleeOwner)
+            {
+                string meleeError;
+                if (!meleeOwner.TryValidateConfiguration(out meleeError))
+                {
+                    error = "Invalid PropMelee configuration: " + meleeError;
+                    return false;
+                }
+            }
             if (IsCollisionRestorePending)
             {
                 error = "The prop is still restoring internal-collision baselines from its previous owner.";
@@ -344,29 +375,45 @@ namespace Hairibar.Ragdoll.Animation
             }
 
             Rigidbody body = StandaloneRigidbody;
+            Rigidbody slotBody = physicalSlot.GetComponent<Rigidbody>();
+            if (!slotBody)
+            {
+                error = "The physical PropMuscle slot requires a Rigidbody.";
+                return false;
+            }
+
             hierarchySnapshot = PropHierarchySnapshot.Capture(transform, meshRoot);
+            // Capture the standalone body before the optional melee Collider is created.
+            // This prevents a disabled runtime action surface from changing the exact
+            // standalone inertia/center-of-mass snapshot restored on drop.
             rigidbodySnapshot = RagdollPropRigidbodySnapshot.Capture(body);
-            surfaceSnapshot = PropSurfaceSnapshot.Capture(transform);
-            surfaceSnapshotCaptured = true;
-            heldForceLayers = forceLayers;
-            heldPickedUpMaterial = pickedUpMaterial;
-            heldPickedUpMass = SanitizeMass(pickedUpMass);
-            heldAdditionalPin = additionalPin != null
-                ? additionalPin.Capture()
-                : RagdollPropAdditionalPinSnapshot.Disabled;
-            additionalPinSolver.Reset();
-            lastAdditionalPinStep = RagdollPropAdditionalPinStep.Empty;
-            additionalPinApplicationCount = 0;
-            owner = muscle;
-            pickupPrepared = true;
-            pickupCommitted = false;
-            emergencyRestorePending = false;
-            emergencyRestoreError = null;
 
             try
             {
-                if (!gameObject.activeSelf) gameObject.SetActive(true);
+                RagdollPropMelee meleeOwner = Melee;
+                if (meleeOwner) meleeOwner.BeginHeldSession();
 
+                // The melee action Collider now exists (disabled) before the surface
+                // snapshot, so layers and PhysicMaterials include it transactionally.
+                surfaceSnapshot = PropSurfaceSnapshot.Capture(transform);
+                surfaceSnapshotCaptured = true;
+                heldForceLayers = forceLayers;
+                heldPickedUpMaterial = pickedUpMaterial;
+                heldPickedUpMass = SanitizeMass(pickedUpMass);
+                heldAdditionalPin = additionalPin != null
+                    ? additionalPin.Capture()
+                    : RagdollPropAdditionalPinSnapshot.Disabled;
+                CaptureHeldSlotBaseline(slotBody);
+                additionalPinSolver.Reset();
+                lastAdditionalPinStep = RagdollPropAdditionalPinStep.Empty;
+                additionalPinApplicationCount = 0;
+                owner = muscle;
+                pickupPrepared = true;
+                pickupCommitted = false;
+                emergencyRestorePending = false;
+                emergencyRestoreError = null;
+
+                if (!gameObject.activeSelf) gameObject.SetActive(true);
                 MoveToHeldHierarchy(physicalSlot, targetSlot);
                 ApplyHeldSurfaceOverrides(physicalSlot, targetSlot);
 
@@ -382,6 +429,16 @@ namespace Hairibar.Ragdoll.Animation
             catch (Exception exception)
             {
                 error = "The prop pickup transaction failed: " + exception.Message;
+                if (!pickupPrepared)
+                {
+                    RestoreHeldSlotMass();
+                    RagdollPropMelee meleeOwner = Melee;
+                    if (meleeOwner) meleeOwner.EndHeldSession();
+                    surfaceSnapshotCaptured = false;
+                    owner = null;
+                    return false;
+                }
+
                 try
                 {
                     RequestEmergencyStandaloneRestore(
@@ -440,6 +497,11 @@ namespace Hairibar.Ragdoll.Animation
                 error = "The PropMuscle requires a live Rigidbody before committing pickup.";
                 return false;
             }
+            if (!heldSlotMassCaptured || heldSlotBody != slotBody)
+            {
+                error = "The PropMuscle Rigidbody changed during the pickup transaction.";
+                return false;
+            }
 
             RagdollPropInternalCollisionSession createdSession;
             if (!RagdollPropInternalCollisionSession.TryCreate(
@@ -459,21 +521,52 @@ namespace Hairibar.Ragdoll.Animation
                 collisionSessionGeneration = animator && animator.Bindings
                     ? animator.Bindings.RegistryGeneration
                     : -1;
-                heldSlotBody = slotBody;
-                heldSlotBaselineMass = slotBody.mass;
-                heldSlotMassCaptured = true;
                 heldRuntime = muscle.RuntimeForCleanup;
-                slotBody.mass = heldPickedUpMass;
+                pickupCommitted = true;
+
+                string overrideError;
+                if (!TryRefreshHeldPhysicalOverrides(
+                    slotBody,
+                    out overrideError))
+                {
+                    throw new InvalidOperationException(overrideError);
+                }
+
                 additionalPinSolver.Reset();
                 lastAdditionalPinStep = RagdollPropAdditionalPinStep.Empty;
-                pickupCommitted = true;
                 return true;
             }
             catch (Exception exception)
             {
+                pickupCommitted = false;
                 RestoreHeldSlotMass();
                 if (collisionSession != null) collisionSession.RequestRelease();
                 error = "Held prop overrides could not be committed: "
+                    + exception.Message;
+                return false;
+            }
+        }
+
+        internal bool TryArmMeleeActionCollisionPolicy(out string error)
+        {
+            error = null;
+            if (!pickupCommitted || !owner)
+            {
+                error = "The melee action collider cannot be armed before pickup commit.";
+                return false;
+            }
+
+            try
+            {
+                if (collisionSession != null)
+                {
+                    collisionSession.ReapplyForcedIgnores();
+                }
+                return true;
+            }
+            catch (Exception exception)
+            {
+                error = "The melee action collision policy could not be armed: "
                     + exception.Message;
                 return false;
             }
@@ -553,6 +646,9 @@ namespace Hairibar.Ragdoll.Animation
                 targetSlot,
                 heldAdditionalPin,
                 effectivePositionAuthority,
+                melee && melee.IsHeldSession
+                    ? melee.EffectivePinWeightMultiplier
+                    : 1f,
                 deltaTime,
                 out step,
                 out error))
@@ -570,6 +666,19 @@ namespace Hairibar.Ragdoll.Animation
         {
             additionalPinSolver.Reset();
             lastAdditionalPinStep = RagdollPropAdditionalPinStep.Empty;
+        }
+
+        internal bool TrySuspendMeleeAction(
+            Rigidbody slotBody,
+            out string error)
+        {
+            error = null;
+            RagdollPropMelee meleeOwner = Melee;
+            if (meleeOwner && meleeOwner.IsHeldSession)
+            {
+                meleeOwner.EndAction();
+            }
+            return TryRefreshHeldPhysicalOverrides(slotBody, out error);
         }
 
         internal bool TryCancelPreparedPickup(
@@ -632,6 +741,8 @@ namespace Hairibar.Ragdoll.Animation
             bool restoreOriginalPose)
         {
             if (!pickupPrepared || owner != muscle) return;
+            RagdollPropMelee meleeOwner = Melee;
+            if (meleeOwner && meleeOwner.IsHeldSession) meleeOwner.EndAction();
             emergencyRestorePending = true;
             emergencyRestoreOriginalPose = restoreOriginalPose;
             emergencyCleanupRuntime = muscle.RuntimeForCleanup;
@@ -749,6 +860,11 @@ namespace Hairibar.Ragdoll.Animation
             pending = false;
             error = null;
             SuspendAdditionalPin();
+            RagdollPropMelee meleeOwner = Melee;
+            if (meleeOwner && meleeOwner.IsHeldSession)
+            {
+                meleeOwner.EndAction();
+            }
             if (!pickupPrepared) return true;
             if (muscle && owner != muscle)
             {
@@ -756,7 +872,7 @@ namespace Hairibar.Ragdoll.Animation
                 return false;
             }
 
-            RestoreHeldSlotMass();
+            ApplyHeldSlotBaseline();
             if (collisionSession != null) collisionSession.RequestRelease();
             RefreshPendingBodyDestruction();
             if (bodyPendingDestruction)
@@ -783,9 +899,11 @@ namespace Hairibar.Ragdoll.Animation
                     release.AngularVelocity,
                     release.WasSleeping);
                 standaloneRigidbody = createdBody;
-                gameObject.SetActive(hierarchySnapshot.RootActiveSelf);
                 RestoreStandaloneSurface(restoreOriginalPose);
                 AdvanceCollisionSessionRestore();
+                ClearHeldSlotBaseline();
+                meleeOwner = Melee;
+                if (meleeOwner) meleeOwner.EndHeldSession();
 
                 pickupPrepared = false;
                 pickupCommitted = false;
@@ -800,6 +918,10 @@ namespace Hairibar.Ragdoll.Animation
                 heldAdditionalPin = RagdollPropAdditionalPinSnapshot.Disabled;
                 additionalPinSolver.Reset();
                 lastAdditionalPinStep = RagdollPropAdditionalPinStep.Empty;
+                // Lifecycle callbacks now observe a fully committed standalone state.
+                // This prevents an OnDisable callback from reapplying held mass/COM while
+                // the transaction is still being finalized.
+                gameObject.SetActive(hierarchySnapshot.RootActiveSelf);
                 return true;
             }
             catch (Exception exception)
@@ -828,7 +950,13 @@ namespace Hairibar.Ragdoll.Animation
                         ApplyHeldSurfaceOverrides(
                             muscle.Joint.transform,
                             muscle.TargetSlot);
-                        ReapplyHeldSlotMass(muscle.Joint.GetComponent<Rigidbody>());
+                        string overrideError;
+                        if (!TryRefreshHeldPhysicalOverrides(
+                            muscle.Joint.GetComponent<Rigidbody>(),
+                            out overrideError))
+                        {
+                            throw new InvalidOperationException(overrideError);
+                        }
                         additionalPinSolver.Reset();
                         lastAdditionalPinStep = RagdollPropAdditionalPinStep.Empty;
                         if (collisionSession != null)
@@ -858,6 +986,7 @@ namespace Hairibar.Ragdoll.Animation
         {
             Collider[] all = GetComponentsInChildren<Collider>(true);
             if (!meshRoot) return all;
+            RagdollPropMelee meleeOwner = Melee;
             System.Collections.Generic.List<Collider> physical =
                 new System.Collections.Generic.List<Collider>(all.Length);
             for (int index = 0; index < all.Length; index++)
@@ -865,6 +994,12 @@ namespace Hairibar.Ragdoll.Animation
                 Collider collider = all[index];
                 if (!collider || collider.transform == meshRoot
                     || collider.transform.IsChildOf(meshRoot))
+                {
+                    continue;
+                }
+                if (meleeOwner && meleeOwner.IsOwnedCollider(collider)
+                    && (!meleeOwner.IsHeldSession
+                        || !meleeOwner.IsSelectedCollider(collider)))
                 {
                     continue;
                 }
@@ -905,29 +1040,105 @@ namespace Hairibar.Ragdoll.Animation
             }
         }
 
-        void RestoreHeldSlotMass()
+        void CaptureHeldSlotBaseline(Rigidbody slotBody)
         {
-            if (heldSlotMassCaptured && heldSlotBody)
+            if (!slotBody)
             {
-                heldSlotBody.mass = heldSlotBaselineMass;
+                throw new ArgumentNullException(nameof(slotBody));
             }
-            heldSlotBody = null;
-            heldSlotBaselineMass = 0f;
-            heldSlotMassCaptured = false;
+            heldSlotBody = slotBody;
+            heldSlotBaselineMass = slotBody.mass;
+            heldSlotBaselineCenterOfMass = slotBody.centerOfMass;
+            heldSlotMassCaptured = true;
+            heldSlotCenterOfMassOverridden = false;
         }
 
-        void ReapplyHeldSlotMass(Rigidbody slotBody)
+        void ApplyHeldSlotBaseline()
         {
-            if (!pickupCommitted || !slotBody) return;
-            if (!heldSlotMassCaptured)
+            if (!heldSlotMassCaptured || !heldSlotBody) return;
+            heldSlotBody.mass = heldSlotBaselineMass;
+            if (heldSlotCenterOfMassOverridden)
             {
-                heldSlotBody = slotBody;
-                heldSlotBaselineMass = slotBody.mass;
-                heldSlotMassCaptured = true;
+                heldSlotBody.centerOfMass = heldSlotBaselineCenterOfMass;
             }
-            slotBody.mass = heldPickedUpMass > 0f
-                ? heldPickedUpMass
-                : SanitizeMass(pickedUpMass);
+        }
+
+        void ClearHeldSlotBaseline()
+        {
+            heldSlotBody = null;
+            heldSlotBaselineMass = 0f;
+            heldSlotBaselineCenterOfMass = Vector3.zero;
+            heldSlotMassCaptured = false;
+            heldSlotCenterOfMassOverridden = false;
+        }
+
+        void RestoreHeldSlotMass()
+        {
+            ApplyHeldSlotBaseline();
+            ClearHeldSlotBaseline();
+        }
+
+        internal bool TryRefreshHeldPhysicalOverridesFromMelee(
+            out string error)
+        {
+            return TryRefreshHeldPhysicalOverrides(heldSlotBody, out error);
+        }
+
+        internal void WakeHeldBodyForMeleeAction()
+        {
+            if (pickupCommitted && heldSlotBody && !heldSlotBody.isKinematic)
+            {
+                heldSlotBody.WakeUp();
+            }
+        }
+
+        internal bool TryRefreshHeldPhysicalOverrides(
+            Rigidbody slotBody,
+            out string error)
+        {
+            error = null;
+            if (!pickupCommitted) return true;
+            if (!slotBody)
+            {
+                error = "The held PropMuscle Rigidbody is missing.";
+                return false;
+            }
+            if (!heldSlotMassCaptured || heldSlotBody != slotBody)
+            {
+                error = "The held PropMuscle Rigidbody no longer matches the pickup baseline.";
+                return false;
+            }
+
+            try
+            {
+                RagdollPropMelee meleeOwner = Melee;
+                float massMultiplier = meleeOwner && meleeOwner.IsHeldSession
+                    ? meleeOwner.EffectiveMassMultiplier
+                    : 1f;
+                slotBody.mass = heldPickedUpMass * massMultiplier;
+
+                bool applyCenterOfMass = meleeOwner
+                    && meleeOwner.IsHeldSession
+                    && meleeOwner.HasHeldCenterOfMassOffset;
+                if (applyCenterOfMass)
+                {
+                    slotBody.centerOfMass = heldSlotBaselineCenterOfMass
+                        + meleeOwner.HeldCenterOfMassOffset;
+                    heldSlotCenterOfMassOverridden = true;
+                }
+                else if (heldSlotCenterOfMassOverridden)
+                {
+                    slotBody.centerOfMass = heldSlotBaselineCenterOfMass;
+                    heldSlotCenterOfMassOverridden = false;
+                }
+                return true;
+            }
+            catch (Exception exception)
+            {
+                error = "Held melee physical overrides failed: "
+                    + exception.Message;
+                return false;
+            }
         }
 
         void AdvanceCollisionSessionRestore()

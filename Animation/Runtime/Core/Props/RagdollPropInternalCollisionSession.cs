@@ -113,11 +113,18 @@ namespace Hairibar.Ragdoll.Animation
             {
                 RagdollPropCollisionMuscle[] candidates =
                     BuildRuntimeMuscles(animator.Bindings, muscles);
+                RagdollPropMelee melee = prop.Melee;
+                Collider[] transientBaselineSources = melee
+                    && melee.IsHeldSession
+                    && melee.ActionCollider
+                        ? new[] { melee.ActionCollider }
+                        : null;
                 return TryCreate(
                     prop.GetPhysicalColliders(),
                     candidates,
                     slotHandle,
                     settings,
+                    transientBaselineSources,
                     out session,
                     out error);
             }
@@ -138,6 +145,25 @@ namespace Hairibar.Ragdoll.Animation
             out RagdollPropInternalCollisionSession session,
             out string error)
         {
+            return TryCreate(
+                propColliders,
+                muscles,
+                slotHandle,
+                settings,
+                null,
+                out session,
+                out error);
+        }
+
+        internal static bool TryCreate(
+            Collider[] propColliders,
+            RagdollPropCollisionMuscle[] muscles,
+            RagdollBoneHandle? slotHandle,
+            RagdollPropInternalCollisionSettings settings,
+            Collider[] transientNonIgnoredBaselineSources,
+            out RagdollPropInternalCollisionSession session,
+            out string error)
+        {
             session = null;
             error = null;
             settings = settings ?? new RagdollPropInternalCollisionSettings();
@@ -148,6 +174,14 @@ namespace Hairibar.Ragdoll.Animation
             Collider[] sources = propColliders ?? new Collider[0];
             RagdollPropCollisionMuscle[] targets = muscles
                 ?? new RagdollPropCollisionMuscle[0];
+            HashSet<Collider> transientSources =
+                new HashSet<Collider>();
+            Collider[] transient = transientNonIgnoredBaselineSources
+                ?? new Collider[0];
+            for (int index = 0; index < transient.Length; index++)
+            {
+                if (transient[index]) transientSources.Add(transient[index]);
+            }
 
             for (int muscleIndex = 0; muscleIndex < targets.Length; muscleIndex++)
             {
@@ -183,7 +217,9 @@ namespace Hairibar.Ragdoll.Animation
                         resolved.Add(new Pair(
                             source,
                             other,
-                            Physics.GetIgnoreCollision(source, other)));
+                            transientSources.Contains(source)
+                                ? false
+                                : Physics.GetIgnoreCollision(source, other)));
                     }
                 }
             }

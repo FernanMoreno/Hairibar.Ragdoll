@@ -55,6 +55,7 @@ namespace Hairibar.Ragdoll.Animation
         bool currentPropReported;
         string lastError;
         string collisionPolicyError;
+        string physicalOverrideError;
         string additionalPinError;
         bool slotRegistered;
         bool applicationQuitting;
@@ -71,6 +72,7 @@ namespace Hairibar.Ragdoll.Animation
         public RagdollPropMuscleState State => state;
         public string LastError => lastError;
         public string CollisionPolicyError => collisionPolicyError;
+        public string PhysicalOverrideError => physicalOverrideError;
         public string AdditionalPinError => additionalPinError;
         public bool IsInitialized => slotRegistered
             && state != RagdollPropMuscleState.Uninitialized
@@ -151,8 +153,16 @@ namespace Hairibar.Ragdoll.Animation
             if (applicationQuitting) return;
             requestedProp = null;
             collisionPolicyError = null;
+            physicalOverrideError = null;
             additionalPinError = null;
-            if (currentProp) currentProp.SuspendAdditionalPin();
+            if (currentProp)
+            {
+                currentProp.SuspendAdditionalPin();
+                string ignored;
+                currentProp.TrySuspendMeleeAction(
+                    propJoint ? propJoint.GetComponent<Rigidbody>() : null,
+                    out ignored);
+            }
             StabilizeInterruptedTransition(false);
         }
 
@@ -162,10 +172,18 @@ namespace Hairibar.Ragdoll.Animation
             if (applicationQuitting) return;
             requestedProp = null;
             collisionPolicyError = null;
+            physicalOverrideError = null;
             additionalPinError = null;
 
             RagdollProp prop = transitionProp ? transitionProp : currentProp;
-            if (prop) prop.SuspendAdditionalPin();
+            if (prop)
+            {
+                prop.SuspendAdditionalPin();
+                string ignored;
+                prop.TrySuspendMeleeAction(
+                    propJoint ? propJoint.GetComponent<Rigidbody>() : null,
+                    out ignored);
+            }
             if (prop && prop.CurrentMuscle == this)
             {
                 bool restoreOriginal = !prop.IsPickupCommitted;
@@ -287,6 +305,7 @@ namespace Hairibar.Ragdoll.Animation
 
             lastError = null;
             collisionPolicyError = null;
+            physicalOverrideError = null;
             additionalPinError = null;
             if (currentProp && currentProp.IsPickupCommitted)
             {
@@ -303,6 +322,7 @@ namespace Hairibar.Ragdoll.Animation
             try
             {
                 TickStateMachine();
+                RefreshHeldPhysicalOverrides();
                 ApplyAdditionalPinAfterAnimationMatching();
 
                 RagdollProp held = currentProp ? currentProp : transitionProp;
@@ -327,6 +347,26 @@ namespace Hairibar.Ragdoll.Animation
                     + exception.Message);
                 Debug.LogException(exception, this);
             }
+        }
+
+
+        void RefreshHeldPhysicalOverrides()
+        {
+            if (state != RagdollPropMuscleState.Holding
+                || !currentProp
+                || !currentProp.IsPickupCommitted
+                || !propJoint)
+            {
+                physicalOverrideError = null;
+                return;
+            }
+
+            string error;
+            physicalOverrideError = currentProp.TryRefreshHeldPhysicalOverrides(
+                propJoint.GetComponent<Rigidbody>(),
+                out error)
+                    ? null
+                    : error;
         }
 
         void ApplyAdditionalPinAfterAnimationMatching()
@@ -417,6 +457,7 @@ namespace Hairibar.Ragdoll.Animation
         {
             lastError = null;
             collisionPolicyError = null;
+            physicalOverrideError = null;
             additionalPinError = null;
             if (!TryValidateConfiguration(out lastError)) return;
 
@@ -644,8 +685,15 @@ namespace Hairibar.Ragdoll.Animation
         {
             if (prop)
             {
-                releaseState = prop.CaptureReleaseState(
-                    propJoint.GetComponent<Rigidbody>());
+                Rigidbody slotBody = propJoint.GetComponent<Rigidbody>();
+                string meleeError;
+                if (!prop.TrySuspendMeleeAction(slotBody, out meleeError))
+                {
+                    lastError = meleeError;
+                    physicalOverrideError = meleeError;
+                    return;
+                }
+                releaseState = prop.CaptureReleaseState(slotBody);
                 releaseStateCaptured = true;
             }
             else
@@ -825,7 +873,25 @@ namespace Hairibar.Ragdoll.Animation
         void Fail(string error)
         {
             RagdollProp held = currentProp ? currentProp : transitionProp;
-            if (held) held.SuspendAdditionalPin();
+            if (held)
+            {
+                held.SuspendAdditionalPin();
+                string meleeError;
+                if (!held.TrySuspendMeleeAction(
+                    propJoint ? propJoint.GetComponent<Rigidbody>() : null,
+                    out meleeError))
+                {
+                    physicalOverrideError = meleeError;
+                }
+                else
+                {
+                    physicalOverrideError = null;
+                }
+            }
+            else
+            {
+                physicalOverrideError = null;
+            }
             additionalPinError = null;
             lastError = string.IsNullOrEmpty(error)
                 ? "Unknown prop transition failure."
@@ -948,7 +1014,13 @@ namespace Hairibar.Ragdoll.Animation
 
         internal void ApplyAdditionalPinForTesting()
         {
+            RefreshHeldPhysicalOverrides();
             ApplyAdditionalPinAfterAnimationMatching();
+        }
+
+        internal void RefreshHeldPhysicalOverridesForTesting()
+        {
+            RefreshHeldPhysicalOverrides();
         }
 
         internal void EnterFaultForTesting(string error)
