@@ -1,4 +1,10 @@
 # Hairibar.Ragdoll
+
+Consulta la [guía completa de uso](Documentation~/USER-GUIDE.md), la
+[referencia rápida de API](Documentation~/API-REFERENCE.md) y la
+[documentación de certificación](Documentation~/Certification/README.md).
+Para integración de bajo nivel consulta el [diseño técnico](Documentation~/TECHNICAL-DESIGN.md)
+y los [procesos detallados](Documentation~/PROCESSES.md).
 A Unity package for making ragdolls and animating them with keyframed animations. See it in action at https://youtu.be/ByNPbbACf40.
 
 > Version 2.0 targets Unity 6 (`6000.0+`). It is an original implementation. Its
