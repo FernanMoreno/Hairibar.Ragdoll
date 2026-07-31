@@ -15,6 +15,7 @@ namespace Hairibar.Ragdoll
         public float ImpulseMagnitude { get; private set; }
         public Vector3 RelativeVelocity { get; private set; }
         public bool HasContact { get; private set; }
+        public int ContactCount { get; private set; }
         public Vector3 ContactPoint { get; private set; }
         public Vector3 ContactNormal { get; private set; }
         public int OtherLayer { get; private set; }
@@ -41,12 +42,22 @@ namespace Hairibar.Ragdoll
             ImpulseMagnitude = Impulse.magnitude;
             RelativeVelocity = collision != null ? collision.relativeVelocity : Vector3.zero;
 
-            HasContact = collision != null && collision.contactCount > 0;
+            ContactCount = collision != null ? collision.contactCount : 0;
+            HasContact = ContactCount > 0;
             if (HasContact)
             {
-                UnityEngine.ContactPoint contact = collision.GetContact(0);
-                ContactPoint = contact.point;
-                ContactNormal = contact.normal;
+                Vector3 point = Vector3.zero;
+                Vector3 normal = Vector3.zero;
+                for (int index = 0; index < ContactCount; index++)
+                {
+                    UnityEngine.ContactPoint contact = collision.GetContact(index);
+                    point += contact.point;
+                    normal += contact.normal;
+                }
+                ContactPoint = point / ContactCount;
+                ContactNormal = normal.sqrMagnitude > Mathf.Epsilon
+                    ? normal.normalized
+                    : Vector3.zero;
             }
             else
             {

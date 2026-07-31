@@ -18,7 +18,7 @@ namespace Hairibar.Ragdoll.Animation
         [SerializeField, Range(0f, 1f)] float pinWeightThreshold = 1f;
         [SerializeField, Range(0f, 1f)] float unpinnedMuscleWeightMultiplier = 0.3f;
         [Tooltip("Limits Puppet Rigidbody velocity and sampled Target velocity when entering Unpinned, preventing stored pin forces from launching the ragdoll.")]
-        [SerializeField] float maxRigidbodyVelocity = 10f;
+        [SerializeField, Min(0f)] float maxRigidbodyVelocity = 10f;
         [Tooltip("When disabled, muscles whose configured pin weight is zero cannot trigger a global loss of balance.")]
         [SerializeField] bool unpinnedMuscleKnockout = true;
 
@@ -90,6 +90,8 @@ namespace Hairibar.Ragdoll.Animation
         [SerializeField, HideInInspector] bool canMoveTarget = true;
 
         [Header("Get Up Orientation")]
+        [Tooltip("Classify prone/supine from the grounded right/left side instead of the chest direction.")]
+        [SerializeField] bool quadrupedGetUp;
         [Tooltip("Root-bone local axis pointing out of the character's chest/front.")]
         [SerializeField] Vector3 bodyFrontAxis = Vector3.forward;
         [Tooltip("Root-bone local axis corresponding to character up while standing.")]
@@ -102,8 +104,17 @@ namespace Hairibar.Ragdoll.Animation
         [Tooltip("Character-root-space offset from the physical hip when starting supine GetUp.")]
         [SerializeField] Vector3 getUpOffsetSupine = Vector3.zero;
 
+        [Header("Events")]
+        [SerializeField] RagdollPuppetEvent onGetUpProne;
+        [SerializeField] RagdollPuppetEvent onGetUpSupine;
+        [SerializeField] RagdollPuppetEvent onLoseBalance;
+        [SerializeField] RagdollPuppetEvent onLoseBalanceFromPuppet;
+        [SerializeField] RagdollPuppetEvent onLoseBalanceFromGetUp;
+        [SerializeField] RagdollPuppetEvent onRegainBalance;
+
         RagdollPuppetStateMachine stateMachine;
-        RagdollGroundProbe groundProbe;
+        [SerializeField] RagdollCenterOfMassSubBehaviour centerOfMass =
+            new RagdollCenterOfMassSubBehaviour();
         RagdollPuppetCollisionProcessor collisionProcessor;
         RagdollPuppetUnmappedContactTracker unmappedContactTracker;
         // Kinematic mode needs contact memory filtered by its own activation policy.
@@ -145,6 +156,23 @@ namespace Hairibar.Ragdoll.Animation
             ? stateMachine.State
             : RagdollPuppetState.Puppet;
 
+        public bool LoseBalanceOnTargetDrift
+        {
+            get => loseBalanceOnTargetDrift;
+            set => loseBalanceOnTargetDrift = value;
+        }
+        public float PinWeightThreshold
+        {
+            get => pinWeightThreshold;
+            set => pinWeightThreshold = Mathf.Clamp01(SanitizeFinite(value, 0f));
+        }
+        public float UnpinnedMuscleWeightMultiplier
+        {
+            get => unpinnedMuscleWeightMultiplier;
+            set => unpinnedMuscleWeightMultiplier =
+                Mathf.Clamp01(SanitizeFinite(value, 0f));
+        }
+
         public float StateElapsedTime => stateMachine != null
             ? stateMachine.StateElapsedTime
             : 0f;
@@ -158,6 +186,11 @@ namespace Hairibar.Ragdoll.Animation
 
         public RagdollBoneHandle LastKnockOutBone => lastKnockOutBone;
         public RagdollGetUpOrientation GetUpOrientation => getUpOrientation;
+        public bool QuadrupedGetUp
+        {
+            get => quadrupedGetUp;
+            set => quadrupedGetUp = value;
+        }
         public bool CanGetUp
         {
             get => canGetUp;
@@ -166,37 +199,40 @@ namespace Hairibar.Ragdoll.Animation
         public float GetUpDelay
         {
             get => getUpDelay;
-            set => getUpDelay = value;
+            set => getUpDelay = SanitizeNonNegative(value);
         }
         public float BlendToAnimationTime
         {
             get => blendToAnimationTime;
-            set => blendToAnimationTime = value;
+            set => blendToAnimationTime = SanitizeNonNegative(value);
         }
         public float MaxGetUpVelocity
         {
             get => maximumGetUpVelocity;
-            set => maximumGetUpVelocity = value;
+            set => maximumGetUpVelocity = SanitizeNonNegative(value);
         }
         public float MinGetUpDuration
         {
             get => minimumGetUpDuration;
-            set => minimumGetUpDuration = value;
+            set => minimumGetUpDuration = SanitizeNonNegative(value);
         }
         public float GetUpCollisionResistanceMlp
         {
             get => getUpCollisionResistanceMultiplier;
-            set => getUpCollisionResistanceMultiplier = value;
+            set => getUpCollisionResistanceMultiplier =
+                SanitizeNonNegative(value);
         }
         public float GetUpRegainPinSpeedMlp
         {
             get => getUpRegainPinSpeedMultiplier;
-            set => getUpRegainPinSpeedMultiplier = value;
+            set => getUpRegainPinSpeedMultiplier =
+                SanitizeNonNegative(value);
         }
         public float GetUpKnockOutDistanceMlp
         {
             get => getUpKnockOutDistanceMultiplier;
-            set => getUpKnockOutDistanceMultiplier = value;
+            set => getUpKnockOutDistanceMultiplier =
+                SanitizeNonNegative(value);
         }
         public bool CanMoveTarget
         {
@@ -206,9 +242,16 @@ namespace Hairibar.Ragdoll.Animation
         public bool TargetAlignmentPending => targetAlignmentPending;
         public bool GetUpBlendCompletedByTeleport =>
             getUpBlendCompletedByTeleport;
-        public float RegainPinSpeed => regainPinSpeed;
-        public float MuscleWeightRelativeToPinWeight =>
-            muscleWeightRelativeToPinWeight;
+        public float RegainPinSpeed
+        {
+            get => regainPinSpeed;
+            set => regainPinSpeed = Mathf.Clamp(SanitizeFinite(value, 1f), 0.001f, 10f);
+        }
+        public float MuscleWeightRelativeToPinWeight
+        {
+            get => muscleWeightRelativeToPinWeight;
+            set => muscleWeightRelativeToPinWeight = Mathf.Clamp01(SanitizeFinite(value, 0f));
+        }
         public float BoostFalloff
         {
             get => boostFalloff;
@@ -225,7 +268,7 @@ namespace Hairibar.Ragdoll.Animation
         public float MaxRigidbodyVelocity
         {
             get => maxRigidbodyVelocity;
-            set => maxRigidbodyVelocity = value;
+            set => maxRigidbodyVelocity = SanitizeMaximumVelocity(value);
         }
         public bool UnpinnedMuscleKnockout
         {
@@ -251,13 +294,33 @@ namespace Hairibar.Ragdoll.Animation
                 && colliderSurfaceController.HasAppliedState
                 ? colliderSurfaceController.CurrentState
                 : RagdollPuppetColliderSurfaceState.Puppet;
-        public RagdollPuppetNormalMode NormalMode => normalMode;
-        public float MappingBlendSpeed => mappingBlendSpeed;
+        public RagdollPuppetNormalMode NormalMode
+        {
+            get => normalMode;
+            set => SetNormalMode(value, true);
+        }
+        public float MappingBlendSpeed
+        {
+            get => mappingBlendSpeed;
+            set => mappingBlendSpeed = SanitizeNonNegative(value);
+        }
         public float NormalModeMappingWeight => normalModeMappingWeight;
         public bool UnmappedContactActive => unmappedContactActive;
-        public bool ActivateOnStaticCollisions => activateOnStaticCollisions;
-        public bool ActivateOnDynamicCollisions => activateOnDynamicCollisions;
-        public float ActivateOnImpulse => activateOnImpulse;
+        public bool ActivateOnStaticCollisions
+        {
+            get => activateOnStaticCollisions;
+            set => activateOnStaticCollisions = value;
+        }
+        public bool ActivateOnDynamicCollisions
+        {
+            get => activateOnDynamicCollisions;
+            set => activateOnDynamicCollisions = value;
+        }
+        public float ActivateOnImpulse
+        {
+            get => activateOnImpulse;
+            set => activateOnImpulse = SanitizeNonNegative(value);
+        }
         public RagdollSimulationModeController SimulationModeController =>
             simulationModeController;
         public bool KinematicSimulationAvailable =>
@@ -274,13 +337,114 @@ namespace Hairibar.Ragdoll.Animation
         public float LastKinematicActivationFixedTime =>
             lastKinematicActivationFixedTime;
         public long KinematicActivationCount => kinematicActivationCount;
-        public LayerMask CollisionLayers => collisionLayers;
-        public float CollisionThreshold => collisionThreshold;
-        public int MaximumCollisionsPerFixedStep => maximumCollisionsPerFixedStep;
+        public LayerMask CollisionLayers
+        {
+            get => collisionLayers;
+            set => collisionLayers = value;
+        }
+        public float CollisionThreshold
+        {
+            get => collisionThreshold;
+            set => collisionThreshold = SanitizeNonNegative(value);
+        }
+        public int MaximumCollisionsPerFixedStep
+        {
+            get => maximumCollisionsPerFixedStep;
+            set => maximumCollisionsPerFixedStep = Mathf.Clamp(value, 1, 30);
+        }
         public RagdollPuppetCollisionResistance CollisionResistance =>
             collisionResistance;
         public IReadOnlyList<RagdollPuppetCollisionLayerRule>
             CollisionResistanceMultipliers => collisionResistanceMultipliers;
+        public void SetCollisionResistance(
+            RagdollPuppetCollisionResistance value)
+        {
+            collisionResistance = value
+                ?? new RagdollPuppetCollisionResistance();
+            collisionResistance.Normalize();
+        }
+
+        public void SetCollisionResistanceMultipliers(
+            RagdollPuppetCollisionLayerRule[] values)
+        {
+            collisionResistanceMultipliers = values
+                ?? new RagdollPuppetCollisionLayerRule[0];
+            NormalizeCollisionResponseConfiguration();
+        }
+        public LayerMask GroundLayers
+        {
+            get => groundLayers;
+            set
+            {
+                groundLayers = value;
+                ReconfigureCenterOfMass();
+            }
+        }
+        public float GroundProbeStartOffset
+        {
+            get => groundProbeStartOffset;
+            set
+            {
+                groundProbeStartOffset = SanitizeNonNegative(value);
+                ReconfigureCenterOfMass();
+            }
+        }
+        public float GroundProbeDistance
+        {
+            get => groundProbeDistance;
+            set
+            {
+                groundProbeDistance = Mathf.Max(0.001f, SanitizeFinite(value, 0.001f));
+                ReconfigureCenterOfMass();
+            }
+        }
+        public float MaximumGroundAngle
+        {
+            get => maximumGroundAngle;
+            set
+            {
+                maximumGroundAngle = Mathf.Clamp(SanitizeFinite(value, 0f), 0f, 89.9f);
+                ReconfigureCenterOfMass();
+            }
+        }
+        public Vector3 BodyFrontAxis
+        {
+            get => bodyFrontAxis;
+            set => bodyFrontAxis = SanitizeAxis(value, Vector3.forward);
+        }
+        public Vector3 BodyUpAxis
+        {
+            get => bodyUpAxis;
+            set => bodyUpAxis = SanitizeAxis(value, Vector3.up);
+        }
+        public float MinimumOrientationDot
+        {
+            get => minimumOrientationDot;
+            set => minimumOrientationDot = Mathf.Clamp01(SanitizeFinite(value, 0f));
+        }
+        public RagdollGetUpOrientation FallbackOrientation
+        {
+            get => fallbackOrientation;
+            set
+            {
+                if (value != RagdollGetUpOrientation.Prone
+                    && value != RagdollGetUpOrientation.Supine)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(value));
+                }
+                fallbackOrientation = value;
+            }
+        }
+        public Vector3 GetUpOffsetProne
+        {
+            get => getUpOffsetProne;
+            set => getUpOffsetProne = IsFinite(value) ? value : Vector3.zero;
+        }
+        public Vector3 GetUpOffsetSupine
+        {
+            get => getUpOffsetSupine;
+            set => getUpOffsetSupine = IsFinite(value) ? value : Vector3.zero;
+        }
         public long AcceptedCollisionCount => acceptedCollisionCount;
         public long RejectedCollisionCount => rejectedCollisionCount;
         public RagdollBoneHandle LastAcceptedCollisionBone => lastAcceptedCollisionBone;
@@ -295,8 +459,9 @@ namespace Hairibar.Ragdoll.Animation
         public int UpstreamMaximumEventsPerFixedStep => IsInitialized
             ? Context.CollisionHub.MaxEventsPerFixedStep
             : -1;
-        public RagdollGroundingSnapshot Grounding => groundProbe != null
-            ? groundProbe.Snapshot
+        public RagdollCenterOfMassSubBehaviour CenterOfMass => centerOfMass;
+        public RagdollGroundingSnapshot Grounding => centerOfMass != null
+            ? centerOfMass.Snapshot
             : RagdollGroundingSnapshot.Empty;
 
         public bool CanBeginGetUp
@@ -311,7 +476,7 @@ namespace Hairibar.Ragdoll.Animation
                 if (!RagdollPuppetBehaviourMath.IsGetUpReady(
                     StateElapsedTime,
                     getUpDelay,
-                    getUpReferencePair.RagdollBone.Rigidbody.velocity.magnitude,
+                    getUpReferencePair.RagdollBone.Rigidbody.linearVelocity.magnitude,
                     maximumGetUpVelocity))
                 {
                     return false;
@@ -332,12 +497,49 @@ namespace Hairibar.Ragdoll.Animation
             RagdollPuppetTransitionReason> StateChanged;
         public event Action<RagdollGetUpOrientation> GetUpPoseSelected;
 
+        public RagdollPuppetEvent OnGetUpProne
+        {
+            get => onGetUpProne;
+            set => onGetUpProne = value;
+        }
+        public RagdollPuppetEvent OnGetUpSupine
+        {
+            get => onGetUpSupine;
+            set => onGetUpSupine = value;
+        }
+        public RagdollPuppetEvent OnLoseBalance
+        {
+            get => onLoseBalance;
+            set => onLoseBalance = value;
+        }
+        public RagdollPuppetEvent OnLoseBalanceFromPuppet
+        {
+            get => onLoseBalanceFromPuppet;
+            set => onLoseBalanceFromPuppet = value;
+        }
+        public RagdollPuppetEvent OnLoseBalanceFromGetUp
+        {
+            get => onLoseBalanceFromGetUp;
+            set => onLoseBalanceFromGetUp = value;
+        }
+        public RagdollPuppetEvent OnRegainBalance
+        {
+            get => onRegainBalance;
+            set => onRegainBalance = value;
+        }
+
         /// <summary>
         /// Raised immediately for each Enter/Stay collision accepted by the layer,
         /// squared-impulse threshold and per-step budget policy. The embedded Collision
         /// reference is callback-scoped and must not be retained.
         /// </summary>
         public event Action<RagdollCollisionEvent> CollisionAccepted;
+
+        /// <summary>
+        /// Raised once for every muscular Enter, Stay or Exit event delivered by the
+        /// collision hub, before lifecycle, layer, threshold and budget filters.
+        /// </summary>
+        public event Action<RagdollCollisionEvent> CollisionObserved;
 
         /// <summary>
         /// Raised after an accepted collision has applied position-authority suppression.
@@ -601,7 +803,7 @@ namespace Hairibar.Ragdoll.Animation
                     Context.Muscles);
             hasObservedSurfaceSimulationMode = false;
             stateMachine = new RagdollPuppetStateMachine();
-            groundProbe = new RagdollGroundProbe(Context);
+            InitializeCenterOfMassSubBehaviour();
             collisionProcessor.Reset();
             unmappedContactTracker.Reset();
             kinematicContactTracker.Reset();
@@ -619,6 +821,167 @@ namespace Hairibar.Ragdoll.Animation
             lifecycleSuspended = !Context.Animator.IsAlive;
         }
 
+        /// <summary>
+        /// Repositions Target and Puppet, clears physical momentum and all temporary
+        /// BehaviourPuppet state, then restores the live Puppet state. Restoration is
+        /// best-effort; all failures are reported together after every cleanup ran.
+        /// </summary>
+        public void Respawn(Vector3 position, Quaternion rotation)
+        {
+            if (!IsInitialized)
+            {
+                throw new InvalidOperationException(
+                    "Respawn requires an initialized RagdollPuppetBehaviour.");
+            }
+            if (!IsFinite(position) || !IsFinite(rotation)
+                || QuaternionLengthSquared(rotation) <= Mathf.Epsilon)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(position),
+                    "Respawn pose must contain finite values and a non-zero rotation.");
+            }
+
+            List<Exception> failures = new List<Exception>();
+            RagdollPuppetState previousState = State;
+            TryRespawnStep(failures, () => CancelPropActionsForRespawn());
+            TryRespawnStep(failures, () => Context.Animator.ResurrectImmediately());
+            TryRespawnStep(failures, () => Context.Animator.TeleportImmediate(
+                position,
+                Quaternion.Normalize(rotation),
+                true));
+            TryRespawnStep(failures, ClearPuppetMomentum);
+            TryRespawnStep(failures, () => Context.Muscles.ResetAll());
+            TryRespawnStep(failures, ResetRespawnState);
+            TryRespawnStep(failures, () =>
+            {
+                if (simulationModeController && simulationModeController.IsInitialized)
+                {
+                    simulationModeController.ForceActiveForLifecycle();
+                }
+            });
+            TryRespawnStep(failures, () =>
+            {
+                lifecycleSuspended = false;
+                ApplyRecoveryConfiguration();
+                SetColliderSurfaceState(false);
+                Context.Animator.ReapplyInternalCollisionPolicy();
+            });
+
+            if (previousState != RagdollPuppetState.Puppet)
+            {
+                InvokeStateChangedSafely(
+                    previousState,
+                    RagdollPuppetState.Puppet,
+                    RagdollPuppetTransitionReason.Respawn);
+            }
+            if (failures.Count > 0)
+            {
+                throw new AggregateException(
+                    "Respawn completed with one or more restoration failures.",
+                    failures);
+            }
+        }
+
+        void ResetRespawnState()
+        {
+            stateMachine.Reset(RagdollPuppetState.Puppet);
+            lastKnockOutBone = RagdollBoneHandle.Invalid;
+            getUpOrientation = RagdollGetUpOrientation.Unknown;
+            targetAlignmentPending = false;
+            getUpBlendCompletedByTeleport = false;
+            centerOfMass?.Reset();
+            unmappedContactTracker.Reset();
+            kinematicContactTracker.Reset();
+            kinematicActivationQueue.Reset();
+            unmappedContactActive = false;
+            kinematicActivationContactActive = false;
+            normalModeMappingWeight = 1f;
+            ResetCollisionStatistics();
+        }
+
+        void ClearPuppetMomentum()
+        {
+            for (int index = 0; index < Context.Bindings.BoneCount; index++)
+            {
+                Rigidbody body = Context.Bindings.GetBoneAt(index).Rigidbody;
+                if (!body) continue;
+                body.linearVelocity = Vector3.zero;
+                body.angularVelocity = Vector3.zero;
+            }
+        }
+
+        static void TryRespawnStep(List<Exception> failures, Action action)
+        {
+            try { action(); }
+            catch (Exception exception) { failures.Add(exception); }
+        }
+
+        /// <summary>
+        /// Applies the authored Puppet or Unpinned collider/material policy immediately
+        /// without changing the behaviour state. The activation baseline remains intact.
+        /// </summary>
+        public bool SetColliderSurfaceState(bool unpinned)
+        {
+            if (!IsInitialized || colliderSurfaceController == null) return false;
+            if (!colliderSurfaceController.BaselineCaptured)
+            {
+                colliderSurfaceController.CaptureBaseline();
+            }
+            return colliderSurfaceController.Apply(
+                unpinned ? RagdollPuppetState.Unpinned : RagdollPuppetState.Puppet,
+                true);
+        }
+
+        /// <summary>Clears accepted/rejected collision telemetry and step state.</summary>
+        public void ResetCollisionStatistics()
+        {
+            acceptedCollisionCount = 0;
+            rejectedCollisionCount = 0;
+            lastAcceptedCollisionBone = RagdollBoneHandle.Invalid;
+            lastAcceptedCollisionImpulse = 0f;
+            lastAcceptedCollisionFixedTime = 0f;
+            lastCollisionRejectionReason = RagdollPuppetCollisionRejectionReason.None;
+            lastCollisionResponse = RagdollPuppetCollisionResponseSnapshot.Empty;
+            collisionProcessor.Reset();
+        }
+
+        protected override void OnBehaviourShutdown()
+        {
+            if (centerOfMass != null) centerOfMass.Shutdown();
+        }
+
+        void InitializeCenterOfMassSubBehaviour()
+        {
+            if (centerOfMass == null)
+            {
+                centerOfMass = new RagdollCenterOfMassSubBehaviour();
+            }
+            centerOfMass.Configure(
+                groundLayers,
+                groundProbeStartOffset,
+                groundProbeDistance,
+                maximumGroundAngle);
+            centerOfMass.Initialize(this);
+        }
+
+        void ReinitializeCenterOfMassSubBehaviour()
+        {
+            bool active = IsActive;
+            if (centerOfMass != null) centerOfMass.Shutdown();
+            InitializeCenterOfMassSubBehaviour();
+            if (active) centerOfMass.SetActive(true);
+        }
+
+        void ReconfigureCenterOfMass()
+        {
+            if (!IsInitialized || centerOfMass == null) return;
+            centerOfMass.Configure(
+                groundLayers,
+                groundProbeStartOffset,
+                groundProbeDistance,
+                maximumGroundAngle);
+        }
+
         protected override void OnBehaviourHierarchyChanged(
             IReadOnlyList<RagdollMuscleChange> added,
             IReadOnlyList<RagdollMuscleChange> removed)
@@ -632,7 +995,7 @@ namespace Hairibar.Ragdoll.Animation
                 new RagdollPuppetColliderSurfaceController(
                     Context.Bindings,
                     Context.Muscles);
-            groundProbe = new RagdollGroundProbe(Context);
+            ReinitializeCenterOfMassSubBehaviour();
             rootPair = FindRootPair();
             getUpReferencePair = FindGetUpReferencePair();
             lastKnockOutBone = RagdollBoneHandle.Invalid;
@@ -666,11 +1029,11 @@ namespace Hairibar.Ragdoll.Animation
         void ResetAfterMuscleConnectionChange()
         {
             lastKnockOutBone = RagdollBoneHandle.Invalid;
-            if (groundProbe != null) groundProbe.Reset();
-            if (collisionProcessor != null) collisionProcessor.Reset();
-            if (unmappedContactTracker != null) unmappedContactTracker.Reset();
-            if (kinematicContactTracker != null) kinematicContactTracker.Reset();
-            if (kinematicActivationQueue != null) kinematicActivationQueue.Reset();
+            if (centerOfMass != null) centerOfMass.Reset();
+            collisionProcessor.Reset();
+            unmappedContactTracker.Reset();
+            kinematicContactTracker.Reset();
+            kinematicActivationQueue.Reset();
             unmappedContactActive = false;
             kinematicActivationContactActive = false;
             targetAlignmentPending = false;
@@ -690,7 +1053,8 @@ namespace Hairibar.Ragdoll.Animation
                     ? RagdollPuppetState.Unpinned
                     : RagdollPuppetState.Puppet);
             ApplyPropDropPolicyForCurrentState();
-            groundProbe.Reset();
+            centerOfMass.SetActive(true);
+            centerOfMass.Reset();
             lastKnockOutBone = RagdollBoneHandle.Invalid;
             getUpOrientation = RagdollGetUpOrientation.Unknown;
             targetAlignmentPending = false;
@@ -729,7 +1093,8 @@ namespace Hairibar.Ragdoll.Animation
                     ? RagdollPuppetState.Unpinned
                     : RagdollPuppetState.Puppet);
             ApplyPropDropPolicyForCurrentState();
-            groundProbe.Reset();
+            centerOfMass.SetActive(true);
+            centerOfMass.Reset();
             lastKnockOutBone = RagdollBoneHandle.Invalid;
             getUpOrientation = RagdollGetUpOrientation.Unknown;
             preparedGroundNormal = GetWorldUp();
@@ -785,6 +1150,7 @@ namespace Hairibar.Ragdoll.Animation
             getUpBlendCompletedByTeleport = false;
             ApplyRecoveryConfiguration();
             ApplySurfaceConfiguration(true);
+            CancelPropActionsForRespawn();
         }
 
         protected override void OnBehaviourKillEnded()
@@ -818,7 +1184,7 @@ namespace Hairibar.Ragdoll.Animation
             stateMachine.Reset(RagdollPuppetState.Unpinned);
             ApplyPropDropPolicyForCurrentState();
             stateMachine.SetElapsedTime(float.PositiveInfinity);
-            groundProbe.Reset();
+            centerOfMass.Reset();
             targetAlignmentPending = false;
             getUpBlendCompletedByTeleport = false;
             getUpOrientation = RagdollGetUpOrientation.Unknown;
@@ -835,9 +1201,9 @@ namespace Hairibar.Ragdoll.Animation
             Vector3 pivot,
             bool moveToTarget)
         {
-            if (groundProbe != null)
+            if (centerOfMass != null)
             {
-                groundProbe.Reset();
+                centerOfMass.Reset();
             }
 
             preparedGroundNormal =
@@ -878,9 +1244,10 @@ namespace Hairibar.Ragdoll.Animation
                 stateMachine.Reset(RagdollPuppetState.Puppet);
             }
 
-            if (groundProbe != null)
+            if (centerOfMass != null)
             {
-                groundProbe.Reset();
+                centerOfMass.SetActive(false);
+                centerOfMass.Reset();
             }
 
             lastKnockOutBone = RagdollBoneHandle.Invalid;
@@ -900,6 +1267,11 @@ namespace Hairibar.Ragdoll.Animation
         protected override void OnBehaviourCollision(
             RagdollCollisionEvent collisionEvent)
         {
+            InvokeCollisionSafely(CollisionObserved, collisionEvent);
+            if (centerOfMass != null)
+            {
+                centerOfMass.RegisterCollision(collisionEvent);
+            }
             if (lifecycleSuspended) return;
             RagdollPuppetCollisionResponseMath.LayerResolution layerResolution =
                 RagdollPuppetCollisionResponseMath.ResolveLayer(
@@ -935,7 +1307,7 @@ namespace Hairibar.Ragdoll.Animation
             float positionSuppression = ApplyCollisionUnpin(
                 collisionEvent,
                 layerResolution);
-            CollisionAccepted?.Invoke(collisionEvent);
+            InvokeCollisionSafely(CollisionAccepted, collisionEvent);
             if (positionSuppression > 0f)
             {
                 CollisionUnpinApplied?.Invoke(
@@ -983,12 +1355,12 @@ namespace Hairibar.Ragdoll.Animation
                     mappingBlendSpeed,
                     deltaTime);
 
-            groundProbe.Update(
-                deltaTime,
+            centerOfMass.Configure(
                 groundLayers,
                 groundProbeStartOffset,
                 groundProbeDistance,
                 maximumGroundAngle);
+            centerOfMass.FixedUpdate(deltaTime);
 
             // Alignment is applied in OnModifyTargetPose later in this same animator tick.
             // Do not complete a zero-duration GetUp before that one-shot correction occurs.
@@ -1551,17 +1923,37 @@ namespace Hairibar.Ragdoll.Animation
             targetAlignmentPending = true;
             getUpBlendCompletedByTeleport = false;
             GetUpPoseSelected?.Invoke(orientation);
+            InvokeGetUpEvent(orientation);
             return true;
+        }
+
+        void InvokeGetUpEvent(RagdollGetUpOrientation orientation)
+        {
+            if (orientation == RagdollGetUpOrientation.Prone)
+            {
+                onGetUpProne.Invoke(this);
+            }
+            else if (orientation == RagdollGetUpOrientation.Supine)
+            {
+                onGetUpSupine.Invoke(this);
+            }
         }
 
         RagdollGetUpOrientation ResolveGetUpOrientation(Vector3 groundNormal)
         {
             RagdollGetUpOrientation classified =
-                RagdollGetUpAlignmentMath.Classify(
-                    getUpReferencePair.RagdollBone.Transform.rotation,
-                    bodyFrontAxis,
-                    groundNormal,
-                    minimumOrientationDot);
+                quadrupedGetUp
+                    ? RagdollGetUpAlignmentMath.ClassifyQuadruped(
+                        getUpReferencePair.RagdollBone.Transform.rotation,
+                        bodyFrontAxis,
+                        bodyUpAxis,
+                        groundNormal,
+                        minimumOrientationDot)
+                    : RagdollGetUpAlignmentMath.Classify(
+                        getUpReferencePair.RagdollBone.Transform.rotation,
+                        bodyFrontAxis,
+                        groundNormal,
+                        minimumOrientationDot);
 
             return classified != RagdollGetUpOrientation.Unknown
                 ? classified
@@ -1688,7 +2080,7 @@ namespace Hairibar.Ragdoll.Animation
                 float configuredPinWeight =
                     RagdollPuppetBehaviourMath.ResolveConfiguredPinWeight(
                         authoredProfile.positionAlpha,
-                        Context.Animator.MasterAlpha,
+                        Context.Animator.MasterPinWeight,
                         muscleState.PositionAuthority);
                 float effectivePinWeight =
                     RagdollPuppetBehaviourMath.ResolveEffectivePinWeight(
@@ -1783,9 +2175,9 @@ namespace Hairibar.Ragdoll.Animation
                 Rigidbody rigidbody = pair.RagdollBone.Rigidbody;
                 if (rigidbody)
                 {
-                    rigidbody.velocity =
+                    rigidbody.linearVelocity =
                         RagdollPuppetBehaviourMath.LimitVelocity(
-                            rigidbody.velocity,
+                            rigidbody.linearVelocity,
                             maxRigidbodyVelocity);
                 }
 
@@ -1802,7 +2194,85 @@ namespace Hairibar.Ragdoll.Animation
             RagdollPuppetTransitionReason reason)
         {
             ApplyPropDropPolicy(previous, current);
-            StateChanged?.Invoke(previous, current, reason);
+            InvokeStateChangedSafely(previous, current, reason);
+            InvokeTransitionEvents(previous, current, reason);
+        }
+
+        void InvokeStateChangedSafely(
+            RagdollPuppetState previous,
+            RagdollPuppetState current,
+            RagdollPuppetTransitionReason reason)
+        {
+            Action<RagdollPuppetState, RagdollPuppetState,
+                RagdollPuppetTransitionReason> callback = StateChanged;
+            if (callback == null) return;
+            Delegate[] subscribers = callback.GetInvocationList();
+            for (int index = 0; index < subscribers.Length; index++)
+            {
+                try
+                {
+                    ((Action<RagdollPuppetState, RagdollPuppetState,
+                        RagdollPuppetTransitionReason>)subscribers[index])(
+                        previous,
+                        current,
+                        reason);
+                }
+                catch (Exception exception)
+                {
+                    UnityEngine.Debug.LogException(exception, this);
+                }
+            }
+        }
+
+        void InvokeCollisionSafely(
+            Action<RagdollCollisionEvent> callback,
+            RagdollCollisionEvent collisionEvent)
+        {
+            if (callback == null) return;
+            try
+            {
+                // Direct multicast invocation is allocation-free on the collision hot path.
+                callback(collisionEvent);
+            }
+            catch (Exception exception)
+            {
+                UnityEngine.Debug.LogException(exception, this);
+            }
+        }
+
+        void InvokeTransitionEvents(
+            RagdollPuppetState previous,
+            RagdollPuppetState current,
+            RagdollPuppetTransitionReason reason)
+        {
+            if (current == RagdollPuppetState.Unpinned
+                && previous != RagdollPuppetState.Unpinned
+                && reason != RagdollPuppetTransitionReason.LifecycleDeath)
+            {
+                InvokePuppetEventSafely(onLoseBalance);
+                if (previous == RagdollPuppetState.Puppet)
+                {
+                    InvokePuppetEventSafely(onLoseBalanceFromPuppet);
+                }
+                else if (previous == RagdollPuppetState.GetUp)
+                {
+                    InvokePuppetEventSafely(onLoseBalanceFromGetUp);
+                }
+            }
+            else if (previous == RagdollPuppetState.GetUp
+                && current == RagdollPuppetState.Puppet)
+            {
+                InvokePuppetEventSafely(onRegainBalance);
+            }
+        }
+
+        void InvokePuppetEventSafely(RagdollPuppetEvent puppetEvent)
+        {
+            try { puppetEvent.Invoke(this); }
+            catch (Exception exception)
+            {
+                UnityEngine.Debug.LogException(exception, this);
+            }
         }
 
         void ResetCollisionProcessing(bool resetTotals)
@@ -1938,12 +2408,62 @@ namespace Hairibar.Ragdoll.Animation
 
         Vector3 GetWorldUp()
         {
-            if (groundProbe != null) return groundProbe.Up;
+            if (centerOfMass != null) return centerOfMass.Up;
 
             Vector3 gravity = Physics.gravity;
             return gravity.sqrMagnitude > Mathf.Epsilon
                 ? -gravity.normalized
                 : Vector3.up;
+        }
+
+        static float SanitizeNonNegative(float value)
+        {
+            return float.IsNaN(value) || float.IsInfinity(value)
+                ? 0f
+                : Mathf.Max(0f, value);
+        }
+
+        static float SanitizeFinite(float value, float fallback)
+        {
+            return float.IsNaN(value) || float.IsInfinity(value)
+                ? fallback
+                : value;
+        }
+
+        static bool IsFinite(Vector3 value)
+        {
+            return !(float.IsNaN(value.x) || float.IsInfinity(value.x)
+                || float.IsNaN(value.y) || float.IsInfinity(value.y)
+                || float.IsNaN(value.z) || float.IsInfinity(value.z));
+        }
+
+        static Vector3 SanitizeAxis(Vector3 value, Vector3 fallback)
+        {
+            return IsFinite(value) && value.sqrMagnitude > 0.000001f
+                ? value.normalized
+                : fallback;
+        }
+
+        static bool IsFinite(Quaternion value)
+        {
+            return !(float.IsNaN(value.x) || float.IsInfinity(value.x)
+                || float.IsNaN(value.y) || float.IsInfinity(value.y)
+                || float.IsNaN(value.z) || float.IsInfinity(value.z)
+                || float.IsNaN(value.w) || float.IsInfinity(value.w));
+        }
+
+        static float QuaternionLengthSquared(Quaternion value)
+        {
+            return value.x * value.x + value.y * value.y
+                + value.z * value.z + value.w * value.w;
+        }
+
+        static float SanitizeMaximumVelocity(float value)
+        {
+            if (float.IsPositiveInfinity(value)) return Mathf.Infinity;
+            return float.IsNaN(value) || float.IsNegativeInfinity(value)
+                ? 0f
+                : Mathf.Max(0f, value);
         }
 
         void OnValidate()
@@ -1958,6 +2478,8 @@ namespace Hairibar.Ragdoll.Animation
             muscleWeightRelativeToPinWeight =
                 Mathf.Clamp01(muscleWeightRelativeToPinWeight);
             boostFalloff = RagdollMuscleBoostMath.SanitizeFalloff(boostFalloff);
+            maxRigidbodyVelocity =
+                SanitizeMaximumVelocity(maxRigidbodyVelocity);
             mappingBlendSpeed = float.IsNaN(mappingBlendSpeed)
                 || float.IsInfinity(mappingBlendSpeed)
                 ? 0f
@@ -1978,16 +2500,18 @@ namespace Hairibar.Ragdoll.Animation
             groundProbeStartOffset = Mathf.Max(0f, groundProbeStartOffset);
             groundProbeDistance = Mathf.Max(0.001f, groundProbeDistance);
             maximumGroundAngle = Mathf.Clamp(maximumGroundAngle, 0f, 89.9f);
-            getUpDelay = Mathf.Max(0f, getUpDelay);
-            blendToAnimationTime = Mathf.Max(0f, blendToAnimationTime);
-            maximumGetUpVelocity = Mathf.Max(0f, maximumGetUpVelocity);
-            minimumGetUpDuration = Mathf.Max(0f, minimumGetUpDuration);
+            getUpDelay = SanitizeNonNegative(getUpDelay);
+            blendToAnimationTime = SanitizeNonNegative(blendToAnimationTime);
+            maximumGetUpVelocity =
+                SanitizeNonNegative(maximumGetUpVelocity);
+            minimumGetUpDuration =
+                SanitizeNonNegative(minimumGetUpDuration);
             getUpCollisionResistanceMultiplier =
-                Mathf.Max(0f, getUpCollisionResistanceMultiplier);
+                SanitizeNonNegative(getUpCollisionResistanceMultiplier);
             getUpRegainPinSpeedMultiplier =
-                Mathf.Max(0f, getUpRegainPinSpeedMultiplier);
+                SanitizeNonNegative(getUpRegainPinSpeedMultiplier);
             getUpKnockOutDistanceMultiplier =
-                Mathf.Max(0f, getUpKnockOutDistanceMultiplier);
+                SanitizeNonNegative(getUpKnockOutDistanceMultiplier);
             minimumOrientationDot = Mathf.Clamp01(minimumOrientationDot);
 
             if (bodyFrontAxis.sqrMagnitude <= 0.000001f)

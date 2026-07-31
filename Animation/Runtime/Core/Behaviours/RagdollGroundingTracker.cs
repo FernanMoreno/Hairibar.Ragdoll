@@ -24,7 +24,10 @@ namespace Hairibar.Ragdoll.Animation
             Vector3 centerOfMass,
             Vector3 centerOfMassVelocity,
             float totalMass,
-            float deltaTime)
+            float deltaTime,
+            bool hasCenterOfPressure = false,
+            Vector3 centerOfPressure = default(Vector3),
+            Vector3 up = default(Vector3))
         {
             float stableTime = grounded
                 ? Snapshot.StableTime + Mathf.Max(0f, deltaTime)
@@ -37,7 +40,10 @@ namespace Hairibar.Ragdoll.Animation
                 grounded ? normal : Vector3.up,
                 centerOfMass,
                 centerOfMassVelocity,
-                totalMass);
+                totalMass,
+                hasCenterOfPressure,
+                centerOfPressure,
+                up);
         }
     }
 }

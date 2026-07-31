@@ -358,8 +358,8 @@ namespace Hairibar.Ragdoll.Animation
 
         static ulong PairKey(Collider first, Collider second)
         {
-            uint a = unchecked((uint)first.GetInstanceID());
-            uint b = unchecked((uint)second.GetInstanceID());
+            uint a = unchecked((uint)RagdollUnityObjectId.Get(first));
+            uint b = unchecked((uint)RagdollUnityObjectId.Get(second));
             if (a > b)
             {
                 uint temporary = a;

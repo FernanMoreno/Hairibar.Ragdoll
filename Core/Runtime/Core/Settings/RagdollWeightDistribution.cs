@@ -1,5 +1,4 @@
 ﻿using Hairibar.EngineExtensions.Serialization;
-using NaughtyAttributes;
 using UnityEngine;
 
 #pragma warning disable 649
@@ -20,9 +19,18 @@ namespace Hairibar.Ragdoll
         {
             ThrowExceptionIfNotValid();
 
+            if (!IsFinite(totalMass) || totalMass <= 0f)
+            {
+                throw new System.ArgumentOutOfRangeException(
+                    nameof(totalMass),
+                    totalMass,
+                    "Total ragdoll mass must be finite and positive.");
+            }
+
             if (factors.TryGetValue(bone, out float factor))
             {
-                float actualFactor = factor / GetTotalFactorSum();
+                ValidateFactor(factor, bone);
+                float actualFactor = factor / GetValidatedTotalFactorSum();
                 return totalMass * actualFactor;
             }
             else
@@ -33,16 +41,37 @@ namespace Hairibar.Ragdoll
         }
 
 
-        float GetTotalFactorSum()
+        float GetValidatedTotalFactorSum()
         {
             float total = 0;
 
-            foreach (float factor in factors.Values)
+            foreach (System.Collections.Generic.KeyValuePair<BoneName, float> pair
+                in factors)
             {
-                total += factor;
+                ValidateFactor(pair.Value, pair.Key);
+                total += pair.Value;
             }
 
+            if (!IsFinite(total) || total <= 0f)
+            {
+                throw new System.InvalidOperationException(
+                    "Weight distribution factors must have a finite positive sum.");
+            }
             return total;
+        }
+
+        static void ValidateFactor(float factor, BoneName bone)
+        {
+            if (IsFinite(factor) && factor > 0f) return;
+
+            throw new System.InvalidOperationException(
+                "Weight factor for bone '" + bone
+                + "' must be finite and positive.");
+        }
+
+        static bool IsFinite(float value)
+        {
+            return !float.IsNaN(value) && !float.IsInfinity(value);
         }
 
         void OnValidate()

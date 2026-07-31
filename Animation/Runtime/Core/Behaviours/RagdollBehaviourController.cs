@@ -1,6 +1,7 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
+
 
 namespace Hairibar.Ragdoll.Animation
 {
@@ -106,18 +107,39 @@ namespace Hairibar.Ragdoll.Animation
 
             for (int index = 0; index < discovered.Length; index++)
             {
-                discovered[index].InitializeInternal(context);
+                try
+                {
+                    discovered[index].InitializeInternal(context);
+                }
+                catch (Exception exception)
+                {
+                    discovered[index].enabled = false;
+                    UnityEngine.Debug.LogException(exception, discovered[index]);
+                }
             }
 
             isInitialized = true;
             SubscribeCollisionEvents();
+
+            for (int index = 0; index < discovered.Length; index++)
+            {
+                if (!discovered[index].IsInitialized) continue;
+                try
+                {
+                    discovered[index].PostInitializeInternal();
+                }
+                catch (Exception exception)
+                {
+                    UnityEngine.Debug.LogException(exception, discovered[index]);
+                }
+            }
 
             int enabledCount;
             RagdollBehaviourBase initial =
                 collection.FindInitiallyEnabled(out enabledCount);
             if (enabledCount > 1)
             {
-                Debug.LogWarning(
+                UnityEngine.Debug.LogWarning(
                     "Multiple ragdoll behaviours were enabled at initialization. "
                     + "The first behaviour in the configured root was activated and the others were disabled.",
                     this);
@@ -166,7 +188,7 @@ namespace Hairibar.Ragdoll.Animation
                 }
                 catch (Exception exception)
                 {
-                    Debug.LogException(exception, behaviour);
+                    UnityEngine.Debug.LogException(exception, behaviour);
                 }
             }
         }
@@ -188,7 +210,7 @@ namespace Hairibar.Ragdoll.Animation
                 }
                 catch (Exception exception)
                 {
-                    Debug.LogException(exception, behaviour);
+                    UnityEngine.Debug.LogException(exception, behaviour);
                 }
             }
         }
@@ -209,7 +231,7 @@ namespace Hairibar.Ragdoll.Animation
                 }
                 catch (Exception exception)
                 {
-                    Debug.LogException(exception, behaviour);
+                    UnityEngine.Debug.LogException(exception, behaviour);
                 }
             }
         }
@@ -217,6 +239,11 @@ namespace Hairibar.Ragdoll.Animation
         public bool Activate(RagdollBehaviourBase behaviour)
         {
             EnsureInitialized();
+            if (behaviour && !behaviour.IsInitialized)
+            {
+                throw new InvalidOperationException(
+                    "An uninitialized behaviour cannot become active.");
+            }
             if (isChangingBehaviour)
             {
                 throw new InvalidOperationException(
@@ -251,13 +278,103 @@ namespace Hairibar.Ragdoll.Animation
                     behaviour.SetActiveInternal(true);
                 }
             }
+            catch (Exception switchException)
+            {
+                List<Exception> rollbackErrors =
+                    RollBackFailedActivation(previous, behaviour);
+                if (rollbackErrors.Count > 0)
+                {
+                    rollbackErrors.Insert(0, switchException);
+                    throw new AggregateException(
+                        "The behaviour switch failed and rollback was incomplete.",
+                        rollbackErrors);
+                }
+                throw;
+            }
             finally
             {
                 isChangingBehaviour = false;
             }
 
-            ActiveBehaviourChanged?.Invoke(previous, behaviour);
+            InvokeActiveBehaviourChangedSafely(previous, behaviour);
             return true;
+        }
+
+        void InvokeActiveBehaviourChangedSafely(
+            RagdollBehaviourBase previous,
+            RagdollBehaviourBase current)
+        {
+            Action<RagdollBehaviourBase, RagdollBehaviourBase> handlers =
+                ActiveBehaviourChanged;
+            if (handlers == null) return;
+
+            Delegate[] subscribers = handlers.GetInvocationList();
+            for (int index = 0; index < subscribers.Length; index++)
+            {
+                try
+                {
+                    ((Action<RagdollBehaviourBase, RagdollBehaviourBase>)
+                        subscribers[index])(previous, current);
+                }
+                catch (Exception exception)
+                {
+                    UnityEngine.Debug.LogException(exception, this);
+                }
+            }
+        }
+
+        List<Exception> RollBackFailedActivation(
+            RagdollBehaviourBase previous,
+            RagdollBehaviourBase failedNext)
+        {
+            List<Exception> errors = new List<Exception>();
+
+            if (failedNext && failedNext.IsActive)
+            {
+                try
+                {
+                    failedNext.SetActiveInternal(false);
+                }
+                catch (Exception exception)
+                {
+                    errors.Add(exception);
+                }
+            }
+
+            try
+            {
+                RagdollBehaviourBase ignored;
+                collection.TrySetActive(previous, out ignored);
+            }
+            catch (Exception exception)
+            {
+                errors.Add(exception);
+            }
+
+            IReadOnlyList<RagdollBehaviourBase> registered =
+                collection.Behaviours;
+            for (int index = 0; index < registered.Count; index++)
+            {
+                RagdollBehaviourBase candidate = registered[index];
+                if (!candidate) continue;
+                candidate.enabled = ShouldEnableBehaviour(
+                    lifecycleFrozen,
+                    ReferenceEquals(candidate, previous));
+            }
+
+            if (previous && !previous.IsActive)
+            {
+                try
+                {
+                    previous.SetActiveInternal(true);
+                }
+                catch (Exception exception)
+                {
+                    errors.Add(exception);
+                }
+            }
+
+            return errors;
         }
 
         public bool Activate<T>() where T : RagdollBehaviourBase
@@ -269,6 +386,33 @@ namespace Hairibar.Ragdoll.Animation
             {
                 T behaviour = registered[index] as T;
                 if (behaviour)
+                {
+                    return Activate(behaviour);
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Activates the behaviour whose CLR type name exactly matches the supplied
+        /// value. Both the short name and fully-qualified name are accepted.
+        /// </summary>
+        public bool ActivateByExactTypeName(string exactTypeName)
+        {
+            EnsureInitialized();
+            if (string.IsNullOrEmpty(exactTypeName)) return false;
+
+            IReadOnlyList<RagdollBehaviourBase> registered = collection.Behaviours;
+            for (int index = 0; index < registered.Count; index++)
+            {
+                RagdollBehaviourBase behaviour = registered[index];
+                Type type = behaviour.GetType();
+                if (string.Equals(type.Name, exactTypeName, StringComparison.Ordinal)
+                    || string.Equals(
+                        type.FullName,
+                        exactTypeName,
+                        StringComparison.Ordinal))
                 {
                     return Activate(behaviour);
                 }
@@ -383,25 +527,32 @@ namespace Hairibar.Ragdoll.Animation
                 RagdollBehaviourBase behaviour = registered[index];
                 if (!behaviour) continue;
 
-                switch (phase)
+                try
                 {
-                    case LifecycleNotification.KillStarted:
-                        behaviour.KillStartedInternal();
-                        break;
-                    case LifecycleNotification.KillEnded:
-                        behaviour.KillEndedInternal();
-                        break;
-                    case LifecycleNotification.Resurrected:
-                        behaviour.ResurrectedInternal();
-                        break;
-                    case LifecycleNotification.Frozen:
-                        behaviour.FrozenInternal();
-                        break;
-                    case LifecycleNotification.Unfrozen:
-                        behaviour.UnfrozenInternal();
-                        break;
-                    default:
-                        throw new ArgumentOutOfRangeException(nameof(phase));
+                    switch (phase)
+                    {
+                        case LifecycleNotification.KillStarted:
+                            behaviour.KillStartedInternal();
+                            break;
+                        case LifecycleNotification.KillEnded:
+                            behaviour.KillEndedInternal();
+                            break;
+                        case LifecycleNotification.Resurrected:
+                            behaviour.ResurrectedInternal();
+                            break;
+                        case LifecycleNotification.Frozen:
+                            behaviour.FrozenInternal();
+                            break;
+                        case LifecycleNotification.Unfrozen:
+                            behaviour.UnfrozenInternal();
+                            break;
+                        default:
+                            throw new ArgumentOutOfRangeException(nameof(phase));
+                    }
+                }
+                catch (Exception exception)
+                {
+                    UnityEngine.Debug.LogException(exception, behaviour);
                 }
             }
         }
@@ -424,13 +575,18 @@ namespace Hairibar.Ragdoll.Animation
             for (int index = 0; index < registered.Count; index++)
             {
                 RagdollBehaviourBase behaviour = registered[index];
-                if (behaviour)
+                if (!behaviour) continue;
+                try
                 {
                     behaviour.TeleportInternal(
                         deltaRotation,
                         deltaPosition,
                         pivot,
                         moveToTarget);
+                }
+                catch (Exception exception)
+                {
+                    UnityEngine.Debug.LogException(exception, behaviour);
                 }
             }
         }
@@ -446,9 +602,14 @@ namespace Hairibar.Ragdoll.Animation
             for (int index = 0; index < registered.Count; index++)
             {
                 RagdollBehaviourBase behaviour = registered[index];
-                if (behaviour)
+                if (!behaviour) continue;
+                try
                 {
                     behaviour.ReactivateInternal();
+                }
+                catch (Exception exception)
+                {
+                    UnityEngine.Debug.LogException(exception, behaviour);
                 }
             }
         }

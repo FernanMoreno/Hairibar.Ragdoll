@@ -167,6 +167,7 @@ namespace Hairibar.Ragdoll.Animation
         void Update()
         {
             if (!initialized) return;
+            ReconcileAppliedLevel();
             if (budget && budget.isActiveAndEnabled && !budgetRegistered)
             {
                 RegisterBudget();
@@ -180,6 +181,28 @@ namespace Hairibar.Ragdoll.Animation
 
             EvaluateDistance();
             ScheduleNextEvaluation();
+        }
+
+        void ReconcileAppliedLevel()
+        {
+            if (appliedLevel < 0) return;
+
+            RagdollPhysicsQualityLevel applied =
+                runtimeProfile.GetLevel(appliedLevel);
+            bool lifecycleOwnsSimulation = animator
+                && RagdollSimulationModePolicy.LifecycleOwnsSimulation(
+                    animator.State,
+                    animator.IsKilling,
+                    modeController.IsLifecycleFreezeSuspended);
+            if (RagdollPhysicsQualityReconciliation.RequiresReapply(
+                lifecycleOwnsSimulation,
+                modeController.TargetMode,
+                applied.simulationMode,
+                ragdollSettings.HasRuntimeSolverOverride,
+                applied.useAuthoredSolverSettings))
+            {
+                ApplyEffectiveLevel(true);
+            }
         }
 
         void OnEnable()

@@ -39,7 +39,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
 
                 yield return new WaitForFixedUpdate();
 
-                Assert.That(body.velocity.sqrMagnitude, Is.GreaterThan(0f));
+                Assert.That(body.linearVelocity.sqrMagnitude, Is.GreaterThan(0f));
                 Assert.That(body.angularVelocity.sqrMagnitude, Is.GreaterThan(0f));
             }
             finally

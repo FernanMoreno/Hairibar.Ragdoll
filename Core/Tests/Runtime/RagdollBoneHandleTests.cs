@@ -29,5 +29,20 @@ namespace Hairibar.Ragdoll.Tests
             Assert.That(new RagdollBoneHandle(10, 0, 0).IsValid, Is.False);
             Assert.That(new RagdollBoneHandle(10, 3, -1).IsValid, Is.False);
         }
+
+        [Test]
+        public void BoneName_ProvidesTypedEqualityForGenericCollections()
+        {
+            BoneName value = new BoneName("Spine");
+            Assert.That(typeof(System.IEquatable<BoneName>)
+                .IsAssignableFrom(typeof(BoneName)), Is.True);
+            Assert.That(value.Equals(new BoneName("Spine")), Is.True);
+            Assert.That(value.Equals(new BoneName("Head")), Is.False);
+
+            System.Collections.Generic.HashSet<BoneName> names =
+                new System.Collections.Generic.HashSet<BoneName> { value };
+            Assert.That(names.Contains(new BoneName("Spine")), Is.True);
+            Assert.That(default(BoneName).GetHashCode(), Is.EqualTo(0));
+        }
     }
 }

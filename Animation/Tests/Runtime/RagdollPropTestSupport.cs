@@ -296,8 +296,8 @@ namespace Hairibar.Ragdoll.Animation.Tests
         public void ConfigureBody(Rigidbody body)
         {
             body.mass = Mass;
-            body.drag = Drag;
-            body.angularDrag = AngularDrag;
+            body.linearDamping = Drag;
+            body.angularDamping = AngularDrag;
             body.useGravity = false;
             body.interpolation = RigidbodyInterpolation.Interpolate;
             body.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
@@ -311,7 +311,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
             body.sleepThreshold = SleepThreshold;
             body.solverIterations = 9;
             body.solverVelocityIterations = 4;
-            body.velocity = new Vector3(1f, 0f, 0f);
+            body.linearVelocity = new Vector3(1f, 0f, 0f);
             body.angularVelocity = new Vector3(0f, 1f, 0f);
         }
 

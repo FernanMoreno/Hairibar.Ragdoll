@@ -4,21 +4,80 @@ namespace Hairibar.Ragdoll.Animation
 {
     public partial class RagdollAnimator
     {
+        sealed class CachedActionSubscribers
+        {
+            Action combined;
+            Delegate[] snapshot = Array.Empty<Delegate>();
+
+            internal Delegate[] Snapshot => snapshot;
+
+            internal void Add(Action value)
+            {
+                if (value == null) return;
+                combined = (Action)Delegate.Combine(combined, value);
+                snapshot = combined.GetInvocationList();
+            }
+
+            internal void Remove(Action value)
+            {
+                if (value == null) return;
+                combined = (Action)Delegate.Remove(combined, value);
+                snapshot = combined == null
+                    ? Array.Empty<Delegate>()
+                    : combined.GetInvocationList();
+            }
+        }
+
+        readonly CachedActionSubscribers onRead = new CachedActionSubscribers();
+        readonly CachedActionSubscribers onWrite = new CachedActionSubscribers();
+        readonly CachedActionSubscribers onPostLateUpdate =
+            new CachedActionSubscribers();
+        readonly CachedActionSubscribers onFixTransforms =
+            new CachedActionSubscribers();
+        readonly CachedActionSubscribers onPostInitialized =
+            new CachedActionSubscribers();
+
         /// <summary>Called immediately before an animated Target pose is sampled.</summary>
-        public event Action OnRead;
+        public event Action OnRead
+        {
+            add => onRead.Add(value);
+            remove => onRead.Remove(value);
+        }
 
         /// <summary>Called immediately after the Puppet pose has been mapped to the Target.</summary>
-        public event Action OnWrite;
+        public event Action OnWrite
+        {
+            add => onWrite.Add(value);
+            remove => onWrite.Remove(value);
+        }
 
         /// <summary>Called after every initialized RagdollAnimator LateUpdate.</summary>
-        public event Action OnPostLateUpdate;
+        public event Action OnPostLateUpdate
+        {
+            add => onPostLateUpdate.Add(value);
+            remove => onPostLateUpdate.Remove(value);
+        }
 
         /// <summary>Called when it is time to restore unanimated Target transforms.</summary>
-        public event Action OnFixTransforms;
+        public event Action OnFixTransforms
+        {
+            add => onFixTransforms.Add(value);
+            remove => onFixTransforms.Remove(value);
+        }
+
+        /// <summary>
+        /// Called once after mappings, modifiers, lifecycle, behaviours, collision and
+        /// joint runtime services have initialized and the Puppet has snapped to Target.
+        /// </summary>
+        public event Action OnPostInitialized
+        {
+            add => onPostInitialized.Add(value);
+            remove => onPostInitialized.Remove(value);
+        }
 
         void InvokeReadHooks()
         {
-            OnRead?.Invoke();
+            InvokeActionSafely(onRead.Snapshot);
             if (lifecycleBehaviours && lifecycleBehaviours.IsInitialized)
             {
                 lifecycleBehaviours.NotifyRead();
@@ -31,19 +90,24 @@ namespace Hairibar.Ragdoll.Animation
             {
                 lifecycleBehaviours.NotifyWrite();
             }
-            OnWrite?.Invoke();
+            InvokeActionSafely(onWrite.Snapshot);
         }
 
         void InvokePostLateUpdateHook()
         {
-            OnPostLateUpdate?.Invoke();
+            InvokeActionSafely(onPostLateUpdate.Snapshot);
+        }
+
+        void InvokePostInitializedHook()
+        {
+            InvokeActionSafely(onPostInitialized.Snapshot);
         }
 
         void FixTargetTransformsAtUpdateBoundary()
         {
             if (!LifecycleAllowsAnimationSampling()) return;
 
-            OnFixTransforms?.Invoke();
+            InvokeActionSafely(onFixTransforms.Snapshot);
             if (lifecycleBehaviours && lifecycleBehaviours.IsInitialized)
             {
                 lifecycleBehaviours.NotifyFixTransforms();
@@ -68,6 +132,21 @@ namespace Hairibar.Ragdoll.Animation
             return lifecycleSimulationMode.CurrentMode
                     == RagdollSimulationMode.Active
                 || lifecycleSimulationMode.IsTransitioning;
+        }
+
+        void InvokeActionSafely(Delegate[] subscribers)
+        {
+            for (int index = 0; index < subscribers.Length; index++)
+            {
+                try
+                {
+                    ((Action)subscribers[index])();
+                }
+                catch (Exception exception)
+                {
+                    UnityEngine.Debug.LogException(exception, this);
+                }
+            }
         }
     }
 }

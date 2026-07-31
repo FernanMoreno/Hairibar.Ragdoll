@@ -1,6 +1,7 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
+
 
 namespace Hairibar.Ragdoll.Animation
 {
@@ -85,7 +86,7 @@ namespace Hairibar.Ragdoll.Animation
                 {
                     FailedPropDropRequestCount++;
                     error = "Drop request threw: " + exception.Message;
-                    Debug.LogException(exception, muscle);
+                    UnityEngine.Debug.LogException(exception, muscle);
                     InvokePropDropFailureSafely(muscle, error);
                 }
             }
@@ -151,6 +152,39 @@ namespace Hairibar.Ragdoll.Animation
             }
         }
 
+        void CancelPropActionsForRespawn()
+        {
+            ResolvePropMuscles();
+            List<Exception> failures = null;
+            for (int index = 0; index < resolvedPropMuscles.Count; index++)
+            {
+                RagdollPropMuscle muscle = resolvedPropMuscles[index];
+                if (!muscle) continue;
+                try
+                {
+                    RagdollProp current = muscle.CurrentProp;
+                    RagdollProp requested = muscle.RequestedProp;
+                    if (current && current.Melee) current.Melee.EndAction();
+                    if (requested && requested != current && requested.Melee)
+                    {
+                        requested.Melee.EndAction();
+                    }
+                    muscle.ResetAdditionalPinSampling();
+                }
+                catch (Exception exception)
+                {
+                    if (failures == null) failures = new List<Exception>();
+                    failures.Add(exception);
+                }
+            }
+            if (failures != null)
+            {
+                throw new AggregateException(
+                    "One or more prop actions could not be reset.",
+                    failures);
+            }
+        }
+
         RagdollAnimator ResolvePropOwnerAnimator()
         {
             if (IsInitialized) return Context.Animator;
@@ -181,7 +215,7 @@ namespace Hairibar.Ragdoll.Animation
                 }
                 catch (Exception exception)
                 {
-                    Debug.LogException(exception, this);
+                    UnityEngine.Debug.LogException(exception, this);
                 }
             }
         }
@@ -202,7 +236,7 @@ namespace Hairibar.Ragdoll.Animation
                 }
                 catch (Exception exception)
                 {
-                    Debug.LogException(exception, this);
+                    UnityEngine.Debug.LogException(exception, this);
                 }
             }
         }

@@ -38,6 +38,23 @@ namespace Hairibar.Ragdoll.Animation
             }
         }
 
+        /// <summary>
+        /// Commits this request synchronously even while automatic simulation is active.
+        /// Reserved for atomic lifecycle transactions such as BehaviourPuppet respawn.
+        /// </summary>
+        internal void TeleportImmediate(
+            Vector3 position,
+            Quaternion rotation,
+            bool moveToTarget)
+        {
+            Teleport(position, rotation, moveToTarget);
+            if (teleportPending && !ProcessPendingTeleport())
+            {
+                throw new InvalidOperationException(
+                    "The immediate teleport could not be committed.");
+            }
+        }
+
         void ProcessPendingTeleportAtFixedBoundary()
         {
             if (!teleportPending) return;
@@ -264,6 +281,7 @@ namespace Hairibar.Ragdoll.Animation
             internal Vector3 Velocity;
             internal Vector3 AngularVelocity;
             internal bool WasSleeping;
+            internal bool WasKinematic;
 
             internal static RigidbodySnapshot Capture(Rigidbody body)
             {
@@ -278,9 +296,10 @@ namespace Hairibar.Ragdoll.Animation
                     Body = body,
                     Position = body.position,
                     Rotation = body.rotation,
-                    Velocity = body.velocity,
+                    Velocity = body.linearVelocity,
                     AngularVelocity = body.angularVelocity,
-                    WasSleeping = body.IsSleeping()
+                    WasSleeping = body.IsSleeping(),
+                    WasKinematic = body.isKinematic
                 };
             }
 
@@ -288,10 +307,16 @@ namespace Hairibar.Ragdoll.Animation
             {
                 if (!Body) return;
 
-                Body.velocity = Velocity;
-                Body.angularVelocity = AngularVelocity;
-                if (WasSleeping) Body.Sleep();
-                else Body.WakeUp();
+                // Unity rejects velocity writes on kinematic bodies. Their motion is
+                // transform-driven, so restoring the pose is the complete supported
+                // state. Dynamic bodies retain the exact captured velocities.
+                if (!Body.isKinematic && !WasKinematic)
+                {
+                    Body.linearVelocity = Velocity;
+                    Body.angularVelocity = AngularVelocity;
+                    if (WasSleeping) Body.Sleep();
+                    else Body.WakeUp();
+                }
             }
 
             internal void Restore()

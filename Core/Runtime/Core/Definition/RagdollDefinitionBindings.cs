@@ -148,7 +148,9 @@ namespace Hairibar.Ragdoll
 
             if (collider != null)
             {
-                return TryGetBone(collider.attachedRigidbody, out bone);
+                return TryGetBone(
+                    ResolveAttachedRigidbody(collider),
+                    out bone);
             }
 
             bone = null;
@@ -250,11 +252,32 @@ namespace Hairibar.Ragdoll
 
             if (collider != null)
             {
-                return TryGetBoneHandle(collider.attachedRigidbody, out handle);
+                return TryGetBoneHandle(
+                    ResolveAttachedRigidbody(collider),
+                    out handle);
             }
 
             handle = RagdollBoneHandle.Invalid;
             return false;
+        }
+
+        static Rigidbody ResolveAttachedRigidbody(Collider collider)
+        {
+            Rigidbody attached = collider.attachedRigidbody;
+            if (attached) return attached;
+
+            // Some editor/runtime versions do not populate attachedRigidbody while an
+            // authored hierarchy is inactive. Mirror compound-collider ownership by
+            // walking to the nearest Rigidbody without allocations.
+            for (Transform current = collider.transform;
+                current;
+                current = current.parent)
+            {
+                attached = current.GetComponent<Rigidbody>();
+                if (attached) return attached;
+            }
+
+            return null;
         }
 
         public bool TryGetBoneHandle(ConfigurableJoint joint, out RagdollBoneHandle handle)
@@ -482,7 +505,7 @@ namespace Hairibar.Ragdoll
                 }
                 catch (Exception exception)
                 {
-                    Debug.LogException(exception, this);
+                    UnityEngine.Debug.LogException(exception, this);
                 }
             }
         }
@@ -755,7 +778,7 @@ namespace Hairibar.Ragdoll
             RagdollBoneTopology createdTopology;
             string topologyError;
             if (!RagdollBoneTopology.TryCreate(
-                GetInstanceID(),
+                RagdollUnityObjectId.Get(this),
                 nextGeneration,
                 parentIndices,
                 out createdTopology,
@@ -803,12 +826,15 @@ namespace Hairibar.Ragdoll
 
         RagdollBoneHandle CreateHandle(int index)
         {
-            return new RagdollBoneHandle(GetInstanceID(), registryGeneration, index);
+            return new RagdollBoneHandle(
+                RagdollUnityObjectId.Get(this),
+                registryGeneration,
+                index);
         }
 
         bool HandleBelongsToThisRagdoll(RagdollBoneHandle handle)
         {
-            return handle.RegistryId == GetInstanceID()
+            return handle.RegistryId == RagdollUnityObjectId.Get(this)
                 && handle.Generation == registryGeneration
                 && (uint)handle.Index < (uint)indexedBones.Length;
         }
@@ -841,7 +867,9 @@ namespace Hairibar.Ragdoll
 
             if (Application.isPlaying)
             {
-                Debug.LogError(message, context != null ? context : this);
+                UnityEngine.Debug.LogError(
+                    message,
+                    context != null ? context : this);
             }
 
             return false;

@@ -1,5 +1,6 @@
-﻿using UnityEditor;
+using UnityEditor;
 using UnityEngine;
+
 
 namespace Hairibar.Ragdoll.Animation.Editor
 {
@@ -75,7 +76,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
             string error;
             if (!operation(out error))
             {
-                Debug.LogError(error, targetBindings);
+                UnityEngine.Debug.LogError(error, targetBindings);
                 return;
             }
 

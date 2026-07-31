@@ -19,10 +19,10 @@ namespace Hairibar.Ragdoll.Demo
 
         private void FixedUpdate()
         {
-            Vector3 currentVelocity = rb.velocity;
+            Vector3 currentVelocity = rb.linearVelocity;
             Vector3 velocity = verticalInput * new Vector3(0, 0, speed);
             velocity.y = currentVelocity.y;
-            rb.velocity = rb.rotation * velocity;
+            rb.linearVelocity = rb.rotation * velocity;
 
             Quaternion deltaRotation = Quaternion.Euler(0, horizontalInput * rotationSpeed * Time.deltaTime, 0);
             rb.MoveRotation(deltaRotation * rb.rotation);

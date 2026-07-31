@@ -146,6 +146,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
 
                 rig.Muscle.TickForTesting();
                 Assert.That(rig.PropB.IsReserved, Is.True);
+                rig.CompletePendingBodyDestruction(rig.PropB);
                 rig.Muscle.TickForTesting();
                 rig.Runtime.CommitPending();
                 rig.Muscle.TickForTesting();
@@ -194,6 +195,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 rig.Muscle.TickForTesting();
                 Assert.That(propC.IsReserved, Is.True);
                 Assert.That(rig.PropB.IsReserved, Is.False);
+                rig.CompletePendingBodyDestruction(propC);
                 rig.Muscle.TickForTesting();
                 rig.Runtime.CommitPending();
                 rig.Muscle.TickForTesting();

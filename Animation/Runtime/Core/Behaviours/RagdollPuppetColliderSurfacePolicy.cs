@@ -1,5 +1,9 @@
 ﻿using UnityEngine;
 
+#if UNITY_6000_0_OR_NEWER
+using PhysicMaterial = UnityEngine.PhysicsMaterial;
+#endif
+
 namespace Hairibar.Ragdoll.Animation
 {
     internal struct RagdollPuppetColliderSurfacePlan

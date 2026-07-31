@@ -243,7 +243,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [Test]
-        public void HeldTransaction_FreezesAdditionalPinAndPickedUpMass()
+        public void HeldTransaction_UsesLiveAdditionalPinButFrozenPickedUpMass()
         {
             using (RagdollPropTestRig rig = new RagdollPropTestRig())
             {
@@ -262,7 +262,6 @@ namespace Hairibar.Ragdoll.Animation.Tests
                     rig.TargetSlot.transform,
                     out error), Is.True, error);
                 rig.PropA.PickedUpMass = 20f;
-                rig.PropA.AdditionalPin.Weight = 0f;
                 rig.PropA.CompletePendingBodyDestructionForTesting();
                 Assert.That(rig.PropA.TryCommitPickup(
                     rig.Muscle,
@@ -272,6 +271,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
                     out error), Is.True, error);
 
                 Assert.That(slotBody.mass, Is.EqualTo(6f).Within(0.0001f));
+                rig.PropA.AdditionalPin.Weight = 0.25f;
                 rig.TargetSlot.transform.position = Vector3.right;
                 Assert.That(rig.PropA.TryApplyAdditionalPin(
                     rig.TargetSlot.transform,
@@ -281,7 +281,21 @@ namespace Hairibar.Ragdoll.Animation.Tests
                     out error), Is.True, error);
                 Assert.That(
                     rig.PropA.LastAdditionalPinStep.AppliedWeight,
-                    Is.EqualTo(0.5f).Within(0.0001f));
+                    Is.EqualTo(0.25f).Within(0.0001f));
+            }
+        }
+
+        [Test]
+        public void AddAndRemoveAdditionalPin_ApplyImmediatelyToSettings()
+        {
+            using (RagdollPropTestRig rig = new RagdollPropTestRig())
+            {
+                rig.PropA.RemoveAdditionalPin();
+                Assert.That(rig.PropA.AdditionalPin.Enabled, Is.False);
+
+                rig.PropA.AddAdditionalPin();
+                Assert.That(rig.PropA.AdditionalPin.Enabled, Is.True);
+                Assert.That(rig.PropA.LastAdditionalPinStep.Applied, Is.False);
             }
         }
 

@@ -13,7 +13,7 @@ namespace Hairibar.Ragdoll.Animation
         public float MasterMappingWeight
         {
             get => _masterMappingWeight;
-            set => _masterMappingWeight = Mathf.Clamp01(value);
+            set => _masterMappingWeight = SanitizeUnit(value, 1f);
         }
 
         [SerializeField, Range(0f, 1f)] float _masterMappingWeight = 1f;

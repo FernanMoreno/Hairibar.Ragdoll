@@ -1,6 +1,7 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
+
 
 namespace Hairibar.Ragdoll.Animation
 {
@@ -304,10 +305,209 @@ namespace Hairibar.Ragdoll.Animation
                 }
                 catch (Exception rollbackException)
                 {
-                    Debug.LogException(rollbackException, this);
+                    UnityEngine.Debug.LogException(rollbackException, this);
                     error += " Rollback also failed: " + rollbackException.Message;
                 }
                 handle = RagdollBoneHandle.Invalid;
+                return false;
+            }
+            finally
+            {
+                hierarchyTransactionInProgress = false;
+            }
+        }
+
+        sealed class MuscleRemovalTransaction
+        {
+            internal BoneName RootName;
+            internal bool AttachTargets;
+            internal bool BlockTargetAnimation;
+            internal RagdollMuscleRemoveMode RemoveMode;
+            internal RagdollDefinitionBindings.RuntimeRegistrySnapshot BindingSnapshot;
+            internal AnimatedPair[] OldPairs;
+            internal RagdollHierarchySubsystemSnapshot SubsystemSnapshot;
+            internal Dictionary<BoneName, RuntimeMuscleData> RuntimeSnapshot;
+            internal RemovedPhysicalSnapshot[] PhysicalSnapshots =
+                new RemovedPhysicalSnapshot[0];
+            internal RagdollMuscleChange[] RemovedChanges =
+                new RagdollMuscleChange[0];
+            internal bool RegistryMutated;
+        }
+
+        /// <summary>
+        /// Atomically replaces one leaf muscle while preserving its BoneName slot. The
+        /// old generation handle becomes invalid after commit. Call from FixedUpdate.
+        /// </summary>
+        public RagdollBoneHandle ReplaceMuscle(
+            RagdollBoneHandle existing,
+            RagdollRuntimeMuscleRegistration replacement)
+        {
+            RagdollBoneHandle handle;
+            string error;
+            if (!TryReplaceMuscle(existing, replacement, out handle, out error))
+            {
+                throw new InvalidOperationException(error);
+            }
+            return handle;
+        }
+
+        public bool TryReplaceMuscle(
+            RagdollBoneHandle existing,
+            RagdollRuntimeMuscleRegistration replacement,
+            out RagdollBoneHandle replacementHandle,
+            out string error)
+        {
+            replacementHandle = RagdollBoneHandle.Invalid;
+            error = null;
+            if (!ValidateHierarchyMutation(out error)) return false;
+            if (!Bindings.Topology.Contains(existing))
+            {
+                error = "The replacement handle is stale or belongs to another ragdoll.";
+                return false;
+            }
+
+            RagdollBone oldBone = Bindings.GetBone(existing);
+            if (oldBone.IsRoot)
+            {
+                error = "The root muscle cannot be replaced at runtime.";
+                return false;
+            }
+            for (int index = 0; index < Bindings.BoneCount; index++)
+            {
+                RagdollBoneHandle candidate = Bindings.GetHandleAt(index);
+                if (candidate != existing
+                    && Bindings.Topology.IsAncestorOf(existing, candidate))
+                {
+                    error = "ReplaceMuscle currently requires a leaf muscle; replace descendants first.";
+                    return false;
+                }
+            }
+            if (replacement.Bone != oldBone.Name)
+            {
+                error = "A replacement must preserve the existing BoneName.";
+                return false;
+            }
+            if (!replacement.Joint || !replacement.Target)
+            {
+                error = "A replacement requires a live ConfigurableJoint and Target.";
+                return false;
+            }
+            if (!Enum.IsDefined(typeof(RagdollMuscleGroup), replacement.Group))
+            {
+                error = "The replacement has an unsupported semantic group.";
+                return false;
+            }
+            RagdollBone registered;
+            if (Bindings.TryGetBone(replacement.Joint, out registered))
+            {
+                error = "The replacement joint is already registered.";
+                return false;
+            }
+            Rigidbody newBody = replacement.Joint.GetComponent<Rigidbody>();
+            if (!newBody || Bindings.TryGetBone(newBody, out registered))
+            {
+                error = "The replacement requires an unregistered Rigidbody on its joint.";
+                return false;
+            }
+            for (int index = 0; index < animatedPairs.Length; index++)
+            {
+                if (animatedPairs[index].TargetBone == replacement.Target
+                    && animatedPairs[index].Handle != existing)
+                {
+                    error = "The replacement Target is already assigned to another muscle.";
+                    return false;
+                }
+            }
+
+            RagdollBoneHandle parentHandle;
+            if (!Bindings.Topology.TryGetParent(existing, out parentHandle))
+            {
+                error = "The replacement muscle has no registered parent.";
+                return false;
+            }
+            RagdollBone parentBone = Bindings.GetBone(parentHandle);
+            RagdollDefinitionBindings.RuntimeRegistrySnapshot bindingSnapshot =
+                Bindings.CaptureRuntimeRegistry();
+            Dictionary<BoneName, RuntimeMuscleData> runtimeSnapshot =
+                new Dictionary<BoneName, RuntimeMuscleData>(runtimeMuscles);
+            AnimatedPair[] oldPairs = animatedPairs;
+            RagdollHierarchySubsystemSnapshot subsystemSnapshot =
+                CaptureHierarchySubsystemSnapshot(oldPairs);
+            PhysicalAddSnapshot addSnapshot = CaptureAddSnapshot(replacement, newBody);
+            RagdollMuscleChange[] removed = CreateRemovedChanges(
+                new[] { oldBone },
+                oldPairs);
+            RemovedPhysicalSnapshot[] removedPhysical = CaptureRemovedSnapshots(
+                new[] { oldBone },
+                removed,
+                oldPairs);
+
+            hierarchyTransactionInProgress = true;
+            try
+            {
+                ConfigureAddedMuscle(replacement, parentBone, newBody);
+                RagdollBone[] ignored;
+                if (!Bindings.TryRemoveRuntimeSubtree(
+                    oldBone.Name,
+                    out ignored,
+                    out error))
+                {
+                    throw new InvalidOperationException(error);
+                }
+                runtimeMuscles.Remove(oldBone.Name);
+                runtimeMuscles.Add(
+                    replacement.Bone,
+                    new RuntimeMuscleData(replacement));
+                if (!Bindings.TryAddRuntimeBinding(
+                    replacement.Bone,
+                    replacement.Joint,
+                    out replacementHandle,
+                    out error))
+                {
+                    throw new InvalidOperationException(error);
+                }
+
+                RebuildRuntimeHierarchy(oldPairs, subsystemSnapshot);
+                ReleaseRemovedMuscles(
+                    oldBone.Name,
+                    removedPhysical,
+                    false,
+                    false,
+                    RagdollMuscleRemoveMode.Sever);
+                RagdollMuscleChange added = new RagdollMuscleChange(
+                    replacement.Bone,
+                    replacement.Joint,
+                    replacement.Target,
+                    replacementHandle,
+                    true);
+                NotifyHierarchyCommitted(new[] { added }, removed);
+                return true;
+            }
+            catch (Exception exception)
+            {
+                error = "The muscle replacement was rolled back: " + exception.Message;
+                replacementHandle = RagdollBoneHandle.Invalid;
+                try
+                {
+                    ShutdownMuscleConnections();
+                    ShutdownInternalCollisions();
+                    ShutdownJointRuntime();
+                    runtimeMuscles.Clear();
+                    foreach (KeyValuePair<BoneName, RuntimeMuscleData> pair
+                        in runtimeSnapshot)
+                    {
+                        runtimeMuscles.Add(pair.Key, pair.Value);
+                    }
+                    Bindings.RestoreRuntimeRegistry(bindingSnapshot);
+                    RestoreRemovedSnapshots(removedPhysical);
+                    RestoreAddSnapshot(replacement, newBody, addSnapshot);
+                    RebuildRuntimeHierarchy(oldPairs, subsystemSnapshot);
+                }
+                catch (Exception rollbackException)
+                {
+                    UnityEngine.Debug.LogException(rollbackException, this);
+                    error += " Rollback also failed: " + rollbackException.Message;
+                }
                 return false;
             }
             finally
@@ -428,114 +628,160 @@ namespace Hairibar.Ragdoll.Animation
                 return false;
             }
 
-            RagdollDefinitionBindings.RuntimeRegistrySnapshot bindingSnapshot =
-                Bindings.CaptureRuntimeRegistry();
-            AnimatedPair[] oldPairs = animatedPairs;
-            RagdollHierarchySubsystemSnapshot subsystemSnapshot =
-                CaptureHierarchySubsystemSnapshot(oldPairs);
-            Dictionary<BoneName, RuntimeMuscleData> runtimeSnapshot =
-                new Dictionary<BoneName, RuntimeMuscleData>(runtimeMuscles);
-            RemovedPhysicalSnapshot[] physicalSnapshots =
-                new RemovedPhysicalSnapshot[0];
-            bool registryMutated = false;
+            MuscleRemovalTransaction transaction =
+                CreateMuscleRemovalTransaction(
+                    rootName,
+                    attachTargets,
+                    blockTargetAnimation,
+                    removeMode);
 
             hierarchyTransactionInProgress = true;
             try
             {
-                RagdollBone[] removedBones;
-                if (!Bindings.TryRemoveRuntimeSubtree(
-                    rootName,
-                    out removedBones,
-                    out error))
-                {
-                    return false;
-                }
-                registryMutated = true;
-
-                removedChanges = CreateRemovedChanges(removedBones, oldPairs);
-                physicalSnapshots = CaptureRemovedSnapshots(
-                    removedBones,
-                    removedChanges,
-                    oldPairs);
-                for (int index = 0; index < removedBones.Length; index++)
-                {
-                    runtimeMuscles.Remove(removedBones[index].Name);
-                }
-
-                RebuildRuntimeHierarchy(oldPairs, subsystemSnapshot);
-                ReleaseRemovedMuscles(
-                    rootName,
-                    physicalSnapshots,
-                    attachTargets,
-                    blockTargetAnimation,
-                    removeMode);
-                NotifyHierarchyCommitted(
-                    new RagdollMuscleChange[0],
-                    removedChanges);
-                return true;
+                bool committed = CommitMuscleRemoval(transaction, out error);
+                removedChanges = transaction.RemovedChanges;
+                return committed;
             }
             catch (Exception exception)
             {
                 error = "The runtime muscle removal failed: "
                     + exception.Message;
 
-                if (irreversibleJointBreak && registryMutated)
+                if (irreversibleJointBreak && transaction.RegistryMutated)
                 {
-                    // A Unity joint break has already destroyed the connection. Restoring
-                    // the old registry would reintroduce a bone with a missing joint, so
-                    // the reduced registry is authoritative. Retry rebuilding it and
-                    // disable the animator if even the degraded commit cannot be formed.
-                    try
-                    {
-                        RebuildRuntimeHierarchy(oldPairs, subsystemSnapshot);
-                        ReleaseRemovedMuscles(
-                            rootName,
-                            physicalSnapshots,
-                            attachTargets,
-                            blockTargetAnimation,
-                            removeMode);
-                        NotifyHierarchyCommitted(
-                            new RagdollMuscleChange[0],
-                            removedChanges);
-                        error = null;
-                        return true;
-                    }
-                    catch (Exception degradedException)
-                    {
-                        Debug.LogException(degradedException, this);
-                        enabled = false;
-                        error += " The broken branch could not be rebuilt and RagdollAnimator was disabled: "
-                            + degradedException.Message;
-                        return false;
-                    }
+                    removedChanges = transaction.RemovedChanges;
+                    return TryCommitBrokenMuscleRemoval(transaction, ref error);
                 }
 
-                try
-                {
-                    ShutdownMuscleConnections();
-                    ShutdownInternalCollisions();
-                    ShutdownJointRuntime();
-                    runtimeMuscles.Clear();
-                    foreach (KeyValuePair<BoneName, RuntimeMuscleData> pair
-                        in runtimeSnapshot)
-                    {
-                        runtimeMuscles.Add(pair.Key, pair.Value);
-                    }
-                    Bindings.RestoreRuntimeRegistry(bindingSnapshot);
-                    RestoreRemovedSnapshots(physicalSnapshots);
-                    RebuildRuntimeHierarchy(oldPairs, subsystemSnapshot);
-                }
-                catch (Exception rollbackException)
-                {
-                    Debug.LogException(rollbackException, this);
-                    error += " Rollback also failed: " + rollbackException.Message;
-                }
+                RollbackMuscleRemoval(transaction, ref error);
                 removedChanges = new RagdollMuscleChange[0];
                 return false;
             }
             finally
             {
                 hierarchyTransactionInProgress = false;
+            }
+        }
+
+        MuscleRemovalTransaction CreateMuscleRemovalTransaction(
+            BoneName rootName,
+            bool attachTargets,
+            bool blockTargetAnimation,
+            RagdollMuscleRemoveMode removeMode)
+        {
+            AnimatedPair[] oldPairs = animatedPairs;
+            return new MuscleRemovalTransaction
+            {
+                RootName = rootName,
+                AttachTargets = attachTargets,
+                BlockTargetAnimation = blockTargetAnimation,
+                RemoveMode = removeMode,
+                BindingSnapshot = Bindings.CaptureRuntimeRegistry(),
+                OldPairs = oldPairs,
+                SubsystemSnapshot = CaptureHierarchySubsystemSnapshot(oldPairs),
+                RuntimeSnapshot =
+                    new Dictionary<BoneName, RuntimeMuscleData>(runtimeMuscles)
+            };
+        }
+
+        bool CommitMuscleRemoval(
+            MuscleRemovalTransaction transaction,
+            out string error)
+        {
+            RagdollBone[] removedBones;
+            if (!Bindings.TryRemoveRuntimeSubtree(
+                transaction.RootName,
+                out removedBones,
+                out error))
+            {
+                return false;
+            }
+            transaction.RegistryMutated = true;
+            transaction.RemovedChanges = CreateRemovedChanges(
+                removedBones,
+                transaction.OldPairs);
+            transaction.PhysicalSnapshots = CaptureRemovedSnapshots(
+                removedBones,
+                transaction.RemovedChanges,
+                transaction.OldPairs);
+            for (int index = 0; index < removedBones.Length; index++)
+            {
+                runtimeMuscles.Remove(removedBones[index].Name);
+            }
+
+            RebuildRuntimeHierarchy(
+                transaction.OldPairs,
+                transaction.SubsystemSnapshot);
+            ReleaseRemovedMuscles(
+                transaction.RootName,
+                transaction.PhysicalSnapshots,
+                transaction.AttachTargets,
+                transaction.BlockTargetAnimation,
+                transaction.RemoveMode);
+            NotifyHierarchyCommitted(
+                new RagdollMuscleChange[0],
+                transaction.RemovedChanges);
+            return true;
+        }
+
+        bool TryCommitBrokenMuscleRemoval(
+            MuscleRemovalTransaction transaction,
+            ref string error)
+        {
+            // A Unity joint break has already destroyed the connection. Restoring
+            // the old registry would reintroduce a bone with a missing joint.
+            try
+            {
+                RebuildRuntimeHierarchy(
+                    transaction.OldPairs,
+                    transaction.SubsystemSnapshot);
+                ReleaseRemovedMuscles(
+                    transaction.RootName,
+                    transaction.PhysicalSnapshots,
+                    transaction.AttachTargets,
+                    transaction.BlockTargetAnimation,
+                    transaction.RemoveMode);
+                NotifyHierarchyCommitted(
+                    new RagdollMuscleChange[0],
+                    transaction.RemovedChanges);
+                error = null;
+                return true;
+            }
+            catch (Exception degradedException)
+            {
+                UnityEngine.Debug.LogException(degradedException, this);
+                enabled = false;
+                error += " The broken branch could not be rebuilt and RagdollAnimator was disabled: "
+                    + degradedException.Message;
+                return false;
+            }
+        }
+
+        void RollbackMuscleRemoval(
+            MuscleRemovalTransaction transaction,
+            ref string error)
+        {
+            try
+            {
+                ShutdownMuscleConnections();
+                ShutdownInternalCollisions();
+                ShutdownJointRuntime();
+                runtimeMuscles.Clear();
+                foreach (KeyValuePair<BoneName, RuntimeMuscleData> pair
+                    in transaction.RuntimeSnapshot)
+                {
+                    runtimeMuscles.Add(pair.Key, pair.Value);
+                }
+                Bindings.RestoreRuntimeRegistry(transaction.BindingSnapshot);
+                RestoreRemovedSnapshots(transaction.PhysicalSnapshots);
+                RebuildRuntimeHierarchy(
+                    transaction.OldPairs,
+                    transaction.SubsystemSnapshot);
+            }
+            catch (Exception rollbackException)
+            {
+                UnityEngine.Debug.LogException(rollbackException, this);
+                error += " Rollback also failed: " + rollbackException.Message;
             }
         }
 
@@ -615,7 +861,7 @@ namespace Hairibar.Ragdoll.Animation
                 registration.Target.gameObject.layer = gameObject.layer;
             }
 
-            body.velocity = parentBone.Rigidbody.velocity;
+            body.linearVelocity = parentBone.Rigidbody.linearVelocity;
             body.angularVelocity = parentBone.Rigidbody.angularVelocity;
         }
 
@@ -649,7 +895,7 @@ namespace Hairibar.Ragdoll.Animation
                 AutoConfigureConnectedAnchor = joint.autoConfigureConnectedAnchor,
                 SlerpDrive = joint.slerpDrive,
                 TargetAngularVelocity = joint.targetAngularVelocity,
-                Velocity = body.velocity,
+                Velocity = body.linearVelocity,
                 AngularVelocity = body.angularVelocity,
                 WasSleeping = body.IsSleeping()
             };
@@ -685,7 +931,7 @@ namespace Hairibar.Ragdoll.Animation
                 snapshot.AutoConfigureConnectedAnchor;
             joint.slerpDrive = snapshot.SlerpDrive;
             joint.targetAngularVelocity = snapshot.TargetAngularVelocity;
-            body.velocity = snapshot.Velocity;
+            body.linearVelocity = snapshot.Velocity;
             body.angularVelocity = snapshot.AngularVelocity;
             if (snapshot.WasSleeping && !body.isKinematic) body.Sleep();
             else if (!body.isKinematic) body.WakeUp();
@@ -762,7 +1008,7 @@ namespace Hairibar.Ragdoll.Animation
                     Rigidbody = body,
                     IsKinematic = body && body.isKinematic,
                     DetectCollisions = body && body.detectCollisions,
-                    Velocity = body ? body.velocity : Vector3.zero,
+                    Velocity = body ? body.linearVelocity : Vector3.zero,
                     AngularVelocity = body ? body.angularVelocity : Vector3.zero,
                     WasSleeping = body && body.IsSleeping(),
                     ConnectedBody = joint ? joint.connectedBody : null,
@@ -823,7 +1069,7 @@ namespace Hairibar.Ragdoll.Animation
                 {
                     snapshot.Rigidbody.isKinematic = snapshot.IsKinematic;
                     snapshot.Rigidbody.detectCollisions = snapshot.DetectCollisions;
-                    snapshot.Rigidbody.velocity = snapshot.Velocity;
+                    snapshot.Rigidbody.linearVelocity = snapshot.Velocity;
                     snapshot.Rigidbody.angularVelocity = snapshot.AngularVelocity;
                     if (snapshot.WasSleeping && !snapshot.Rigidbody.isKinematic)
                     {
@@ -1014,7 +1260,7 @@ namespace Hairibar.Ragdoll.Animation
             }
             catch (Exception exception)
             {
-                Debug.LogException(exception, Bindings);
+                UnityEngine.Debug.LogException(exception, Bindings);
             }
 
             RagdollBehaviourController behaviours =
@@ -1027,7 +1273,7 @@ namespace Hairibar.Ragdoll.Animation
                 }
                 catch (Exception exception)
                 {
-                    Debug.LogException(exception, behaviours);
+                    UnityEngine.Debug.LogException(exception, behaviours);
                 }
             }
 
@@ -1056,7 +1302,7 @@ namespace Hairibar.Ragdoll.Animation
                 }
                 catch (Exception exception)
                 {
-                    Debug.LogException(exception, this);
+                    UnityEngine.Debug.LogException(exception, this);
                 }
             }
         }
@@ -1073,7 +1319,7 @@ namespace Hairibar.Ragdoll.Animation
                 }
                 catch (Exception exception)
                 {
-                    Debug.LogException(exception, this);
+                    UnityEngine.Debug.LogException(exception, this);
                 }
             }
         }

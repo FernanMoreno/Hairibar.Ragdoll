@@ -16,6 +16,12 @@ namespace Hairibar.Ragdoll.Animation
         public Vector3 CenterOfMass { get; private set; }
         public Vector3 CenterOfMassVelocity { get; private set; }
         public float TotalMass { get; private set; }
+        public bool HasCenterOfPressure { get; private set; }
+        public Vector3 CenterOfPressure { get; private set; }
+        public Vector3 CenterOfMassVector { get; private set; }
+        public Vector3 CenterOfMassDirection { get; private set; }
+        public float CenterOfMassDistance { get; private set; }
+        public float CenterOfMassAngle { get; private set; }
 
         internal RagdollGroundingSnapshot(
             bool isGrounded,
@@ -24,7 +30,10 @@ namespace Hairibar.Ragdoll.Animation
             Vector3 groundNormal,
             Vector3 centerOfMass,
             Vector3 centerOfMassVelocity,
-            float totalMass)
+            float totalMass,
+            bool hasCenterOfPressure = false,
+            Vector3 centerOfPressure = default(Vector3),
+            Vector3 up = default(Vector3))
         {
             IsGrounded = isGrounded;
             StableTime = Mathf.Max(0f, stableTime);
@@ -35,6 +44,23 @@ namespace Hairibar.Ragdoll.Animation
             CenterOfMass = centerOfMass;
             CenterOfMassVelocity = centerOfMassVelocity;
             TotalMass = Mathf.Max(0f, totalMass);
+            HasCenterOfPressure = hasCenterOfPressure;
+            CenterOfPressure = hasCenterOfPressure
+                ? centerOfPressure
+                : Vector3.zero;
+            CenterOfMassVector = hasCenterOfPressure
+                ? centerOfMass - centerOfPressure
+                : Vector3.zero;
+            CenterOfMassDistance = CenterOfMassVector.magnitude;
+            CenterOfMassDirection = CenterOfMassDistance > Mathf.Epsilon
+                ? CenterOfMassVector / CenterOfMassDistance
+                : Vector3.zero;
+            Vector3 resolvedUp = up.sqrMagnitude > Mathf.Epsilon
+                ? up.normalized
+                : Vector3.up;
+            CenterOfMassAngle = CenterOfMassDistance > Mathf.Epsilon
+                ? Vector3.Angle(resolvedUp, CenterOfMassDirection)
+                : 0f;
         }
 
         public static RagdollGroundingSnapshot Empty

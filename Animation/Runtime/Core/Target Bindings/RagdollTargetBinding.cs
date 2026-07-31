@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace Hairibar.Ragdoll.Animation
@@ -13,6 +14,7 @@ namespace Hairibar.Ragdoll.Animation
     {
         [SerializeField] BoneName bone;
         [SerializeField] Transform target;
+        [SerializeField] Transform[] animatedTargetChildren = new Transform[0];
 
         // Position is stored in the ragdoll bone's local space. Rotation converts a
         // ragdoll world rotation into the target bone's world rotation.
@@ -22,6 +24,8 @@ namespace Hairibar.Ragdoll.Animation
 
         public BoneName Bone => bone;
         public Transform Target => target;
+        public IReadOnlyList<Transform> AnimatedTargetChildren =>
+            animatedTargetChildren ?? Array.Empty<Transform>();
         public Vector3 TargetPositionOffset => targetPositionOffset;
         public Quaternion TargetRotationOffset => GetNormalizedRotationOffset();
         public bool OffsetsCaptured => offsetsCaptured;
@@ -66,6 +70,11 @@ namespace Hairibar.Ragdoll.Animation
         internal void InvalidateOffsets()
         {
             offsetsCaptured = false;
+        }
+
+        public void SetAnimatedTargetChildren(Transform[] children)
+        {
+            animatedTargetChildren = children ?? new Transform[0];
         }
 
         internal RagdollAnimator.AnimatedPose ConvertTargetPoseToRagdoll(

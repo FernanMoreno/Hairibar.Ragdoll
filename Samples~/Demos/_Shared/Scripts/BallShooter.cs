@@ -13,7 +13,7 @@ namespace Hairibar.Ragdoll.Demo
 
         private Rigidbody ball;
         private new Transform transform;
-        private new Camera camera;
+        private Camera camera;
 
         private void Update()
         {
@@ -31,7 +31,7 @@ namespace Hairibar.Ragdoll.Demo
             ball.mass = mass;
 
             ball.transform.position = transform.position;
-            ball.velocity = camera.ScreenPointToRay(Input.mousePosition).direction.normalized * force;
+            ball.linearVelocity = camera.ScreenPointToRay(Input.mousePosition).direction.normalized * force;
         }
 
         private void CreateBall()

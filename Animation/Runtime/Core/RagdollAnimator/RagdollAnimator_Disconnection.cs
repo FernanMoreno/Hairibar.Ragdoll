@@ -1,6 +1,7 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
+
 
 namespace Hairibar.Ragdoll.Animation
 {
@@ -56,6 +57,7 @@ namespace Hairibar.Ragdoll.Animation
             internal int CollisionIslandId;
             internal bool SnapshotCaptured;
             internal ConnectionPhysicalSnapshot Snapshot;
+            internal AnimatedTargetChildSnapshot[] AnimatedTargetChildren;
         }
 
         internal sealed class MuscleConnectionHierarchySnapshot
@@ -87,6 +89,15 @@ namespace Hairibar.Ragdoll.Animation
             internal int CollisionIslandId;
             internal bool SnapshotCaptured;
             internal ConnectionPhysicalSnapshot Snapshot;
+            internal AnimatedTargetChildSnapshot[] AnimatedTargetChildren;
+        }
+
+        internal struct AnimatedTargetChildSnapshot
+        {
+            internal Transform Transform;
+            internal Vector3 LocalPosition;
+            internal Quaternion LocalRotation;
+            internal Vector3 LocalScale;
         }
 
         [SerializeField, HideInInspector]
@@ -293,7 +304,8 @@ namespace Hairibar.Ragdoll.Animation
                     Severed = record.Severed,
                     CollisionIslandId = record.CollisionIslandId,
                     SnapshotCaptured = record.SnapshotCaptured,
-                    Snapshot = record.Snapshot
+                    Snapshot = record.Snapshot,
+                    AnimatedTargetChildren = record.AnimatedTargetChildren
                 };
             }
             return new MuscleConnectionHierarchySnapshot(
@@ -321,7 +333,8 @@ namespace Hairibar.Ragdoll.Animation
             for (int index = 0; index < animatedPairs.Length; index++)
             {
                 AnimatedPair pair = animatedPairsByHandleIndex[index];
-                ConnectionHierarchyEntry previous;
+                ConnectionHierarchyEntry previous =
+                    default(ConnectionHierarchyEntry);
                 bool retained = snapshot != null
                     && snapshot.Entries.TryGetValue(pair.Name, out previous);
                 ConnectionRecord record = new ConnectionRecord
@@ -340,7 +353,10 @@ namespace Hairibar.Ragdoll.Animation
                     SnapshotCaptured = retained && previous.SnapshotCaptured,
                     Snapshot = retained
                         ? previous.Snapshot
-                        : new ConnectionPhysicalSnapshot()
+                        : new ConnectionPhysicalSnapshot(),
+                    AnimatedTargetChildren = retained
+                        ? previous.AnimatedTargetChildren
+                        : null
                 };
                 connectionRecords[index] = record;
                 bool disconnected = record.State
@@ -515,6 +531,7 @@ namespace Hairibar.Ragdoll.Animation
                     if (!branch[index] || disconnectedBoneMask[index]) continue;
                     ConnectionRecord record = connectionRecords[index];
                     CaptureConnectionSnapshot(record);
+                    CaptureAnimatedTargetChildren(record);
                     applied.Add(record);
                     record.Mode = operation.Mode;
                     record.Severed = severed[index];
@@ -550,6 +567,7 @@ namespace Hairibar.Ragdoll.Animation
                     record.State = RagdollMuscleConnectionState.Connected;
                     record.Severed = false;
                     record.CollisionIslandId = 0;
+                    record.AnimatedTargetChildren = null;
                 }
                 nextDisconnectedCollisionIslandId = islandCounterBefore;
                 ApplyDisconnectedMasksToPhysicalOwners();
@@ -628,6 +646,7 @@ namespace Hairibar.Ragdoll.Animation
                 record.Severed = false;
                 record.CollisionIslandId = 0;
                 record.SnapshotCaptured = false;
+                record.AnimatedTargetChildren = null;
                 disconnectedMuscleCount--;
             }
 
@@ -650,7 +669,7 @@ namespace Hairibar.Ragdoll.Animation
             if (!Bindings.TryGetBone(operation.Bone, out broken)) return true;
             if (broken.IsRoot)
             {
-                Debug.LogError(
+                UnityEngine.Debug.LogError(
                     "The root muscle joint broke. Hairibar requires a registered root, so RagdollAnimator has been disabled instead of constructing an invalid zero-root registry.",
                     this);
                 enabled = false;
@@ -676,7 +695,7 @@ namespace Hairibar.Ragdoll.Animation
                 out removed,
                 out error))
             {
-                Debug.LogError(
+                UnityEngine.Debug.LogError(
                     "Joint break for '" + operation.Bone
                     + "' could not be committed yet: " + error,
                     this);
@@ -722,11 +741,85 @@ namespace Hairibar.Ragdoll.Animation
                 AutoConfigureConnectedAnchor = joint && joint.autoConfigureConnectedAnchor,
                 SlerpDrive = joint ? joint.slerpDrive : new JointDrive(),
                 TargetAngularVelocity = joint ? joint.targetAngularVelocity : Vector3.zero,
-                Velocity = body.velocity,
+                Velocity = body.linearVelocity,
                 AngularVelocity = body.angularVelocity,
                 WasSleeping = body.IsSleeping()
             };
             record.SnapshotCaptured = true;
+        }
+
+        /// <summary>
+        /// Queues a reversible branch disable at the next FixedUpdate boundary. The branch
+        /// root is temporarily severed and its complete physical snapshot is restored by
+        /// EnableMuscleRecursive.
+        /// </summary>
+        public void DisableMuscleRecursive(
+            RagdollBoneHandle muscle,
+            bool deactivate = true)
+        {
+            DisconnectMuscleRecursive(
+                muscle,
+                RagdollMuscleDisconnectMode.Sever,
+                deactivate);
+        }
+
+        /// <summary>Queues restoration of a reversibly disabled branch.</summary>
+        public void EnableMuscleRecursive(RagdollBoneHandle muscle)
+        {
+            ReconnectMuscleRecursive(muscle);
+        }
+
+        void CaptureAnimatedTargetChildren(ConnectionRecord record)
+        {
+            IReadOnlyList<Transform> children =
+                record.Pair.TargetBinding.AnimatedTargetChildren;
+            if (children.Count == 0)
+            {
+                record.AnimatedTargetChildren = null;
+                return;
+            }
+
+            AnimatedTargetChildSnapshot[] snapshots =
+                new AnimatedTargetChildSnapshot[children.Count];
+            for (int index = 0; index < children.Count; index++)
+            {
+                Transform child = children[index];
+                snapshots[index] = new AnimatedTargetChildSnapshot
+                {
+                    Transform = child,
+                    LocalPosition = child.localPosition,
+                    LocalRotation = child.localRotation,
+                    LocalScale = child.localScale
+                };
+            }
+            record.AnimatedTargetChildren = snapshots;
+        }
+
+        void ApplyDisconnectedAnimatedTargetChildren()
+        {
+            if (connectionRecords == null || disconnectedMuscleCount == 0) return;
+            for (int recordIndex = 0;
+                recordIndex < connectionRecords.Length;
+                recordIndex++)
+            {
+                ConnectionRecord record = connectionRecords[recordIndex];
+                if (record.State == RagdollMuscleConnectionState.Connected
+                    || record.AnimatedTargetChildren == null)
+                {
+                    continue;
+                }
+                for (int childIndex = 0;
+                    childIndex < record.AnimatedTargetChildren.Length;
+                    childIndex++)
+                {
+                    AnimatedTargetChildSnapshot child =
+                        record.AnimatedTargetChildren[childIndex];
+                    if (!child.Transform) continue;
+                    child.Transform.localPosition = child.LocalPosition;
+                    child.Transform.localRotation = child.LocalRotation;
+                    child.Transform.localScale = child.LocalScale;
+                }
+            }
         }
 
         void ApplyDisconnectedPhysicalState(
@@ -771,12 +864,12 @@ namespace Hairibar.Ragdoll.Animation
                 if (applyMappedVelocity
                     && ActiveState != RagdollLifecycleState.Frozen)
                 {
-                    body.velocity = record.Pair.poseLinearVelocity;
+                    body.linearVelocity = record.Pair.poseLinearVelocity;
                     body.angularVelocity = record.Pair.poseAngularVelocity;
                 }
                 else
                 {
-                    body.velocity = record.Snapshot.Velocity;
+                    body.linearVelocity = record.Snapshot.Velocity;
                     body.angularVelocity = record.Snapshot.AngularVelocity;
                 }
                 if (record.Snapshot.WasSleeping) body.Sleep();
@@ -827,7 +920,7 @@ namespace Hairibar.Ragdoll.Animation
                 body.isKinematic = true;
                 body.position = record.Pair.currentPose.worldPosition;
                 body.rotation = record.Pair.currentPose.worldRotation;
-                body.velocity = Vector3.zero;
+                body.linearVelocity = Vector3.zero;
                 body.angularVelocity = Vector3.zero;
                 body.isKinematic = ResolveReconnectedKinematic(record.Pair);
                 body.WakeUp();
@@ -835,7 +928,7 @@ namespace Hairibar.Ragdoll.Animation
             else
             {
                 body.isKinematic = snapshot.IsKinematic;
-                body.velocity = snapshot.Velocity;
+                body.linearVelocity = snapshot.Velocity;
                 body.angularVelocity = snapshot.AngularVelocity;
                 if (snapshot.WasSleeping && !body.isKinematic) body.Sleep();
                 else if (!body.isKinematic) body.WakeUp();
@@ -917,7 +1010,7 @@ namespace Hairibar.Ragdoll.Animation
                 }
                 Rigidbody body = bone.Rigidbody;
                 body.isKinematic = false;
-                body.velocity = Vector3.zero;
+                body.linearVelocity = Vector3.zero;
                 body.angularVelocity = Vector3.zero;
                 body.WakeUp();
             }
@@ -1002,7 +1095,6 @@ namespace Hairibar.Ragdoll.Animation
                 Quaternion rotation;
                 pair.GetMappedTargetWorldPose(out position, out rotation);
                 pair.TargetBone.SetPositionAndRotation(position, rotation);
-                pair.TargetBinding.MapAnimatedTargetChildren();
             }
         }
 
@@ -1190,7 +1282,7 @@ namespace Hairibar.Ragdoll.Animation
                 }
                 catch (Exception exception)
                 {
-                    Debug.LogException(exception, this);
+                    UnityEngine.Debug.LogException(exception, this);
                 }
             }
         }
@@ -1209,7 +1301,7 @@ namespace Hairibar.Ragdoll.Animation
                 }
                 catch (Exception exception)
                 {
-                    Debug.LogException(exception, this);
+                    UnityEngine.Debug.LogException(exception, this);
                 }
             }
         }

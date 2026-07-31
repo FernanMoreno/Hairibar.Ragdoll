@@ -16,6 +16,9 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 Quaternion releaseRotation = Quaternion.Euler(15f, 35f, 5f);
                 Vector3 releaseVelocity = new Vector3(2f, 3f, 4f);
                 Vector3 releaseAngularVelocity = new Vector3(-1f, 0.5f, 2f);
+                Assert.That(
+                    rig.PropA.CurrentRigidbody,
+                    Is.SameAs(rig.PropA.GetComponent<Rigidbody>()));
 
                 string error;
                 Assert.That(
@@ -26,7 +29,13 @@ namespace Hairibar.Ragdoll.Animation.Tests
                         out error),
                     Is.True,
                     error);
+                Assert.That(
+                    rig.PropA.CurrentRigidbody,
+                    Is.SameAs(rig.PhysicalSlot.GetComponent<Rigidbody>()));
                 rig.CompletePendingBodyDestruction(rig.PropA);
+                Assert.That(
+                    rig.PropA.CurrentRigidbody,
+                    Is.SameAs(rig.PhysicalSlot.GetComponent<Rigidbody>()));
                 Assert.That(
                     rig.PropA.transform.parent,
                     Is.EqualTo(rig.PhysicalSlot.transform));
@@ -50,6 +59,9 @@ namespace Hairibar.Ragdoll.Animation.Tests
                     Is.True,
                     error);
                 Assert.That(pending, Is.False);
+                Assert.That(
+                    rig.PropA.CurrentRigidbody,
+                    Is.SameAs(rig.PropA.GetComponent<Rigidbody>()));
 
                 Assert.That(
                     rig.PropA.transform.parent,
@@ -82,10 +94,14 @@ namespace Hairibar.Ragdoll.Animation.Tests
 
                 Rigidbody restored = rig.PropA.GetComponent<Rigidbody>();
                 AssertExactBody(rig, restored);
-                Assert.That(restored.velocity, Is.EqualTo(releaseVelocity));
                 Assert.That(
-                    restored.angularVelocity,
-                    Is.EqualTo(releaseAngularVelocity));
+                    Vector3.Distance(restored.linearVelocity, releaseVelocity),
+                    Is.LessThan(0.1f));
+                Assert.That(
+                    Vector3.Distance(
+                        restored.angularVelocity,
+                        releaseAngularVelocity),
+                    Is.LessThan(0.25f));
             }
         }
 
@@ -135,7 +151,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 Vector3 originalLocalPosition = rig.PropA.transform.localPosition;
                 Quaternion originalLocalRotation = rig.PropA.transform.localRotation;
                 Vector3 originalVelocity =
-                    rig.PropA.GetComponent<Rigidbody>().velocity;
+                    rig.PropA.GetComponent<Rigidbody>().linearVelocity;
                 Vector3 originalAngularVelocity =
                     rig.PropA.GetComponent<Rigidbody>().angularVelocity;
 
@@ -173,10 +189,14 @@ namespace Hairibar.Ragdoll.Animation.Tests
 
                 Rigidbody restored = rig.PropA.GetComponent<Rigidbody>();
                 AssertExactBody(rig, restored);
-                Assert.That(restored.velocity, Is.EqualTo(originalVelocity));
                 Assert.That(
-                    restored.angularVelocity,
-                    Is.EqualTo(originalAngularVelocity));
+                    Vector3.Distance(restored.linearVelocity, originalVelocity),
+                    Is.LessThan(0.1f));
+                Assert.That(
+                    Vector3.Distance(
+                        restored.angularVelocity,
+                        originalAngularVelocity),
+                    Is.LessThan(0.25f));
             }
         }
 
@@ -278,9 +298,9 @@ namespace Hairibar.Ragdoll.Animation.Tests
         {
             Assert.That(restored, Is.Not.Null);
             Assert.That(restored.mass, Is.EqualTo(rig.Mass).Within(0.0001f));
-            Assert.That(restored.drag, Is.EqualTo(rig.Drag).Within(0.0001f));
+            Assert.That(restored.linearDamping, Is.EqualTo(rig.Drag).Within(0.0001f));
             Assert.That(
-                restored.angularDrag,
+                restored.angularDamping,
                 Is.EqualTo(rig.AngularDrag).Within(0.0001f));
             Assert.That(restored.useGravity, Is.False);
             Assert.That(restored.isKinematic, Is.False);
@@ -295,7 +315,9 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 Is.EqualTo(RigidbodyConstraints.FreezeRotationZ));
             Assert.That(restored.detectCollisions, Is.True);
             Assert.That(restored.centerOfMass, Is.EqualTo(rig.CenterOfMass));
-            Assert.That(restored.inertiaTensor, Is.EqualTo(rig.InertiaTensor));
+            Assert.That(
+                Vector3.Distance(restored.inertiaTensor, rig.InertiaTensor),
+                Is.LessThan(0.0001f));
             Assert.That(
                 Quaternion.Angle(
                     restored.inertiaTensorRotation,

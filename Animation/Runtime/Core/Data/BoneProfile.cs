@@ -27,13 +27,19 @@ namespace Hairibar.Ragdoll.Animation
 
         internal void SetPositionPinWeight(float value)
         {
-            positionPinWeight = Mathf.Clamp01(value);
+            positionPinWeight = float.IsNaN(value) || float.IsInfinity(value)
+                ? 0f
+                : Mathf.Clamp01(value);
             positionPinWeightInitialized = true;
         }
 
         internal void MultiplyPositionPinWeight(float multiplier)
         {
-            SetPositionPinWeight(PositionPinWeight * Mathf.Clamp01(multiplier));
+            SetPositionPinWeight(
+                PositionPinWeight
+                * (float.IsNaN(multiplier) || float.IsInfinity(multiplier)
+                    ? 0f
+                    : Mathf.Clamp01(multiplier)));
         }
 
         public static BoneProfile Blend(BoneProfile a, BoneProfile b, float t)

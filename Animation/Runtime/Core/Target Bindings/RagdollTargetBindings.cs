@@ -52,6 +52,57 @@ namespace Hairibar.Ragdoll.Animation
         }
 
         /// <summary>
+        /// Replaces the table from an explicit semantic map and captures offsets.
+        /// This enables sharing a Puppet with Targets whose names and bone axes differ.
+        /// Call before the owning RagdollAnimator initializes.
+        /// </summary>
+        public bool TryAssignTargets(
+            IReadOnlyDictionary<BoneName, Transform> targets,
+            out string error)
+        {
+            if (!ragdollBindings || !ragdollBindings.IsInitialized)
+            {
+                error = "Ragdoll bindings must be initialized first.";
+                return false;
+            }
+            if (targets == null)
+            {
+                error = "An explicit target map is required.";
+                return false;
+            }
+
+            RagdollTargetBinding[] generated =
+                new RagdollTargetBinding[ragdollBindings.BoneCount];
+            HashSet<Transform> unique = new HashSet<Transform>();
+            for (int index = 0; index < generated.Length; index++)
+            {
+                RagdollBone bone = ragdollBindings.GetBoneAt(index);
+                Transform target;
+                if (!targets.TryGetValue(bone.Name, out target) || !target)
+                {
+                    error = "No target was supplied for ragdoll bone '"
+                        + bone.Name + "'.";
+                    return false;
+                }
+                if (!unique.Add(target))
+                {
+                    error = "Target Transform '" + target.name
+                        + "' was assigned more than once.";
+                    return false;
+                }
+                generated[index] = new RagdollTargetBinding(
+                    bone.Name,
+                    target,
+                    bone.Transform);
+            }
+
+            bindings = generated;
+            InvalidateLookup();
+            error = string.Empty;
+            return true;
+        }
+
+        /// <summary>
         /// Recalculates the bidirectional bind-pose offsets using the currently assigned
         /// Target and ragdoll Transforms.
         /// </summary>
@@ -210,6 +261,42 @@ namespace Hairibar.Ragdoll.Animation
                 }
 
                 orderedBindings[index] = binding;
+            }
+
+
+            HashSet<Transform> registeredTargets = new HashSet<Transform>();
+            for (int index = 0; index < orderedBindings.Length; index++)
+                registeredTargets.Add(orderedBindings[index].Target);
+            HashSet<Transform> animatedChildren = new HashSet<Transform>();
+            for (int index = 0; index < orderedBindings.Length; index++)
+            {
+                RagdollTargetBinding binding = orderedBindings[index];
+                IReadOnlyList<Transform> children = binding.AnimatedTargetChildren;
+                for (int childIndex = 0; childIndex < children.Count; childIndex++)
+                {
+                    Transform child = children[childIndex];
+                    if (!child || child == binding.Target || !child.IsChildOf(binding.Target))
+                    {
+                        error = "Animated child entry " + childIndex + " for '"
+                            + binding.Bone + "' must be below its Target.";
+                        orderedBindings = null;
+                        return false;
+                    }
+                    if (registeredTargets.Contains(child))
+                    {
+                        error = "Animated child '" + child.name
+                            + "' is itself a registered muscle Target.";
+                        orderedBindings = null;
+                        return false;
+                    }
+                    if (!animatedChildren.Add(child))
+                    {
+                        error = "Animated child '" + child.name
+                            + "' is assigned to more than one muscle.";
+                        orderedBindings = null;
+                        return false;
+                    }
+                }
             }
 
             return true;

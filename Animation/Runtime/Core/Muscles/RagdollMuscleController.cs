@@ -66,13 +66,15 @@ namespace Hairibar.Ragdoll.Animation
         public float PositionSuppressionRecoveryRate
         {
             get => positionSuppressionRecoveryRate;
-            set => positionSuppressionRecoveryRate = Mathf.Max(0f, value);
+            set => positionSuppressionRecoveryRate =
+                RagdollMuscleRecoveryMath.SanitizeRecoveryMultiplier(value, 0f);
         }
 
         public float RotationSuppressionRecoveryRate
         {
             get => rotationSuppressionRecoveryRate;
-            set => rotationSuppressionRecoveryRate = Mathf.Max(0f, value);
+            set => rotationSuppressionRecoveryRate =
+                RagdollMuscleRecoveryMath.SanitizeRecoveryMultiplier(value, 0f);
         }
 
         public float PositionSuppressionRecoveryMultiplier =>
@@ -616,6 +618,91 @@ namespace Hairibar.Ragdoll.Animation
                 rotationDampingMultiplier,
                 maxLinearAccelerationMultiplier,
                 maxAngularAccelerationMultiplier);
+        }
+
+        /// <summary>
+        /// Sets independent mapping, pin, muscle and muscle-damper multipliers for one
+        /// registered bone. Invalid values resolve to the safe disabled value.
+        /// </summary>
+        public void SetAuthorityWeights(
+            RagdollBoneHandle bone,
+            float mapping,
+            float pin,
+            float muscle,
+            float muscleDamper)
+        {
+            int index = ValidateHandle(bone);
+            AdvanceRecovery(index, CurrentTime);
+            states[index].SetMappingAuthorities(mapping, mapping);
+            states[index].SetAuthorities(pin, muscle);
+            MuscleRuntimeState state = states[index];
+            states[index].SetDriveMultipliers(
+                state.PositionDampingMultiplier,
+                muscleDamper,
+                state.MaxLinearAccelerationMultiplier,
+                state.MaxAngularAccelerationMultiplier);
+        }
+
+        public int SetAuthorityWeights(
+            RagdollMuscleGroup group,
+            float mapping,
+            float pin,
+            float muscle,
+            float muscleDamper)
+        {
+            EnsureInitialized();
+            if (!Enum.IsDefined(typeof(RagdollMuscleGroup), group))
+            {
+                throw new ArgumentOutOfRangeException(nameof(group));
+            }
+            if (runtimeProfile == null) return 0;
+            int changed = 0;
+            for (int index = 0; index < states.Length; index++)
+            {
+                if (runtimeProfile.GetGroup(index) != group) continue;
+                SetAuthorityWeights(
+                    bindings.GetHandleAt(index),
+                    mapping,
+                    pin,
+                    muscle,
+                    muscleDamper);
+                changed++;
+            }
+            return changed;
+        }
+
+        /// <summary>
+        /// Sets a source and optionally its ancestors/descendants. Traversal is based on
+        /// the current generation-safe topology, so unrelated branches remain unchanged.
+        /// </summary>
+        public int SetAuthorityWeightsRecursive(
+            RagdollBoneHandle source,
+            float mapping,
+            float pin,
+            float muscle,
+            float muscleDamper,
+            bool includeParents = false,
+            bool includeChildren = true)
+        {
+            ValidateHandle(source);
+            RagdollBoneTopology topology = bindings.Topology;
+            int changed = 0;
+            for (int index = 0; index < states.Length; index++)
+            {
+                RagdollBoneHandle candidate = bindings.GetHandleAt(index);
+                bool selected = candidate == source
+                    || (includeParents && topology.IsAncestorOf(candidate, source))
+                    || (includeChildren && topology.IsAncestorOf(source, candidate));
+                if (!selected) continue;
+                SetAuthorityWeights(
+                    candidate,
+                    mapping,
+                    pin,
+                    muscle,
+                    muscleDamper);
+                changed++;
+            }
+            return changed;
         }
 
         public void AccumulateSuppression(

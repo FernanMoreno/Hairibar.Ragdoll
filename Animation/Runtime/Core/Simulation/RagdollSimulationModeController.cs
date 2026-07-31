@@ -1,6 +1,7 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
+
 
 namespace Hairibar.Ragdoll.Animation
 {
@@ -44,7 +45,7 @@ namespace Hairibar.Ragdoll.Animation
             internal readonly bool DetectCollisions;
             internal readonly Dictionary<Collider, bool> ColliderEnabled;
 
-            ActiveConfiguration(BoneSnapshot snapshot)
+            internal ActiveConfiguration(BoneSnapshot snapshot)
             {
                 PowerSetting = snapshot.ActivePowerSetting;
                 DetectCollisions = snapshot.ActiveDetectCollisions;
@@ -61,7 +62,7 @@ namespace Hairibar.Ragdoll.Animation
             }
         }
 
-        sealed class BoneSnapshot
+        internal sealed class BoneSnapshot
         {
             internal readonly RagdollBone Bone;
             internal readonly Rigidbody Rigidbody;
@@ -569,8 +570,8 @@ namespace Hairibar.Ragdoll.Animation
             ForceAllBonesKinematic();
             RestoreCollisionConfiguration();
             animator.SnapToTargetPose();
-            ZeroVelocities();
             RestoreActivePowerSettings();
+            ZeroVelocities();
 
             RagdollSimulationMode previous = currentMode;
             currentMode = RagdollSimulationMode.Active;
@@ -646,7 +647,7 @@ namespace Hairibar.Ragdoll.Animation
 
             if (!puppetActiveBeforeDisabled)
             {
-                Debug.LogWarning(
+                UnityEngine.Debug.LogWarning(
                     "The Puppet root was already inactive before Disabled mode. It was activated so the requested simulation mode could run.",
                     this);
             }
@@ -723,12 +724,10 @@ namespace Hairibar.Ragdoll.Animation
             {
                 if (IsDisconnected(boneSnapshots[index])) continue;
                 Rigidbody rigidbody = boneSnapshots[index].Rigidbody;
-                rigidbody.velocity = Vector3.zero;
+                if (rigidbody.isKinematic) continue;
+                rigidbody.linearVelocity = Vector3.zero;
                 rigidbody.angularVelocity = Vector3.zero;
-                if (!rigidbody.isKinematic)
-                {
-                    rigidbody.Sleep();
-                }
+                rigidbody.Sleep();
             }
         }
 

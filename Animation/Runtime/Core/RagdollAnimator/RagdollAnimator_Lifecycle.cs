@@ -103,6 +103,31 @@ namespace Hairibar.Ragdoll.Animation
             State = RagdollLifecycleState.Alive;
         }
 
+        internal void ResurrectImmediately()
+        {
+            lifecycleState = RagdollLifecycleState.Alive;
+            if (!lifecycleInitialized) return;
+            if (lifecyclePermanentDestructionScheduled)
+            {
+                throw new InvalidOperationException(
+                    "A permanently frozen ragdoll cannot be resurrected.");
+            }
+
+            if (lifecycleKilling)
+            {
+                CompleteKill();
+            }
+
+            if (activeLifecycleState == RagdollLifecycleState.Dead)
+            {
+                CompleteResurrection();
+            }
+            else if (activeLifecycleState == RagdollLifecycleState.Frozen)
+            {
+                CompleteUnfreeze(true);
+            }
+        }
+
         void WakeLifecycleFromDisabledSimulation(
             RagdollLifecycleState requestedState)
         {
@@ -441,7 +466,7 @@ namespace Hairibar.Ragdoll.Animation
                 if (!rigidbody) continue;
 
                 if (!RagdollLifecycleMath.IsFreezeVelocityReady(
-                    rigidbody.velocity.sqrMagnitude,
+                    rigidbody.linearVelocity.sqrMagnitude,
                     lifecycleSettings.MaxFreezeSqrVelocity))
                 {
                     return false;
@@ -465,7 +490,7 @@ namespace Hairibar.Ragdoll.Animation
                 maximum =
                     RagdollLifecycleMath.AccumulateMaximumSqrVelocity(
                         maximum,
-                        rigidbody.velocity.sqrMagnitude);
+                        rigidbody.linearVelocity.sqrMagnitude);
             }
 
             return maximum;
@@ -511,7 +536,7 @@ namespace Hairibar.Ragdoll.Animation
                 Rigidbody rigidbody = pair.RagdollBone.Rigidbody;
                 if (!rigidbody) continue;
 
-                rigidbody.velocity = pair.poseLinearVelocity;
+                rigidbody.linearVelocity = pair.poseLinearVelocity;
                 rigidbody.angularVelocity = pair.poseAngularVelocity;
             }
         }
@@ -713,9 +738,13 @@ namespace Hairibar.Ragdoll.Animation
 
         void SetTargetAnimationEnabled(bool enabled)
         {
-            if (targetAnimator)
+            if (targetAnimator && !usesLegacyTargetAnimation)
             {
                 targetAnimator.enabled = enabled;
+            }
+            if (targetAnimation && usesLegacyTargetAnimation)
+            {
+                targetAnimation.enabled = enabled;
             }
         }
 

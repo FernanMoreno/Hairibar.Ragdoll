@@ -15,10 +15,31 @@ namespace Hairibar.Ragdoll
     {
         [SerializeField, Min(0)] int maxEventsPerFixedStep = 32;
 
-        public event Action<RagdollCollisionEvent> CollisionReported;
-        public event Action<RagdollCollisionEvent> CollisionEntered;
-        public event Action<RagdollCollisionEvent> CollisionStayed;
-        public event Action<RagdollCollisionEvent> CollisionExited;
+        Action<RagdollCollisionEvent> collisionReported;
+        Action<RagdollCollisionEvent> collisionEntered;
+        Action<RagdollCollisionEvent> collisionStayed;
+        Action<RagdollCollisionEvent> collisionExited;
+
+        public event Action<RagdollCollisionEvent> CollisionReported
+        {
+            add { collisionReported += value; RefreshRelayEnabledState(); }
+            remove { collisionReported -= value; RefreshRelayEnabledState(); }
+        }
+        public event Action<RagdollCollisionEvent> CollisionEntered
+        {
+            add { collisionEntered += value; RefreshRelayEnabledState(); }
+            remove { collisionEntered -= value; RefreshRelayEnabledState(); }
+        }
+        public event Action<RagdollCollisionEvent> CollisionStayed
+        {
+            add { collisionStayed += value; RefreshRelayEnabledState(); }
+            remove { collisionStayed -= value; RefreshRelayEnabledState(); }
+        }
+        public event Action<RagdollCollisionEvent> CollisionExited
+        {
+            add { collisionExited += value; RefreshRelayEnabledState(); }
+            remove { collisionExited -= value; RefreshRelayEnabledState(); }
+        }
 
         public int MaxEventsPerFixedStep
         {
@@ -41,6 +62,7 @@ namespace Hairibar.Ragdoll
             RagdollCollisionPhase phase,
             Collision collision)
         {
+            if (!isActiveAndEnabled) return;
             if (!bindings || !bindings.IsInitialized) return;
             if (!bindings.Topology.Contains(bone)) return;
             if (!HasSubscribers(phase)) return;
@@ -59,34 +81,34 @@ namespace Hairibar.Ragdoll
                 fixedTime,
                 ++sequence);
 
-            CollisionReported?.Invoke(collisionEvent);
+            collisionReported?.Invoke(collisionEvent);
 
             switch (phase)
             {
                 case RagdollCollisionPhase.Enter:
-                    CollisionEntered?.Invoke(collisionEvent);
+                    collisionEntered?.Invoke(collisionEvent);
                     break;
                 case RagdollCollisionPhase.Stay:
-                    CollisionStayed?.Invoke(collisionEvent);
+                    collisionStayed?.Invoke(collisionEvent);
                     break;
                 case RagdollCollisionPhase.Exit:
-                    CollisionExited?.Invoke(collisionEvent);
+                    collisionExited?.Invoke(collisionEvent);
                     break;
             }
         }
 
         bool HasSubscribers(RagdollCollisionPhase phase)
         {
-            if (CollisionReported != null) return true;
+            if (collisionReported != null) return true;
 
             switch (phase)
             {
                 case RagdollCollisionPhase.Enter:
-                    return CollisionEntered != null;
+                    return collisionEntered != null;
                 case RagdollCollisionPhase.Stay:
-                    return CollisionStayed != null;
+                    return collisionStayed != null;
                 case RagdollCollisionPhase.Exit:
-                    return CollisionExited != null;
+                    return collisionExited != null;
                 default:
                     return false;
             }
@@ -99,6 +121,7 @@ namespace Hairibar.Ragdoll
                 RagdollCollisionRelay relay = ownedRelays[i];
                 if (relay) relay.Detach(this);
             }
+            ownedRelays.Clear();
 
             if (!bindings || !bindings.IsInitialized) return;
 
@@ -112,17 +135,32 @@ namespace Hairibar.Ragdoll
                 }
                 else if (relay.Owner && relay.Owner != this)
                 {
-                    Debug.LogError(
+                    UnityEngine.Debug.LogError(
                         "A Rigidbody cannot be registered with more than one RagdollCollisionHub.",
                         bone.Rigidbody);
                     continue;
                 }
 
                 relay.Initialize(this, bindings.GetHandleAt(index));
+                relay.enabled = HasAnySubscribers;
                 if (!ownedRelays.Contains(relay))
                 {
                     ownedRelays.Add(relay);
                 }
+            }
+        }
+
+        bool HasAnySubscribers => collisionReported != null
+            || collisionEntered != null
+            || collisionStayed != null
+            || collisionExited != null;
+
+        void RefreshRelayEnabledState()
+        {
+            bool enabledState = HasAnySubscribers;
+            for (int index = 0; index < ownedRelays.Count; index++)
+            {
+                if (ownedRelays[index]) ownedRelays[index].enabled = enabledState;
             }
         }
 
@@ -131,6 +169,7 @@ namespace Hairibar.Ragdoll
             bindings = GetComponent<RagdollDefinitionBindings>();
             bindings.SubscribeToOnBonesCreated(RebuildRelays);
             bindings.SubscribeToRuntimeHierarchyChanged(RebuildRelays);
+            RebuildRelays();
         }
 
         void OnDisable()

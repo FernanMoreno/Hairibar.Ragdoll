@@ -1,5 +1,9 @@
-﻿using System;
+using System;
 using UnityEngine;
+#if UNITY_6000_0_OR_NEWER
+using PhysicMaterial = UnityEngine.PhysicsMaterial;
+#endif
+
 
 namespace Hairibar.Ragdoll.Animation
 {
@@ -139,6 +143,22 @@ namespace Hairibar.Ragdoll.Animation
         public Rigidbody StandaloneRigidbody => standaloneRigidbody
             ? standaloneRigidbody
             : GetComponent<Rigidbody>();
+        /// <summary>
+        /// Rigidbody currently carrying the prop: the PropMuscle body while a pickup is
+        /// prepared/committed, otherwise the live standalone body.
+        /// </summary>
+        public Rigidbody CurrentRigidbody
+        {
+            get
+            {
+                if (heldSlotBody) return heldSlotBody;
+                if (bodyPendingDestruction) return null;
+                Rigidbody body = standaloneRigidbody
+                    ? standaloneRigidbody
+                    : GetComponent<Rigidbody>();
+                return body ? body : null;
+            }
+        }
         public RagdollPropMuscle CurrentMuscle => owner;
         public bool IsHeld => pickupPrepared && pickupCommitted && owner;
         internal bool CanBeginMeleeAction => IsHeld
@@ -152,6 +172,51 @@ namespace Hairibar.Ragdoll.Animation
         public bool IsStandaloneBodyRemoved => pickupPrepared
             && !bodyPendingDestruction
             && !GetComponent<Rigidbody>();
+
+        /// <summary>
+        /// Configures a prop created at runtime before pickup. The visual hierarchy must
+        /// be a collider-free child and the Rigidbody must live on the prop root.
+        /// </summary>
+        public bool TryConfigureStandalone(
+            Transform visualRoot,
+            Rigidbody body,
+            out string error)
+        {
+            if (pickupPrepared || owner)
+            {
+                error = "A prepared or held prop cannot be reconfigured.";
+                return false;
+            }
+            meshRoot = visualRoot;
+            standaloneRigidbody = body;
+            return TryValidateStandaloneConfiguration(out error);
+        }
+
+        /// <summary>Enables the additional pin and resets its temporal solver state.</summary>
+        public void AddAdditionalPin()
+        {
+            if (additionalPin == null)
+            {
+                additionalPin = new RagdollPropAdditionalPinSettings();
+            }
+            additionalPin.Enabled = true;
+            heldAdditionalPin = additionalPin.Capture();
+            additionalPinSolver.Reset();
+            lastAdditionalPinStep = RagdollPropAdditionalPinStep.Empty;
+        }
+
+        /// <summary>Disables the additional pin and clears all accumulated solver state.</summary>
+        public void RemoveAdditionalPin()
+        {
+            if (additionalPin == null)
+            {
+                additionalPin = new RagdollPropAdditionalPinSettings();
+            }
+            additionalPin.Enabled = false;
+            heldAdditionalPin = RagdollPropAdditionalPinSnapshot.Disabled;
+            additionalPinSolver.Reset();
+            lastAdditionalPinStep = RagdollPropAdditionalPinStep.Empty;
+        }
 
         void Reset()
         {
@@ -211,7 +276,7 @@ namespace Hairibar.Ragdoll.Animation
                     && emergencyRestoreError != error)
                 {
                     emergencyRestoreError = error;
-                    Debug.LogError(
+                    UnityEngine.Debug.LogError(
                         "Emergency standalone restoration for prop '" + name
                         + "' failed and will be retried: " + error,
                         this);
@@ -419,7 +484,7 @@ namespace Hairibar.Ragdoll.Animation
 
                 body.detectCollisions = false;
                 body.isKinematic = true;
-                body.velocity = Vector3.zero;
+                body.linearVelocity = Vector3.zero;
                 body.angularVelocity = Vector3.zero;
                 standaloneRigidbody = null;
                 bodyPendingDestruction = body;
@@ -450,7 +515,7 @@ namespace Hairibar.Ragdoll.Animation
                 }
                 catch (Exception rollbackException)
                 {
-                    Debug.LogException(rollbackException, this);
+                    UnityEngine.Debug.LogException(rollbackException, this);
                     error += " Rollback also failed: " + rollbackException.Message;
                 }
                 return false;
@@ -466,7 +531,7 @@ namespace Hairibar.Ragdoll.Animation
         internal RagdollPropReleaseState CaptureReleaseState(
             Rigidbody slotBody)
         {
-            Vector3 velocity = slotBody ? slotBody.velocity : Vector3.zero;
+            Vector3 velocity = slotBody ? slotBody.linearVelocity : Vector3.zero;
             Vector3 angularVelocity = slotBody
                 ? slotBody.angularVelocity
                 : Vector3.zero;
@@ -640,6 +705,12 @@ namespace Hairibar.Ragdoll.Animation
                 return true;
             }
 
+            // Runtime settings are intentionally live while held. Recapturing the small
+            // value snapshot here also sanitizes inspector/script edits before physics.
+            heldAdditionalPin = additionalPin != null
+                ? additionalPin.Capture()
+                : RagdollPropAdditionalPinSnapshot.Disabled;
+
             RagdollPropAdditionalPinStep step;
             if (!additionalPinSolver.TryApply(
                 slotBody,
@@ -769,7 +840,7 @@ namespace Hairibar.Ragdoll.Animation
             catch (Exception exception)
             {
                 emergencyRestoreError = exception.Message;
-                Debug.LogException(exception, this);
+                UnityEngine.Debug.LogException(exception, this);
             }
 
             bool pending;
@@ -838,7 +909,7 @@ namespace Hairibar.Ragdoll.Animation
             }
             catch (Exception exception)
             {
-                Debug.LogException(exception, this);
+                UnityEngine.Debug.LogException(exception, this);
             }
         }
 
@@ -893,13 +964,18 @@ namespace Hairibar.Ragdoll.Animation
                     createdBody = gameObject.AddComponent<Rigidbody>();
                     createdThisAttempt = true;
                 }
+                // Restore every collider before committing custom mass properties.
+                // Enabling or changing a compound collider may make PhysX recalculate
+                // center of mass and inertia tensor.
+                createdBody.detectCollisions = false;
+                createdBody.isKinematic = true;
+                RestoreStandaloneSurface(restoreOriginalPose);
                 rigidbodySnapshot.Apply(
                     createdBody,
                     release.Velocity,
                     release.AngularVelocity,
                     release.WasSleeping);
                 standaloneRigidbody = createdBody;
-                RestoreStandaloneSurface(restoreOriginalPose);
                 AdvanceCollisionSessionRestore();
                 ClearHeldSlotBaseline();
                 meleeOwner = Melee;
@@ -967,7 +1043,7 @@ namespace Hairibar.Ragdoll.Animation
                     }
                     catch (Exception rollbackException)
                     {
-                        Debug.LogException(rollbackException, this);
+                        UnityEngine.Debug.LogException(rollbackException, this);
                         error += " Held-state rollback also failed: "
                             + rollbackException.Message;
                     }
@@ -1464,8 +1540,8 @@ namespace Hairibar.Ragdoll.Animation
             return new RagdollPropRigidbodySnapshot
             {
                 Mass = body.mass,
-                Drag = body.drag,
-                AngularDrag = body.angularDrag,
+                Drag = body.linearDamping,
+                AngularDrag = body.angularDamping,
                 UseGravity = body.useGravity,
                 IsKinematic = body.isKinematic,
                 Interpolation = body.interpolation,
@@ -1480,7 +1556,7 @@ namespace Hairibar.Ragdoll.Animation
                 SleepThreshold = body.sleepThreshold,
                 SolverIterations = body.solverIterations,
                 SolverVelocityIterations = body.solverVelocityIterations,
-                Velocity = body.velocity,
+                Velocity = body.linearVelocity,
                 AngularVelocity = body.angularVelocity,
                 WasSleeping = body.IsSleeping()
             };
@@ -1511,26 +1587,27 @@ namespace Hairibar.Ragdoll.Animation
             body.isKinematic = true;
 
             body.mass = Mass;
-            body.drag = Drag;
-            body.angularDrag = AngularDrag;
+            body.linearDamping = Drag;
+            body.angularDamping = AngularDrag;
             body.useGravity = UseGravity;
             body.interpolation = Interpolation;
             body.collisionDetectionMode = CollisionDetectionMode;
             body.constraints = Constraints;
-            body.centerOfMass = CenterOfMass;
-            body.inertiaTensor = InertiaTensor;
-            body.inertiaTensorRotation = InertiaTensorRotation;
             body.maxAngularVelocity = MaxAngularVelocity;
             body.maxDepenetrationVelocity = MaxDepenetrationVelocity;
             body.sleepThreshold = SleepThreshold;
             body.solverIterations = SolverIterations;
             body.solverVelocityIterations = SolverVelocityIterations;
-
             body.isKinematic = IsKinematic;
             body.detectCollisions = DetectCollisions;
+            // Kinematic/collision mode transitions may recalculate compound-body mass
+            // properties. Commit both custom values only after those transitions.
+            body.centerOfMass = CenterOfMass;
+            body.inertiaTensor = InertiaTensor;
+            body.inertiaTensorRotation = InertiaTensorRotation;
             if (!body.isKinematic)
             {
-                body.velocity = velocity;
+                body.linearVelocity = velocity;
                 body.angularVelocity = angularVelocity;
                 if (sleeping) body.Sleep();
                 else body.WakeUp();

@@ -1,5 +1,6 @@
-﻿using System;
+using System;
 using UnityEngine;
+
 
 namespace Hairibar.Ragdoll.Animation
 {
@@ -193,7 +194,7 @@ namespace Hairibar.Ragdoll.Animation
                 }
                 catch (Exception releaseException)
                 {
-                    Debug.LogException(releaseException, this);
+                    UnityEngine.Debug.LogException(releaseException, this);
                 }
                 internalCollisionController = null;
                 throw;
@@ -306,7 +307,7 @@ namespace Hairibar.Ragdoll.Animation
             }
             catch (Exception exception)
             {
-                Debug.LogException(exception, this);
+                UnityEngine.Debug.LogException(exception, this);
             }
             finally
             {

@@ -17,9 +17,11 @@ namespace Hairibar.Ragdoll.Animation
         }
 
         #region Simulation Update
-        void DoAnimationMatching()
+        void DoAnimationMatching(float dt)
         {
-            float dt = Time.fixedDeltaTime;
+            dt = float.IsNaN(dt) || float.IsInfinity(dt)
+                ? 0f
+                : Mathf.Max(0f, dt);
 
             profileTransitioner.Update(dt);
 
@@ -83,11 +85,12 @@ namespace Hairibar.Ragdoll.Animation
 
         void ApplyMasterParameters(ref BoneProfile boneProfile)
         {
-            boneProfile.positionAlpha *= _masterAlpha;
-            boneProfile.positionDampingRatio *= _masterDampingRatio;
-
-            boneProfile.rotationAlpha *= _masterAlpha;
-            boneProfile.rotationDampingRatio *= _masterDampingRatio;
+            RagdollMasterAuthority.Apply(
+                ref boneProfile,
+                _masterPinWeight,
+                _masterMuscleWeight,
+                _masterDampingRatio,
+                _masterMuscleDamper);
         }
 
 
@@ -103,7 +106,7 @@ namespace Hairibar.Ragdoll.Animation
             Vector3 acceleration = AnimationMatching.GetAccelerationFromPositionSpring(
                 rigidbody.position,
                 targetPose.worldPosition,
-                rigidbody.velocity,
+                rigidbody.linearVelocity,
                 pair.poseLinearVelocity,
                 alpha,
                 dampingRatio,
@@ -203,9 +206,13 @@ namespace Hairibar.Ragdoll.Animation
         #region Target Update
         void ForceAnimatorUpdate()
         {
-            if (targetAnimator)
+            if (targetAnimator && !usesLegacyTargetAnimation)
             {
                 targetAnimator.Update(0);
+            }
+            else if (targetAnimation)
+            {
+                targetAnimation.Sample();
             }
         }
 
@@ -214,6 +221,7 @@ namespace Hairibar.Ragdoll.Animation
             bool processPendingTeleport = true)
         {
             if (notifyHooks) InvokeReadHooks();
+            ApplyDisconnectedAnimatedTargetChildren();
             if (processPendingTeleport) ProcessPendingTeleport();
 
             float sampleTime = GetAnimationSampleTime();
@@ -260,12 +268,15 @@ namespace Hairibar.Ragdoll.Animation
 
         float GetAnimationSampleTime()
         {
+            if (manualSimulationPrepared) return manualSampleTime;
             if (UsesFixedAnimatorUpdate())
             {
                 return Time.fixedTime;
             }
 
-            if (targetAnimator && targetAnimator.updateMode == AnimatorUpdateMode.UnscaledTime)
+            if (!usesLegacyTargetAnimation
+                && targetAnimator
+                && targetAnimator.updateMode == AnimatorUpdateMode.UnscaledTime)
             {
                 return Time.unscaledTime;
             }
@@ -275,7 +286,15 @@ namespace Hairibar.Ragdoll.Animation
 
         bool UsesFixedAnimatorUpdate()
         {
-            return targetAnimator && targetAnimator.updateMode == AnimatorUpdateMode.AnimatePhysics;
+            if (!usesLegacyTargetAnimation && targetAnimator)
+            {
+#if UNITY_6000_0_OR_NEWER
+                return targetAnimator.updateMode == AnimatorUpdateMode.Fixed;
+#else
+                return targetAnimator.updateMode == AnimatorUpdateMode.AnimatePhysics;
+#endif
+            }
+            return targetAnimation && targetAnimation.animatePhysics;
         }
 
         void RestoreAnimatedPose()
@@ -318,7 +337,7 @@ namespace Hairibar.Ragdoll.Animation
 
                 if (clearVelocities)
                 {
-                    rb.velocity = Vector3.zero;
+                    rb.linearVelocity = Vector3.zero;
                     rb.angularVelocity = Vector3.zero;
                 }
             }

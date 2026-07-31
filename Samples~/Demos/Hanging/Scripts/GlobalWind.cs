@@ -12,7 +12,7 @@ namespace Hairibar.Ragdoll.Demo.Hanging
 
         private void FixedUpdate()
         {
-            foreach (Rigidbody rigidbody in FindObjectsOfType<Rigidbody>())
+            foreach (Rigidbody rigidbody in FindObjectsByType<Rigidbody>())
             {
                 rigidbody.AddForce(direction * magnitude * Mathf.PerlinNoise(Time.time, Time.time * frequency));
             }

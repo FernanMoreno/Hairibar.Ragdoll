@@ -1,5 +1,6 @@
-﻿using UnityEditor;
+using UnityEditor;
 using UnityEngine;
+
 
 namespace Hairibar.Ragdoll.Animation.Editor
 {
@@ -19,7 +20,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 string synchronizeError;
                 if (!profile.TrySynchronizeAssignments(out synchronizeError))
                 {
-                    Debug.LogError(synchronizeError, profile);
+                    UnityEngine.Debug.LogError(synchronizeError, profile);
                 }
                 else
                 {
@@ -36,7 +37,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 if (!profile.TrySynchronizeInternalCollisionIgnores(
                     out synchronizeError))
                 {
-                    Debug.LogError(synchronizeError, profile);
+                    UnityEngine.Debug.LogError(synchronizeError, profile);
                 }
                 else
                 {

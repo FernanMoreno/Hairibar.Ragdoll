@@ -6,7 +6,7 @@ namespace Hairibar.Ragdoll
     /// Wrapper around a string that holds the name of a bone.
     /// </summary>
     [System.Serializable]
-    public struct BoneName
+    public struct BoneName : System.IEquatable<BoneName>
     {
         [SerializeField]
         string name;
@@ -38,14 +38,19 @@ namespace Hairibar.Ragdoll
             return !(a == b);
         }
 
+        public bool Equals(BoneName other)
+        {
+            return this == other;
+        }
+
         public override bool Equals(object obj)
         {
-            return obj is BoneName && (BoneName) obj == this;
+            return obj is BoneName other && Equals(other);
         }
 
         public override int GetHashCode()
         {
-            return name.GetHashCode();
+            return name != null ? name.GetHashCode() : 0;
         }
 
         public override string ToString()

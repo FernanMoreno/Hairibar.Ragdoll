@@ -1,6 +1,7 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
+
 
 namespace Hairibar.Ragdoll.Animation
 {
@@ -20,7 +21,7 @@ namespace Hairibar.Ragdoll.Animation
 
             if (UsesLegacyTargetBindingFallback)
             {
-                Debug.LogWarning(
+                UnityEngine.Debug.LogWarning(
                     "RagdollAnimator is using the legacy name-based Target binding fallback. "
                     + "Create and assign a RagdollTargetBindings component to make the dual-rig references explicit.",
                     this);

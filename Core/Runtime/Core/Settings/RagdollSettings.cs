@@ -1,6 +1,8 @@
 ﻿using Hairibar.NaughtyExtensions;
-using NaughtyAttributes;
 using UnityEngine;
+#if UNITY_6000_0_OR_NEWER
+using PhysicMaterial = UnityEngine.PhysicsMaterial;
+#endif
 
 namespace Hairibar.Ragdoll
 {
@@ -162,6 +164,7 @@ namespace Hairibar.Ragdoll
         {
             if (!bindings || !bindings.IsInitialized) return;
 
+            SanitizeAuthoredSettings();
             ApplyLimitSettings();
             ApplyJointSettings();
             ApplyRigidbodySettings(true);
@@ -241,8 +244,8 @@ namespace Hairibar.Ragdoll
                 Rigidbody rb = bone.Rigidbody;
 
                 rb.useGravity = useGravity;
-                rb.drag = drag;
-                rb.angularDrag = angularDrag;
+                rb.linearDamping = drag;
+                rb.angularDamping = angularDrag;
                 rb.interpolation = solverSettings.interpolation;
 
                 rb.solverIterations = solverSettings.solverIterations;
@@ -375,6 +378,8 @@ namespace Hairibar.Ragdoll
             if (!bindings || !bindings.IsInitialized) return;
             if (!WeightDistribution || !WeightDistribution.IsValid) return;
 
+            SanitizeAuthoredSettings();
+
             foreach (RagdollBone bone in bindings.Bones)
             {
                 if (!bindings.IsDefinitionBoneName(bone.Name)) continue;
@@ -391,12 +396,7 @@ namespace Hairibar.Ragdoll
         #region Auto Value Updating
         void OnValidate()
         {
-            solverIterations = Mathf.Max(1, solverIterations);
-            solverVelocityIterations = Mathf.Max(1, solverVelocityIterations);
-            maxAngularVelocity = Mathf.Max(0f, maxAngularVelocity);
-            maxDepenetrationVelocity = Mathf.Max(0f, maxDepenetrationVelocity);
-            sleepThreshold = Mathf.Max(0f, sleepThreshold);
-            maximumInertiaTensorRatio = Mathf.Max(1f, maximumInertiaTensorRatio);
+            SanitizeAuthoredSettings();
 
             //There is some redundant applying here, but it doesn't really matter. OnValidate() is not used outside the editor anyway; and the redundancy makes the profiles work with Undo.
             ApplyWeightDistribution();
@@ -406,19 +406,16 @@ namespace Hairibar.Ragdoll
         #endregion
 
         #region Lifetime
-        void Start()
-        {
-            bindings.SubscribeToOnBonesCreated(OnBindingsInitialized);
-            bindings.SubscribeToRuntimeHierarchyChanged(
-                OnRuntimeHierarchyChanged);
-        }
-
         void OnEnable()
         {
             //This would be in Awake, but fast nter play mode and [ExecuteAlways] makes Awake not be called.
             bindings = GetComponent<RagdollDefinitionBindings>();
 
             if (Application.isPlaying) ValidateInspectorReferences();
+
+            bindings.SubscribeToOnBonesCreated(OnBindingsInitialized);
+            bindings.SubscribeToRuntimeHierarchyChanged(
+                OnRuntimeHierarchyChanged);
 
             ApplySettings();
             ApplyPowerProfile();
@@ -435,15 +432,22 @@ namespace Hairibar.Ragdoll
                 RagdollProfile.ValidateAsInspectorField(_powerProfile, bindings.Definition, true, "A RagdollPowerProfile must be assigned in RagdollSettings.");
                 RagdollProfile.ValidateAsInspectorField(_weightDistribution, bindings.Definition, true, "A RagdollWeightDistribution must be assigned in RagdollSettings.");
             }
-            catch (System.Exception e)
+            catch (System.Exception)
             {
                 enabled = false;
-                throw e;
+                throw;
             }
         }
 
         void OnDisable()
         {
+            if (bindings)
+            {
+                bindings.UnsubscribeFromOnBonesCreated(OnBindingsInitialized);
+                bindings.UnsubscribeFromRuntimeHierarchyChanged(
+                    OnRuntimeHierarchyChanged);
+            }
+
             //Unsubscribe from OnUpdateValues events.
             if (_powerProfile) _powerProfile.OnUpdateValues -= ApplyPowerProfile;
             if (_weightDistribution) _weightDistribution.OnUpdateValues -= ApplyWeightDistribution;
@@ -451,10 +455,70 @@ namespace Hairibar.Ragdoll
 
         void OnDestroy()
         {
+            if (!bindings) return;
             bindings.UnsubscribeFromOnBonesCreated(OnBindingsInitialized);
             bindings.UnsubscribeFromRuntimeHierarchyChanged(
                 OnRuntimeHierarchyChanged);
         }
         #endregion
+
+        void SanitizeAuthoredSettings()
+        {
+            limitBounciness = SanitizeRange(limitBounciness, 0f, 1f, 0.3f);
+            limitContactDistanceFactor = SanitizeRange(
+                limitContactDistanceFactor,
+                0f,
+                1f,
+                0.2f);
+            limitSpring = SanitizeNonNegative(limitSpring, 1000f);
+            limitSpringDamping = SanitizeNonNegative(limitSpringDamping, 80f);
+            minJointProjectionDistance = SanitizeNonNegative(
+                minJointProjectionDistance,
+                0.5f);
+            minJointProjectionAngle = SanitizeRange(
+                minJointProjectionAngle,
+                0f,
+                180f,
+                10f);
+            totalMass = SanitizePositive(totalMass, 7f);
+            drag = SanitizeNonNegative(drag, 0f);
+            angularDrag = SanitizeNonNegative(angularDrag, 0.05f);
+            solverIterations = Mathf.Max(1, solverIterations);
+            solverVelocityIterations = Mathf.Max(1, solverVelocityIterations);
+            maxAngularVelocity = SanitizeNonNegative(maxAngularVelocity, 7f);
+            maxDepenetrationVelocity = SanitizeNonNegative(
+                maxDepenetrationVelocity,
+                10f);
+            sleepThreshold = SanitizeNonNegative(sleepThreshold, 0.005f);
+            maximumInertiaTensorRatio = IsFinite(maximumInertiaTensorRatio)
+                ? Mathf.Max(1f, maximumInertiaTensorRatio)
+                : 10f;
+        }
+
+        static float SanitizeNonNegative(float value, float fallback)
+        {
+            return IsFinite(value) ? Mathf.Max(0f, value) : fallback;
+        }
+
+        static float SanitizePositive(float value, float fallback)
+        {
+            return IsFinite(value) && value > 0f ? value : fallback;
+        }
+
+        static float SanitizeRange(
+            float value,
+            float minimum,
+            float maximum,
+            float fallback)
+        {
+            return IsFinite(value)
+                ? Mathf.Clamp(value, minimum, maximum)
+                : fallback;
+        }
+
+        static bool IsFinite(float value)
+        {
+            return !float.IsNaN(value) && !float.IsInfinity(value);
+        }
     }
 }

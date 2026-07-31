@@ -100,7 +100,7 @@ namespace Hairibar.Ragdoll.Animation
 
                 if (index > 0
                     && GetModeCost(level.simulationMode)
-                        < GetModeCost(previousMode))
+                        > GetModeCost(previousMode))
                 {
                     error = "Farther quality levels cannot return to a more expensive simulation mode.";
                     return false;

@@ -74,7 +74,7 @@ namespace Hairibar.Ragdoll.Demo
 
         void SetForceAnimatedPose(bool value)
         {
-            foreach (RagdollAnimator animator in FindObjectsOfType<RagdollAnimator>())
+            foreach (RagdollAnimator animator in FindObjectsByType<RagdollAnimator>())
             {
                 animator.forceTargetPose = value;
             }
@@ -82,7 +82,7 @@ namespace Hairibar.Ragdoll.Demo
 
         void SetCollidersVisible(bool value)
         {
-            foreach (RagdollSettings settings in FindObjectsOfType<RagdollSettings>())
+            foreach (RagdollSettings settings in FindObjectsByType<RagdollSettings>())
             {
                 RagdollColliderVisualizer visualizer = settings.GetComponentInChildren<RagdollColliderVisualizer>(true);
                 visualizer.enabled = value;

@@ -15,8 +15,10 @@ namespace Hairibar.Ragdoll.Animation
         [SerializeField] float globalPositionDampingRatio = 0.7f;
         [SerializeField] float globalMaxLinearAcceleration = Mathf.Infinity;
 
-        [SerializeField] BoneProfileOverride[] positionMatchingOverrides;
-        [SerializeField] BoneProfileOverride[] rotationMatchingOverrides;
+        [SerializeField] BoneProfileOverride[] positionMatchingOverrides =
+            new BoneProfileOverride[0];
+        [SerializeField] BoneProfileOverride[] rotationMatchingOverrides =
+            new BoneProfileOverride[0];
 
         [SerializeField] float globalRotationAlpha = 0.6f;
         [SerializeField] float globalRotationDampingRatio = 0.7f;
@@ -79,14 +81,18 @@ namespace Hairibar.Ragdoll.Animation
         {
             overridenProfiles = new Dictionary<BoneName, BoneProfile>();
 
-            foreach (BoneProfileOverride posOverride in positionMatchingOverrides)
+            BoneProfileOverride[] positions = positionMatchingOverrides
+                ?? System.Array.Empty<BoneProfileOverride>();
+            BoneProfileOverride[] rotations = rotationMatchingOverrides
+                ?? System.Array.Empty<BoneProfileOverride>();
+            foreach (BoneProfileOverride posOverride in positions)
             {
                 BoneProfile profile = DefaultBoneProfile;
                 posOverride.ApplyToPositionMatching(ref profile);
                 overridenProfiles[posOverride.bone] = profile;
             }
 
-            foreach (BoneProfileOverride rotOverride in rotationMatchingOverrides)
+            foreach (BoneProfileOverride rotOverride in rotations)
             {
                 if (!overridenProfiles.TryGetValue(rotOverride.bone, out BoneProfile profile))
                 {

@@ -11,6 +11,7 @@ namespace Hairibar.Ragdoll.Animation
         GetUpStarted,
         GetUpCompleted,
         GetUpInterrupted,
-        LifecycleDeath
+        LifecycleDeath,
+        Respawn
     }
 }

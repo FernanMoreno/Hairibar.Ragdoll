@@ -1,5 +1,6 @@
-﻿using System;
+using System;
 using UnityEngine;
+
 
 namespace Hairibar.Ragdoll.Animation
 {
@@ -232,7 +233,7 @@ namespace Hairibar.Ragdoll.Animation
             {
                 error = "The core internal-collision policy could not be reapplied: "
                     + exception.Message;
-                Debug.LogException(exception, animator);
+                UnityEngine.Debug.LogException(exception, animator);
                 return false;
             }
         }

@@ -1,4 +1,4 @@
-﻿using Hairibar.EngineExtensions.Editor;
+using Hairibar.EngineExtensions.Editor;
 using Hairibar.NaughtyExtensions.Editor;
 using Hairibar.Ragdoll.Editor;
 using NaughtyAttributes.Editor;
@@ -7,6 +7,7 @@ using UnityEditor.ShortcutManagement;
 using UnityEngine;
 
 #pragma warning disable 649
+
 namespace Hairibar.Ragdoll.Animation.Editor
 {
     [CustomEditor(typeof(RagdollAnimator))]
@@ -39,7 +40,8 @@ namespace Hairibar.Ragdoll.Animation.Editor
 
             void SetForceAnimatedPoseGlobally(bool value)
             {
-                foreach (RagdollAnimator ragdollAnimator in FindObjectsOfType<RagdollAnimator>())
+                foreach (RagdollAnimator ragdollAnimator in
+                    FindObjectsByType<RagdollAnimator>())
                 {
                     ragdollAnimator.forceTargetPose = value;
                 }
@@ -61,15 +63,28 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 0, Mathf.Infinity);
 
             ExtraNaughtyEditorGUILayout.Header("Master controls");
-            NonLinearSliderDrawer.Draw_Layout(serializedObject.FindProperty("_masterAlpha"), 0, 1, QuadraticSliderDrawer.GetQuadraticFunction(2),
-                new GUIContent("Master Alpha", "The profile's alpha values will be multiplied by this amount. \n" +
-                "Alpha defines the stiffness with which the ragdoll matches the animation. " +
-                "High values will instantly get to the target pose, while low values will treat the target pose more like a suggestion."));
+            EditorGUILayout.Slider(
+                serializedObject.FindProperty("_masterPinWeight"),
+                0,
+                1,
+                new GUIContent(
+                    "Master Pin Weight",
+                    "Global authority of world-space position and optional angular pinning."));
+            EditorGUILayout.Slider(
+                serializedObject.FindProperty("_masterMuscleWeight"),
+                0,
+                1,
+                new GUIContent(
+                    "Master Muscle Weight",
+                    "Global strength multiplier for the rotational ConfigurableJoint muscle drive."));
 
-            EditorGUILayout.Slider(serializedObject.FindProperty("_masterDampingRatio"), 0, 1,
-                new GUIContent("Master Damping Ratio", "The profile's damping ratio values will be multiplied by this amount. \n" +
-                "A damping ratio of 1 will get to the target pose perfectly, with no overshooting. " +
-                "Lower values will overshoot the target pose."));
+            ClampedFloatDrawer.Draw_Layout(
+                serializedObject.FindProperty("_masterMuscleDamper"),
+                new GUIContent(
+                    "Master Muscle Damper",
+                    "Non-negative multiplier for rotational muscle damping."),
+                0,
+                Mathf.Infinity);
 
             ExtraNaughtyEditorGUILayout.Header("Advanced Pinning");
             EditorGUILayout.PropertyField(
@@ -299,7 +314,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
             string error;
             if (!explicitBindings.TryAutoBindByName(out error))
             {
-                Debug.LogError(error, explicitBindings);
+                UnityEngine.Debug.LogError(error, explicitBindings);
                 return;
             }
 

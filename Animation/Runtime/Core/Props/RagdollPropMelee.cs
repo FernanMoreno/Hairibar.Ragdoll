@@ -16,7 +16,8 @@ namespace Hairibar.Ragdoll.Animation
     {
         const string ActionObjectName = "__RagdollPropMeleeActionCollider";
 
-        string OwnedObjectName => ActionObjectName + "_" + GetInstanceID();
+        string OwnedObjectName => ActionObjectName + "_"
+            + RagdollUnityObjectId.Get(this);
 
         [SerializeField]
         RagdollPropMeleeSettings settings = new RagdollPropMeleeSettings();
@@ -32,6 +33,9 @@ namespace Hairibar.Ragdoll.Animation
         int heldSessionVersion;
         int actionVersion;
         string lastActionError;
+        bool timedAction;
+        float timedActionRemaining;
+        bool endTimedActionAtFixedBoundary;
 
         public RagdollPropMeleeSettings Settings
         {
@@ -106,6 +110,59 @@ namespace Hairibar.Ragdoll.Animation
         public bool BeginAction()
         {
             return BeginActionCore(true);
+        }
+
+        /// <summary>
+        /// Starts or restarts one timed melee action. Expiration is committed at a
+        /// FixedUpdate boundary so physics overrides are never changed mid-step.
+        /// </summary>
+        public bool StartAction(float duration)
+        {
+            return StartActionCore(duration, true);
+        }
+
+        internal bool StartActionForTesting(float duration)
+        {
+            return StartActionCore(duration, false);
+        }
+
+        bool StartActionCore(float duration, bool requireCommittedPickup)
+        {
+            if (float.IsNaN(duration) || float.IsInfinity(duration)
+                || duration < 0f)
+            {
+                lastActionError = "Action duration must be finite and non-negative.";
+                return false;
+            }
+            if (!BeginActionCore(requireCommittedPickup)) return false;
+
+            timedAction = true;
+            timedActionRemaining = duration;
+            endTimedActionAtFixedBoundary = duration <= 0f;
+            return true;
+        }
+
+        void FixedUpdate()
+        {
+            AdvanceTimedAction(Time.fixedDeltaTime);
+        }
+
+        internal void AdvanceTimedAction(float deltaTime)
+        {
+            if (!timedAction || !actionActive) return;
+            if (endTimedActionAtFixedBoundary)
+            {
+                EndAction();
+                return;
+            }
+
+            deltaTime = float.IsNaN(deltaTime) || float.IsInfinity(deltaTime)
+                ? 0f
+                : Mathf.Max(0f, deltaTime);
+            timedActionRemaining = Mathf.Max(
+                0f,
+                timedActionRemaining - deltaTime);
+            if (timedActionRemaining <= 0f) EndAction();
         }
 
         internal bool BeginActionForTesting()
@@ -332,6 +389,9 @@ namespace Hairibar.Ragdoll.Animation
         {
             if (actionActive) actionVersion++;
             actionActive = false;
+            timedAction = false;
+            timedActionRemaining = 0f;
+            endTimedActionAtFixedBoundary = false;
             if (actionCollider)
             {
                 ApplyColliderGeometry(false);
@@ -381,8 +441,10 @@ namespace Hairibar.Ragdoll.Animation
             actionCollider = null;
             actionBox = null;
             actionCapsule = null;
-            if (Application.isPlaying) Destroy(owned);
-            else DestroyImmediate(owned);
+            // OnDestroy is already an immediate ownership boundary. Leaving a disabled
+            // compound collider until end-of-frame can mutate the standalone body's
+            // automatically computed mass properties after this component is gone.
+            DestroyImmediate(owned);
         }
     }
 }

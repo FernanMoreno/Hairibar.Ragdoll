@@ -63,14 +63,14 @@ namespace Hairibar.Ragdoll.Animation
 
         internal void SetAuthorities(float position, float rotation)
         {
-            positionAuthority = Mathf.Clamp01(position);
-            rotationAuthority = Mathf.Clamp01(rotation);
+            positionAuthority = SanitizeUnit(position, 0f);
+            rotationAuthority = SanitizeUnit(rotation, 0f);
         }
 
         internal void SetMappingAuthorities(float position, float rotation)
         {
-            positionMappingAuthority = Mathf.Clamp01(position);
-            rotationMappingAuthority = Mathf.Clamp01(rotation);
+            positionMappingAuthority = SanitizeUnit(position, 0f);
+            rotationMappingAuthority = SanitizeUnit(rotation, 0f);
         }
 
         internal void SetDriveMultipliers(
@@ -79,10 +79,10 @@ namespace Hairibar.Ragdoll.Animation
             float maxLinearAcceleration,
             float maxAngularAcceleration)
         {
-            positionDampingMultiplier = Mathf.Max(0f, positionDamping);
-            rotationDampingMultiplier = Mathf.Max(0f, rotationDamping);
-            maxLinearAccelerationMultiplier = Mathf.Max(0f, maxLinearAcceleration);
-            maxAngularAccelerationMultiplier = Mathf.Max(0f, maxAngularAcceleration);
+            positionDampingMultiplier = SanitizeNonNegative(positionDamping, 0f);
+            rotationDampingMultiplier = SanitizeNonNegative(rotationDamping, 0f);
+            maxLinearAccelerationMultiplier = SanitizeNonNegative(maxLinearAcceleration, 0f);
+            maxAngularAccelerationMultiplier = SanitizeNonNegative(maxAngularAcceleration, 0f);
         }
 
         internal void SetPositionSuppression(float suppression)
@@ -207,6 +207,18 @@ namespace Hairibar.Ragdoll.Animation
             if (multiplier == 0f) return 0f;
             if (float.IsInfinity(value)) return value;
             return value * multiplier;
+        }
+
+        static float SanitizeUnit(float value, float fallback)
+        {
+            if (float.IsNaN(value) || float.IsInfinity(value)) value = fallback;
+            return Mathf.Clamp01(value);
+        }
+
+        static float SanitizeNonNegative(float value, float fallback)
+        {
+            if (float.IsNaN(value) || float.IsInfinity(value)) value = fallback;
+            return Mathf.Max(0f, value);
         }
     }
 }

@@ -3,6 +3,9 @@ using System.Linq;
 using System.Reflection;
 using NUnit.Framework;
 using UnityEngine;
+#if UNITY_6000_0_OR_NEWER
+using PhysicMaterial = UnityEngine.PhysicsMaterial;
+#endif
 
 namespace Hairibar.Ragdoll.Animation.Tests
 {
@@ -186,6 +189,84 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 RagdollPropMelee melee = go.AddComponent<RagdollPropMelee>();
                 Assert.That(melee.BeginAction(), Is.False);
                 Assert.That(melee.ActionCollider, Is.Null);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(go);
+            }
+        }
+
+        [TestCase(float.NaN)]
+        [TestCase(float.PositiveInfinity)]
+        [TestCase(-0.01f)]
+        public void StartAction_InvalidDuration_IsRejected(float duration)
+        {
+            GameObject go = CreateMinimalProp("Invalid timed melee");
+            try
+            {
+                RagdollPropMelee melee = go.AddComponent<RagdollPropMelee>();
+                Assert.That(melee.StartAction(duration), Is.False);
+                Assert.That(melee.LastActionError, Does.Contain("finite"));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(go);
+            }
+        }
+
+        [Test]
+        public void TimedAction_RestartsAndExpiresAtSafeBoundary()
+        {
+            GameObject go = CreateMinimalProp("Timed melee");
+            try
+            {
+                RagdollPropMelee melee = go.AddComponent<RagdollPropMelee>();
+                melee.BeginHeldSession();
+                Assert.That(melee.StartActionForTesting(0.5f), Is.True);
+                melee.AdvanceTimedAction(0.3f);
+                Assert.That(melee.IsActionActive, Is.True);
+
+                Assert.That(melee.StartActionForTesting(0.4f), Is.True);
+                melee.AdvanceTimedAction(0.3f);
+                Assert.That(melee.IsActionActive, Is.True);
+                melee.AdvanceTimedAction(0.1f);
+                Assert.That(melee.IsActionActive, Is.False);
+                Assert.That(melee.ActionCollider.enabled, Is.False);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(go);
+            }
+        }
+
+        [Test]
+        public void ZeroDurationAction_EndsAtNextFixedBoundary()
+        {
+            GameObject go = CreateMinimalProp("Zero melee");
+            try
+            {
+                RagdollPropMelee melee = go.AddComponent<RagdollPropMelee>();
+                melee.BeginHeldSession();
+                Assert.That(melee.StartActionForTesting(0f), Is.True);
+                Assert.That(melee.IsActionActive, Is.True);
+                melee.AdvanceTimedAction(0f);
+                Assert.That(melee.IsActionActive, Is.False);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(go);
+            }
+        }
+
+        [Test]
+        public void CurrentRigidbody_UsesLiveStandaloneBodyWhenDropped()
+        {
+            GameObject go = CreateMinimalProp("Current body");
+            try
+            {
+                RagdollProp prop = go.GetComponent<RagdollProp>();
+                Assert.That(prop.CurrentRigidbody,
+                    Is.SameAs(go.GetComponent<Rigidbody>()));
             }
             finally
             {
@@ -579,10 +660,14 @@ namespace Hairibar.Ragdoll.Animation.Tests
                     Is.EqualTo(mass).Within(0.0001f));
                 Assert.That(restored.centerOfMass,
                     Is.EqualTo(centerOfMass));
-                Assert.That(restored.inertiaTensor,
-                    Is.EqualTo(inertiaTensor));
-                Assert.That(restored.inertiaTensorRotation,
-                    Is.EqualTo(inertiaRotation));
+                Assert.That(
+                    Vector3.Distance(restored.inertiaTensor, inertiaTensor),
+                    Is.LessThan(0.0001f));
+                Assert.That(
+                    Quaternion.Angle(
+                        restored.inertiaTensorRotation,
+                        inertiaRotation),
+                    Is.LessThan(0.001f));
                 Assert.That(melee.ActionCollider.enabled, Is.False);
             }
         }
@@ -1070,7 +1155,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
             }
             finally
             {
-                Object.DestroyImmediate(go);
+                UnityEngine.Object.DestroyImmediate(go);
             }
         }
 

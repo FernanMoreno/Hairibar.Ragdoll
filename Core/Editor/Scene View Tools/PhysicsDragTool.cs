@@ -64,7 +64,7 @@ namespace Hairibar.Ragdoll.Editor
         [Shortcut("Physics Drag Tool", KeyCode.D)]
         public static void ActivateToolShortcut()
         {
-            EditorTools.SetActiveTool(typeof(PhysicsDragTool));
+            ToolManager.SetActiveTool(typeof(PhysicsDragTool));
         }
 
         public override GUIContent toolbarIcon => EditorGUIUtility.IconContent("ViewToolMove", "|PhysicsDrop Tool");

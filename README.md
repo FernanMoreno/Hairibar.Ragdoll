@@ -1,6 +1,55 @@
 # Hairibar.Ragdoll
 A Unity package for making ragdolls and animating them with keyframed animations. See it in action at https://youtu.be/ByNPbbACf40.
 
+> Version 2.0 targets Unity 6 (`6000.0+`). It is an original implementation. Its
+> active-ragdoll feature surface follows the concepts documented in RootMotion's
+> official PuppetMaster manual; it does not contain or require PuppetMaster code.
+
+## Version 2.0 systems
+
+- Active/Kinematic/Disabled simulation plus Alive/Dead/Frozen lifecycle.
+- Modular Puppet and Fall behaviours, serialized behaviour events and reusable sub-behaviours.
+- Collision unpinning, get-up, per-group recovery, boosts, physical surfaces and velocity safety.
+- Runtime add/remove, disconnect/reconnect, joint breaks and animated child freezing.
+- Transactional props, additional pinning and melee collider/pin/mass/COM actions.
+- Public `OnRead`/`OnWrite` hooks and ordered external IK scheduling.
+- Humanoid or explicit Generic automatic authoring, runtime ragdoll creation and visual Scene tools.
+- Portable Humanoid target binding, flat/tree hierarchy conversion and dual-rig layer validation.
+- Generic/Legacy and Humanoid baking from clips, Animator states, PlayableDirector or realtime physics.
+
+### New authoring workflow
+
+Use **Tools > Hairibar.Ragdoll > Automatic Biped Authoring**. A valid Humanoid
+Avatar is mapped through `Animator.GetBoneTransform`; Generic rigs use explicit
+semantic references. The generated `RagdollAuthoredRig` owns only components it
+created, so its inspector can safely edit or remove them. The original Animated
+Ragdoll Wizard remains available for the complete dual-rig/profile flow.
+
+Use **Tools > Hairibar.Ragdoll > Dual Rig Layer Setup** to assign Target/Puppet
+layers and validate the Physics collision matrix. Collider and joint Scene handles,
+symmetry, conversion, axis tools, connected body and flat/tree controls are on the
+`RagdollAuthoredRig` inspector.
+
+### IK scheduling
+
+Implement `IRagdollIKSolver` on a package-specific adapter, then add it to
+`RagdollIKScheduler`. `BeforePhysics` runs at `RagdollAnimator.OnRead`, immediately
+before Target sampling. `AfterPhysics` runs at `OnWrite`, immediately after mapping.
+The scheduler takes ownership of automatic updates while enabled and restores the
+previous state on disable.
+
+Unity Animator IK continues to run through `OnAnimatorIK`; see the included
+`IKFollow` and climbing sample scripts.
+
+### Baker
+
+Add `RagdollGenericBaker` or `RagdollHumanoidBaker` beside the character Animator,
+enter Play Mode and use **Start Baking**. Supported sources are AnimationClips,
+base-layer Animator state names, a PlayableDirector, and open-ended Realtime capture.
+Generic recording supports Legacy clips, ignore lists and selective position curves.
+Humanoid recording writes muscles, Root, Foot IK and optional Hand IK, with separate
+muscle/IK reduction errors and muscle frame-rate division.
+
 - Allows keyframed animations to be affected by physics.
 - **Animator-friendly** parameters.
 - **Partial ragdolls**: enable simulation on some bones and leave others purely keyframed.
@@ -246,27 +295,22 @@ The samples require specific ProjectSettings to be in place in order to work. Af
 - If your ragdoll irrecoverably blows up after large shocks, make sure that you're not using hard limits on your joint. Set `RagdollSettings.limitSpring` to anything over 0 to use soft joint limits instead. With soft joint limits, limits are enforced by a spring instead of being completely inelastic. This can make a huge difference on stability.
 
 # How to install
-Add the following dependencies to your manifest.json:
+Add the package to your `manifest.json`:
 ``` json
 {
   "dependencies": {
     ...
-    "com.dbrizov.naughtyattributes": "https://github.com/dbrizov/NaughtyAttributes.git#v2.0.7",
-    "com.hairibar.naughtyextensions": "https://github.com/hairibar/Hairibar.NaughtyExtensions.git#v1.3.0",
-    "com.hairibar.engineextensions": "https://github.com/hairibar/Hairibar.EngineExtensions.git#v2.3.0",
     "com.hairibar.ragdoll": "https://github.com/hairibar/Hairibar.Ragdoll.git#upm"
     ...
   }
 }
 ```
 
-This snippet will import Hairibar.Ragdoll and its dependencies to your project. For this to work, Git must be added to your system PATH (which is probably already the case).
+This imports Hairibar.Ragdoll. Git must be available in the system PATH.
 
 ## Dependencies
-This package has three dependencies:
-- [NaughtyAttributes v2.0.7](https://github.com/dbrizov/NaughtyAttributes)
-- [Hairibar.NaughtyExtensions v1.3.0](https://github.com/hairibar/Hairibar.NaughtyExtensions)
-- [Hairibar.EngineExtensions v2.3.0](https://github.com/hairibar/Hairibar.EngineExtensions)
+Version 2.0 has no third-party package dependencies. It only declares Unity's
+Physics, Animation, Director and IMGUI modules plus Unity UI for the demos.
 
 ## Importing the samples
 After importing Hairibar.Ragdoll, find it in the package manager. There will be an "Import into project" button in the "Samples" section.

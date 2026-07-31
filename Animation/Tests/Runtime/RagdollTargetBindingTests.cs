@@ -96,6 +96,26 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 Is.LessThan(0.001f));
         }
 
+        [Test]
+        public void AnimatedTargetChildren_AreExplicitAndNullSafe()
+        {
+            ragdollObject = new GameObject("PuppetBone");
+            targetObject = new GameObject("TargetBone");
+            Transform child = new GameObject("AnimatedTwistBone").transform;
+            child.SetParent(targetObject.transform, false);
+            RagdollTargetBinding binding = new RagdollTargetBinding(
+                default(BoneName),
+                targetObject.transform,
+                ragdollObject.transform);
+
+            binding.SetAnimatedTargetChildren(new[] { child });
+            Assert.That(binding.AnimatedTargetChildren.Count, Is.EqualTo(1));
+            Assert.That(binding.AnimatedTargetChildren[0], Is.SameAs(child));
+
+            binding.SetAnimatedTargetChildren(null);
+            Assert.That(binding.AnimatedTargetChildren, Is.Empty);
+        }
+
         static void AssertVector3(Vector3 expected, Vector3 actual)
         {
             Assert.That(actual.x, Is.EqualTo(expected.x).Within(0.0001f));

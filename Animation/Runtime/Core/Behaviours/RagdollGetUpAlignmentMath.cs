@@ -25,6 +25,35 @@ namespace Hairibar.Ragdoll.Animation
                 : RagdollGetUpOrientation.Supine;
         }
 
+        /// <summary>
+        /// Classifies a quadruped from the side resting on the ground. A right-side
+        /// contact selects prone and a left-side contact selects supine.
+        /// </summary>
+        internal static RagdollGetUpOrientation ClassifyQuadruped(
+            Quaternion physicalRootRotation,
+            Vector3 bodyFrontAxis,
+            Vector3 bodyUpAxis,
+            Vector3 groundUp,
+            float minimumOrientationDot)
+        {
+            Vector3 localFront = NormalizeOrFallback(bodyFrontAxis, Vector3.forward);
+            Vector3 localUp = NormalizeOrFallback(bodyUpAxis, Vector3.up);
+            Vector3 localRight = Vector3.Cross(localUp, localFront);
+            localRight = NormalizeOrFallback(localRight, Vector3.right);
+            Vector3 up = NormalizeOrFallback(groundUp, Vector3.up);
+            float dot = Vector3.Dot(physicalRootRotation * localRight, up);
+
+            if (Mathf.Abs(dot) < Mathf.Clamp01(minimumOrientationDot))
+            {
+                return RagdollGetUpOrientation.Unknown;
+            }
+
+            // A right-side-down body has its right axis pointing against ground up.
+            return dot < 0f
+                ? RagdollGetUpOrientation.Prone
+                : RagdollGetUpOrientation.Supine;
+        }
+
         internal static Vector3 CalculateHeading(
             Quaternion physicalRootRotation,
             Vector3 bodyUpAxis,

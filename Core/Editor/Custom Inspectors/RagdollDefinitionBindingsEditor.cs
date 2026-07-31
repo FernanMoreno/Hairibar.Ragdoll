@@ -215,7 +215,8 @@ namespace Hairibar.Ragdoll.Editor
 
                 if (!reference) continue;
 
-                bool alreadyPresent = !noDuplicateJointValidatingSet.Add(reference.GetInstanceID());
+                bool alreadyPresent = !noDuplicateJointValidatingSet.Add(
+                    RagdollUnityObjectId.Get(reference));
 
                 if (alreadyPresent)
                 {

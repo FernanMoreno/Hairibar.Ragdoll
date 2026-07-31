@@ -1,8 +1,6 @@
 {
     "name": "Hairibar.Ragdoll.Demo",
     "references": [
-        "Hairibar.EngineExtensions",
-        "NaughtyAttributes.Core",
         "Hairibar.Ragdoll.Core",
         "Hairibar.Ragdoll.Animation"
     ],

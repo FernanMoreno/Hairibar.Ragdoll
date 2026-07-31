@@ -140,11 +140,11 @@ namespace Hairibar.Ragdoll.Animation
                 first.BudgetPriority,
                 first.DistanceSquared,
                 first.RetainsDynamicBudget,
-                first.GetInstanceID(),
+                RagdollUnityObjectId.Get(first),
                 second.BudgetPriority,
                 second.DistanceSquared,
                 second.RetainsDynamicBudget,
-                second.GetInstanceID(),
+                RagdollUnityObjectId.Get(second),
                 retainedRagdollDistanceBonus);
         }
 

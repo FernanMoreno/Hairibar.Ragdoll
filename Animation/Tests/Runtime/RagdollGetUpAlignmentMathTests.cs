@@ -49,6 +49,48 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [Test]
+        public void ClassifyQuadruped_RightSideDown_ReturnsProne()
+        {
+            RagdollGetUpOrientation orientation =
+                RagdollGetUpAlignmentMath.ClassifyQuadruped(
+                    Quaternion.Euler(0f, 0f, -90f),
+                    Vector3.forward,
+                    Vector3.up,
+                    Vector3.up,
+                    0.2f);
+
+            Assert.That(orientation, Is.EqualTo(RagdollGetUpOrientation.Prone));
+        }
+
+        [Test]
+        public void ClassifyQuadruped_LeftSideDown_ReturnsSupine()
+        {
+            RagdollGetUpOrientation orientation =
+                RagdollGetUpAlignmentMath.ClassifyQuadruped(
+                    Quaternion.Euler(0f, 0f, 90f),
+                    Vector3.forward,
+                    Vector3.up,
+                    Vector3.up,
+                    0.2f);
+
+            Assert.That(orientation, Is.EqualTo(RagdollGetUpOrientation.Supine));
+        }
+
+        [Test]
+        public void ClassifyQuadruped_Ambiguous_ReturnsUnknown()
+        {
+            RagdollGetUpOrientation orientation =
+                RagdollGetUpAlignmentMath.ClassifyQuadruped(
+                    Quaternion.identity,
+                    Vector3.forward,
+                    Vector3.up,
+                    Vector3.up,
+                    0.2f);
+
+            Assert.That(orientation, Is.EqualTo(RagdollGetUpOrientation.Unknown));
+        }
+
+        [Test]
         public void TargetRootPose_AlignsCurrentTargetHipToDesiredHip()
         {
             Vector3 currentRoot = new Vector3(2f, 0f, 3f);

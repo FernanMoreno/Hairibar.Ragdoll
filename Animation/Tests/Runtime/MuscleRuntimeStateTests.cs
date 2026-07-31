@@ -217,6 +217,28 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Assert.That(state.HasActiveBoost, Is.False);
         }
 
+        [Test]
+        public void RuntimeSetters_ResolveNonFiniteValuesAtApplicationPoint()
+        {
+            MuscleRuntimeState state = MuscleRuntimeState.Default;
+            state.SetAuthorities(float.NaN, float.PositiveInfinity);
+            state.SetMappingAuthorities(float.NegativeInfinity, float.NaN);
+            state.SetDriveMultipliers(
+                float.NaN,
+                float.PositiveInfinity,
+                float.NegativeInfinity,
+                float.NaN);
+
+            Assert.That(state.PositionAuthority, Is.Zero);
+            Assert.That(state.RotationAuthority, Is.Zero);
+            Assert.That(state.PositionMappingAuthority, Is.Zero);
+            Assert.That(state.RotationMappingAuthority, Is.Zero);
+            Assert.That(state.PositionDampingMultiplier, Is.Zero);
+            Assert.That(state.RotationDampingMultiplier, Is.Zero);
+            Assert.That(state.MaxLinearAccelerationMultiplier, Is.Zero);
+            Assert.That(state.MaxAngularAccelerationMultiplier, Is.Zero);
+        }
+
         static BoneProfile CreateProfile()
         {
             return new BoneProfile

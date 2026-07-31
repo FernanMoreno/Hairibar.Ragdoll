@@ -1,6 +1,7 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
+
 
 namespace Hairibar.Ragdoll.Animation
 {
@@ -112,6 +113,38 @@ namespace Hairibar.Ragdoll.Animation
         public event Action<RagdollProp> PropDropped;
         public event Action<RagdollProp, RagdollProp> PropChanged;
         public event Action<string> TransitionFailed;
+
+        /// <summary>
+        /// Configures a runtime-created prop slot before its first initialization tick.
+        /// Existing initialized or transitioning slots reject reconfiguration so the
+        /// physical ownership transaction cannot be changed underneath a held prop.
+        /// </summary>
+        public bool TryConfigureBeforeInitialization(
+            RagdollAnimator ownerAnimator,
+            ConfigurableJoint joint,
+            Transform animatedTargetSlot,
+            Transform animatedTargetParent,
+            BoneName bone,
+            bool useTreeHierarchy,
+            bool applyLayers,
+            out string error)
+        {
+            error = null;
+            if (state != RagdollPropMuscleState.Uninitialized || slotRegistered)
+            {
+                error = "A prop muscle can only be configured before initialization.";
+                return false;
+            }
+            animator = ownerAnimator;
+            propJoint = joint;
+            targetSlot = animatedTargetSlot;
+            targetParent = animatedTargetParent;
+            propBone = bone;
+            forceTreeHierarchy = useTreeHierarchy;
+            forceLayers = applyLayers;
+            if (!TryValidateConfiguration(out error)) return false;
+            return true;
+        }
 
         void Reset()
         {
@@ -345,7 +378,7 @@ namespace Hairibar.Ragdoll.Animation
             {
                 Fail("Unhandled prop-muscle transition error: "
                     + exception.Message);
-                Debug.LogException(exception, this);
+                UnityEngine.Debug.LogException(exception, this);
             }
         }
 
@@ -866,7 +899,7 @@ namespace Hairibar.Ragdoll.Animation
             }
             catch (Exception exception)
             {
-                Debug.LogException(exception, this);
+                UnityEngine.Debug.LogException(exception, this);
             }
         }
 
@@ -914,7 +947,7 @@ namespace Hairibar.Ragdoll.Animation
                 }
                 catch (Exception exception)
                 {
-                    Debug.LogException(exception, this);
+                    UnityEngine.Debug.LogException(exception, this);
                 }
             }
         }
@@ -935,7 +968,7 @@ namespace Hairibar.Ragdoll.Animation
                 }
                 catch (Exception exception)
                 {
-                    Debug.LogException(exception, this);
+                    UnityEngine.Debug.LogException(exception, this);
                 }
             }
         }
@@ -952,7 +985,7 @@ namespace Hairibar.Ragdoll.Animation
                 }
                 catch (Exception exception)
                 {
-                    Debug.LogException(exception, this);
+                    UnityEngine.Debug.LogException(exception, this);
                 }
             }
         }

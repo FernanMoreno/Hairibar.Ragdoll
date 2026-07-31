@@ -13,7 +13,10 @@ namespace Hairibar.Ragdoll.Animation
 
         readonly RagdollBehaviourContext context;
         readonly RagdollGroundingTracker tracker = new RagdollGroundingTracker();
-        readonly RaycastHit[] hits = new RaycastHit[RaycastCapacity];
+        RaycastHit[] hits = new RaycastHit[RaycastCapacity];
+        Vector3 weightedPressure;
+        float pressureWeight;
+        int pressureContactCount;
 
         internal RagdollGroundingSnapshot Snapshot => tracker.Snapshot;
         internal Vector3 Up { get; private set; }
@@ -28,6 +31,42 @@ namespace Hairibar.Ragdoll.Animation
         internal void Reset()
         {
             tracker.Reset();
+            ClearPressureContacts();
+        }
+
+        internal void RegisterCollision(
+            RagdollCollisionEvent collisionEvent,
+            LayerMask groundLayers,
+            float maximumGroundAngle)
+        {
+            if ((collisionEvent.Phase != RagdollCollisionPhase.Enter
+                    && collisionEvent.Phase != RagdollCollisionPhase.Stay)
+                || !collisionEvent.HasContact
+                || collisionEvent.OtherLayer < 0
+                || collisionEvent.OtherLayer >= 32
+                || (groundLayers.value & (1 << collisionEvent.OtherLayer)) == 0)
+            {
+                return;
+            }
+
+            Vector3 gravity = Physics.gravity;
+            Vector3 up = gravity.sqrMagnitude > Mathf.Epsilon
+                ? -gravity.normalized
+                : Vector3.up;
+            float minimumGroundDot = Mathf.Cos(
+                Mathf.Clamp(maximumGroundAngle, 0f, 89.9f) * Mathf.Deg2Rad);
+            Vector3 normal = collisionEvent.ContactNormal.sqrMagnitude
+                    > Mathf.Epsilon
+                ? collisionEvent.ContactNormal.normalized
+                : up;
+            if (Vector3.Dot(normal, up) < minimumGroundDot) return;
+
+            RagdollCenterOfPressureMath.Accumulate(
+                collisionEvent.ContactPoint,
+                collisionEvent.ImpulseMagnitude,
+                ref weightedPressure,
+                ref pressureWeight,
+                ref pressureContactCount);
         }
 
         internal void Update(
@@ -54,20 +93,19 @@ namespace Hairibar.Ragdoll.Animation
             float distance = startOffset + Mathf.Max(0.001f, probeDistance);
             Vector3 origin = centerOfMass + Up * startOffset;
 
-            int hitCount = Physics.RaycastNonAlloc(
+            int hitCount;
+            bool complete = RagdollRaycastBuffer.TryRaycastComplete(
                 origin,
                 -Up,
-                hits,
                 distance,
                 groundLayers.value,
-                QueryTriggerInteraction.Ignore);
+                ref hits,
+                out hitCount);
 
             float minimumGroundDot = Mathf.Cos(
                 Mathf.Clamp(maximumGroundAngle, 0f, 89.9f) * Mathf.Deg2Rad);
 
-            // RaycastNonAlloc does not guarantee that a full buffer contains the nearest
-            // hits. Fail closed rather than authorizing GetUp from incomplete ground data.
-            bool grounded = hitCount < hits.Length;
+            bool grounded = complete;
             bool foundGround = false;
             float nearestDistance = float.PositiveInfinity;
             Vector3 point = Vector3.zero;
@@ -88,6 +126,13 @@ namespace Hairibar.Ragdoll.Animation
 
             grounded = grounded && foundGround;
 
+            Vector3 centerOfPressure;
+            bool hasCenterOfPressure = RagdollCenterOfPressureMath.Resolve(
+                weightedPressure,
+                pressureWeight,
+                pressureContactCount,
+                out centerOfPressure);
+
             tracker.Update(
                 grounded,
                 point,
@@ -95,7 +140,18 @@ namespace Hairibar.Ragdoll.Animation
                 centerOfMass,
                 centerOfMassVelocity,
                 totalMass,
-                deltaTime);
+                deltaTime,
+                hasCenterOfPressure,
+                centerOfPressure,
+                Up);
+            ClearPressureContacts();
+        }
+
+        void ClearPressureContacts()
+        {
+            weightedPressure = Vector3.zero;
+            pressureWeight = 0f;
+            pressureContactCount = 0;
         }
 
         void CalculateCenterOfMass(
@@ -115,7 +171,7 @@ namespace Hairibar.Ragdoll.Animation
                 RagdollCenterOfMassMath.Accumulate(
                     rigidbody.mass,
                     rigidbody.worldCenterOfMass,
-                    rigidbody.velocity,
+                    rigidbody.linearVelocity,
                     ref totalMass,
                     ref weightedPosition,
                     ref weightedVelocity);
@@ -132,7 +188,7 @@ namespace Hairibar.Ragdoll.Animation
             {
                 Rigidbody root = context.Bindings.Root.Rigidbody;
                 centerOfMass = root.worldCenterOfMass;
-                centerOfMassVelocity = root.velocity;
+                centerOfMassVelocity = root.linearVelocity;
                 totalMass = Mathf.Max(0f, root.mass);
             }
         }
@@ -142,6 +198,50 @@ namespace Hairibar.Ragdoll.Animation
             RagdollBone ignored;
             return context.Bindings.TryGetBone(collider, out ignored)
                 || context.Bindings.TryGetBoneFromAttachedRigidbody(collider, out ignored);
+        }
+    }
+
+    /// <summary>
+    /// Reuses its caller-owned buffer and expands only on saturation. Unity does not
+    /// guarantee which hits are returned when RaycastNonAlloc fills the buffer, so a
+    /// saturated result must never be treated as complete.
+    /// </summary>
+    internal static class RagdollRaycastBuffer
+    {
+        const int MaximumCapacity = 4096;
+
+        internal static bool TryRaycastComplete(
+            Vector3 origin,
+            Vector3 direction,
+            float distance,
+            int layerMask,
+            ref RaycastHit[] buffer,
+            out int hitCount)
+        {
+            if (buffer == null || buffer.Length == 0)
+            {
+                buffer = new RaycastHit[32];
+            }
+
+            while (true)
+            {
+                hitCount = Physics.RaycastNonAlloc(
+                    origin,
+                    direction,
+                    buffer,
+                    distance,
+                    layerMask,
+                    QueryTriggerInteraction.Ignore);
+                if (hitCount < buffer.Length) return true;
+                if (buffer.Length >= MaximumCapacity)
+                {
+                    hitCount = 0;
+                    return false;
+                }
+
+                int capacity = Mathf.Min(buffer.Length * 2, MaximumCapacity);
+                Array.Resize(ref buffer, capacity);
+            }
         }
     }
 }

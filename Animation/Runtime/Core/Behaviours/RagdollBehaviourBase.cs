@@ -132,6 +132,12 @@ namespace Hairibar.Ragdoll.Animation
             }
         }
 
+        internal void PostInitializeInternal()
+        {
+            if (!IsInitialized) return;
+            OnBehaviourPostInitialized();
+        }
+
         internal void SetActiveInternal(bool active)
         {
             if (IsActive == active) return;
@@ -255,6 +261,14 @@ namespace Hairibar.Ragdoll.Animation
 
         /// <summary>Called once after the controller has injected the runtime context.</summary>
         protected virtual void OnBehaviourInitialize()
+        {
+        }
+
+        /// <summary>
+        /// Called after every sibling behaviour has received its runtime context. This
+        /// is the safe point for dependencies on other initialized behaviours.
+        /// </summary>
+        protected virtual void OnBehaviourPostInitialized()
         {
         }
 

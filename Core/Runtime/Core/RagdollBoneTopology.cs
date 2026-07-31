@@ -75,6 +75,17 @@ namespace Hairibar.Ragdoll
             return childOffsets[parent.Index + 1] - childOffsets[parent.Index];
         }
 
+        /// <summary>Returns a generation-safe handle for a registered bone index.</summary>
+        public RagdollBoneHandle GetHandleAt(int index)
+        {
+            if ((uint)index >= (uint)parentIndices.Length)
+            {
+                throw new ArgumentOutOfRangeException(nameof(index));
+            }
+
+            return CreateHandle(index);
+        }
+
         public RagdollBoneHandle GetChild(RagdollBoneHandle parent, int childOffset)
         {
             ValidateHandle(parent, nameof(parent));

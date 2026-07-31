@@ -15,13 +15,13 @@ namespace Hairibar.Ragdoll.Demo.Hanging
         void Start()
         {
             slider = GetComponent<UnityEngine.UI.Slider>();
-            animator = FindObjectOfType<RagdollAnimator>();
+            animator = FindAnyObjectByType<RagdollAnimator>();
         }
 
         void Update()
         {
             float newValue = slider.value;
-            animator.MasterAlpha = newValue;
+            animator.MasterMuscleWeight = newValue;
             label.text = string.Format("{0:0.00}", newValue);
         }
 
