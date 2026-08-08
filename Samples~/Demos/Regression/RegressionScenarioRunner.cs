@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using Hairibar.Ragdoll.Animation;
 using Unity.Profiling;
+using Unity.Profiling.LowLevel.Unsafe;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -24,6 +25,62 @@ namespace Hairibar.Ragdoll.Demo
         public void OnHairibarCertificationAnimationEvent()
         {
             Count++;
+        }
+    }
+
+    public sealed class RegressionDeterministicIKSolver : MonoBehaviour,
+        IRagdollIKSolver
+    {
+        public bool IsSolverEnabled => enabled && gameObject.activeInHierarchy;
+        public bool AutomaticUpdates { get; set; } = true;
+        public int SolveCount { get; private set; }
+        public void Solve() { SolveCount++; }
+    }
+
+    sealed class RegressionRealtimeClipRecorder : IDisposable
+    {
+        readonly RagdollBaker baker;
+        readonly Transform root;
+        // Realtime Baker emits at most one sample per rendered frame. Reserving the
+        // complete certification window prevents List<Keyframe> growth from being
+        // misreported as an allocation made by the Baker runtime path.
+        readonly List<Keyframe> x = new List<Keyframe>(1024);
+        float time;
+        public AnimationClip Clip { get; private set; }
+        public float RecordedLastX => x.Count > 0 ? x[x.Count - 1].value : 0f;
+
+        internal RegressionRealtimeClipRecorder(RagdollBaker baker, Transform root)
+        {
+            this.baker = baker;
+            this.root = root;
+            baker.SampleRequested += Sample;
+            baker.SegmentFinished += Finish;
+            baker.SegmentCanceled += Cancel;
+        }
+
+        void Sample(RagdollBaker source, float deltaTime)
+        {
+            if (x.Count > 0) time += Mathf.Max(0f, deltaTime);
+            x.Add(new Keyframe(time, root.localPosition.x));
+        }
+
+        void Finish(RagdollBaker source, string name, AnimationClip sourceClip)
+        {
+            Clip = new AnimationClip { name = name, legacy = true };
+            Clip.SetCurve(string.Empty, typeof(Transform),
+                "m_LocalPosition.x", new AnimationCurve(x.ToArray()));
+        }
+
+        void Cancel(RagdollBaker source, string name, AnimationClip sourceClip)
+        {
+            x.Clear();
+        }
+
+        public void Dispose()
+        {
+            baker.SampleRequested -= Sample;
+            baker.SegmentFinished -= Finish;
+            baker.SegmentCanceled -= Cancel;
         }
     }
 
@@ -105,19 +162,35 @@ namespace Hairibar.Ragdoll.Demo
         }
 
         [Serializable]
+        sealed class ScenarioAssertion
+        {
+            public string name;
+            public bool succeeded;
+        }
+
+        [Serializable]
         sealed class ScenarioResult
         {
             public string name;
             public bool succeeded;
             public string error;
+            // Whole-frame diagnostic. This includes coroutine/player/engine work and
+            // is not attributed to a Hairibar subsystem.
             public long maximumGcAllocatedInFrame;
-            public int assertions;
+            // Synchronous managed allocation scoped to the named critical path.
+            public long criticalPathGcAllocatedBytes;
+            public int frames;
+            public int assertionCount;
+            public ScenarioAssertion[] assertions;
             public PerformanceResult[] performance;
+            [NonSerialized] public readonly List<ScenarioAssertion> assertionBuffer =
+                new List<ScenarioAssertion>();
         }
 
         [Serializable]
         sealed class CertificationResult
         {
+            public int schemaVersion = 2;
             public string unityVersion;
             public string platform;
             public bool succeeded;
@@ -127,6 +200,9 @@ namespace Hairibar.Ragdoll.Demo
         sealed class RigInstance
         {
             internal GameObject Owner;
+            internal RagdollFallBehaviour Fall;
+            internal RegressionDeterministicIKSolver IKSolver;
+            internal RagdollIKScheduler IKScheduler;
             internal RagdollSetupResult Setup;
             internal RagdollDefinitionBindings Bindings;
             internal Transform OriginalChildParent;
@@ -150,6 +226,7 @@ namespace Hairibar.Ragdoll.Demo
             {
                 name = scenario.ToString(),
                 succeeded = false,
+                assertions = Array.Empty<ScenarioAssertion>(),
                 performance = new PerformanceResult[0]
             };
             yield return RunGuarded(result);
@@ -194,7 +271,11 @@ namespace Hairibar.Ragdoll.Demo
                 }
                 IEnumerator nested = current as IEnumerator;
                 if (nested != null) stack.Push(nested);
-                else yield return current;
+                else
+                {
+                    result.frames++;
+                    yield return current;
+                }
             }
         }
 
@@ -360,20 +441,22 @@ namespace Hairibar.Ragdoll.Demo
                 try
                 {
                     Physics.simulationMode = SimulationMode.Script;
+                    rig.Setup.Animator.enabled = false;
                     rig.Setup.Animator.Teleport(
                         respawn + Vector3.forward * 2f,
                         Quaternion.Euler(0f, 90f, 0f), true);
-                    rig.Setup.Animator.PrepareManualSimulation(0.02f);
+                    rig.Setup.Animator.OnPreSimulate(0.02f);
                     Require(result, !rig.Setup.Animator.HasPendingTeleport,
                         "Manual-simulation teleport was not consumed during prepare.");
                     Physics.Simulate(0.02f);
-                    rig.Setup.Animator.CompleteManualSimulation();
+                    rig.Setup.Animator.OnPostSimulate();
                     Require(result,
                         !rig.Setup.Animator.IsManualSimulationPrepared,
                         "Manual simulation did not complete.");
                 }
                 finally
                 {
+                    rig.Setup.Animator.enabled = true;
                     Physics.simulationMode = previousMode;
                 }
 
@@ -415,8 +498,10 @@ namespace Hairibar.Ragdoll.Demo
             }
             GameObject first = Instantiate(humanoidPrefab);
             GameObject second = Instantiate(humanoidPrefab);
+            RigInstance integrationRig = null;
             float originalScale = Time.timeScale;
             int originalTargetFrameRate = Application.targetFrameRate;
+            int originalVSyncCount = QualitySettings.vSyncCount;
             try
             {
                 QualitySettings.vSyncCount = 0;
@@ -431,6 +516,24 @@ namespace Hairibar.Ragdoll.Demo
                 b.applyRootMotion = true;
                 Require(result, a.layerCount >= 2 && b.layerCount >= 2,
                     "The generated controller is not multilayer.");
+                integrationRig = CreateRig(
+                    Vector3.up * 2f, result, true, a);
+                if (integrationRig == null) yield break;
+                // RagdollAnimator initializes modifiers and the behaviour controller
+                // in Start. This coroutine itself begins from the scene runner's
+                // Awake, so the newly activated Target must cross one player-loop
+                // boundary before its initialized state can be certified.
+                yield return null;
+                Require(result, integrationRig.Fall
+                        && integrationRig.Fall.IsInitialized,
+                    "BehaviourFall was not initialized by the real controller.");
+                Require(result, integrationRig.IKScheduler
+                        && integrationRig.IKScheduler.SolverCount == 1,
+                    "IK scheduler did not take ownership of real solver.");
+                Require(result, !integrationRig.IKSolver.AutomaticUpdates,
+                    "IK scheduler did not disable solver automatic updates.");
+                Require(result, integrationRig.Fall.Activate(),
+                    "BehaviourFall could not become active.");
                 RegressionAnimationEventReceiver eventReceiver = a.gameObject
                     .AddComponent<RegressionAnimationEventReceiver>();
 
@@ -494,22 +597,27 @@ namespace Hairibar.Ragdoll.Demo
                 baker.frameRate = 30;
                 int samples = 0;
                 baker.SampleRequested += (_, __) => samples++;
+                RegressionRealtimeClipRecorder clipRecorder =
+                    new RegressionRealtimeClipRecorder(baker, a.transform);
                 string bakerError;
                 Require(result, baker.StartBaking(out bakerError), bakerError);
                 for (int frame = 0; frame < WarmupFrames; frame++)
                     yield return null;
                 long bakerMaximumGc = 0;
-                using (ProfilerRecorder bakerGc = ProfilerRecorder.StartNew(
-                    ProfilerCategory.Memory, "GC Allocated In Frame", 1))
+                string bakerGcName;
+                using (ProfilerRecorder bakerGc = StartAvailableRecorder(
+                    new[] { "GC Allocated In Frame" }, out bakerGcName))
                 {
                     for (int frame = 0; frame < MeasurementFrames; frame++)
                     {
+                        a.transform.localPosition += Vector3.right * 0.0001f;
                         yield return null;
                         if (bakerGc.LastValue > bakerMaximumGc)
                             bakerMaximumGc = bakerGc.LastValue;
                     }
                     Require(result, bakerGc.Valid,
-                        "Baker GC ProfilerRecorder counter is unavailable.");
+                        "Baker GC ProfilerRecorder counter is unavailable ("
+                        + bakerGcName + ").");
                 }
                 result.maximumGcAllocatedInFrame = bakerMaximumGc;
                 Require(result, bakerMaximumGc == 0,
@@ -527,16 +635,40 @@ namespace Hairibar.Ragdoll.Demo
                 Require(result, samples > 1 && samples <= renderedFrames + 1,
                     "Realtime Baker emitted fabricated or missing samples.");
                 Require(result, baker.LastResult.Status ==
-                    RagdollBakerCompletionStatus.Canceled,
-                    "Stopping realtime Baker did not report cancellation.");
+                    RagdollBakerCompletionStatus.Succeeded,
+                    "Stopping realtime Baker did not commit the recording.");
+                Require(result, clipRecorder.Clip
+                        && clipRecorder.Clip.length > 0f,
+                    "Realtime Baker recorder produced no inspectable clip.");
+                if (clipRecorder.Clip)
+                {
+                    a.enabled = false;
+                    Vector3 samplePosition = a.transform.localPosition;
+                    samplePosition.x = 0f;
+                    a.transform.localPosition = samplePosition;
+                    clipRecorder.Clip.SampleAnimation(
+                        a.gameObject, clipRecorder.Clip.length);
+                    Require(result, Mathf.Abs(a.transform.localPosition.x
+                            - clipRecorder.RecordedLastX) < 0.001f,
+                        "Generated realtime clip did not preserve final sampled curve.");
+                }
+                clipRecorder.Dispose();
+                Require(result, integrationRig.IKSolver.SolveCount > 0,
+                    "Deterministic external IK solver was never executed.");
+                Require(result, integrationRig.Fall.CurrentBlend >= 0f
+                        && IsFinite(integrationRig.Fall.CurrentBlend),
+                    "BehaviourFall did not produce a finite runtime blend.");
+                if (clipRecorder.Clip) Destroy(clipRecorder.Clip);
                 result.succeeded = string.IsNullOrEmpty(result.error);
             }
             finally
             {
                 Time.timeScale = originalScale;
                 Application.targetFrameRate = originalTargetFrameRate;
+                QualitySettings.vSyncCount = originalVSyncCount;
                 Destroy(first);
                 Destroy(second);
+                DestroyRig(integrationRig);
             }
         }
 
@@ -548,6 +680,7 @@ namespace Hairibar.Ragdoll.Demo
             GameObject propObject = null;
             GameObject replacementObject = null;
             int originalTargetFrameRate = Application.targetFrameRate;
+            int originalVSyncCount = QualitySettings.vSyncCount;
             try
             {
                 QualitySettings.vSyncCount = 0;
@@ -643,21 +776,36 @@ namespace Hairibar.Ragdoll.Demo
                 for (int frame = 0; frame < WarmupFrames; frame++)
                     yield return null;
                 long additionalPinMaximumGc = 0;
-                using (ProfilerRecorder additionalPinGc = ProfilerRecorder.StartNew(
-                    ProfilerCategory.Memory, "GC Allocated In Frame", 1))
+                long additionalPinCriticalPathMaximumGc = 0;
+                string additionalPinGcName;
+                using (ProfilerRecorder additionalPinGc = StartAvailableRecorder(
+                    new[] { "GC Allocated In Frame" }, out additionalPinGcName))
                 {
                     for (int frame = 0; frame < MeasurementFrames; frame++)
                     {
+                        long before = GC.GetAllocatedBytesForCurrentThread();
+                        muscle.ApplyAdditionalPinForDiagnostics();
+                        long scopedAllocation =
+                            GC.GetAllocatedBytesForCurrentThread() - before;
+                        if (scopedAllocation > additionalPinCriticalPathMaximumGc)
+                        {
+                            additionalPinCriticalPathMaximumGc = scopedAllocation;
+                        }
                         yield return null;
                         if (additionalPinGc.LastValue > additionalPinMaximumGc)
                             additionalPinMaximumGc = additionalPinGc.LastValue;
                     }
                     Require(result, additionalPinGc.Valid,
-                        "Additional-pin GC ProfilerRecorder counter is unavailable.");
+                        "Additional-pin GC ProfilerRecorder counter is unavailable ("
+                        + additionalPinGcName + ").");
                 }
                 result.maximumGcAllocatedInFrame = additionalPinMaximumGc;
-                Require(result, additionalPinMaximumGc == 0,
-                    "Additional pin allocated after warm-up: "
+                result.criticalPathGcAllocatedBytes =
+                    additionalPinCriticalPathMaximumGc;
+                Require(result, additionalPinCriticalPathMaximumGc == 0,
+                    "Hairibar additional-pin critical path allocated managed memory: "
+                    + additionalPinCriticalPathMaximumGc
+                    + " bytes. Whole-frame ambient maximum was "
                     + additionalPinMaximumGc + " bytes.");
 
                 yield return fixedUpdate;
@@ -697,6 +845,7 @@ namespace Hairibar.Ragdoll.Demo
             finally
             {
                 Application.targetFrameRate = originalTargetFrameRate;
+                QualitySettings.vSyncCount = originalVSyncCount;
                 if (replacementObject) Destroy(replacementObject);
                 if (propObject) Destroy(propObject);
                 if (slotObject) Destroy(slotObject);
@@ -738,15 +887,17 @@ namespace Hairibar.Ragdoll.Demo
                         long[] cpu = new long[MeasurementFrames];
                         long[] memory = new long[MeasurementFrames];
                         long maxGc = 0;
-                        using (ProfilerRecorder cpuRecorder = ProfilerRecorder.StartNew(
-                            ProfilerCategory.Internal,
-                            "CPU Main Thread Frame Time", 1))
-                        using (ProfilerRecorder memoryRecorder = ProfilerRecorder.StartNew(
-                            ProfilerCategory.Memory,
-                            "Total Reserved Memory", 1))
-                        using (ProfilerRecorder gcRecorder = ProfilerRecorder.StartNew(
-                            ProfilerCategory.Memory,
-                            "GC Allocated In Frame", 1))
+                        string cpuCounterName;
+                        string memoryCounterName;
+                        string gcCounterName;
+                        using (ProfilerRecorder cpuRecorder = StartAvailableRecorder(
+                            new[] { "CPU Main Thread Frame Time", "Main Thread" },
+                            out cpuCounterName))
+                        using (ProfilerRecorder memoryRecorder = StartAvailableRecorder(
+                            new[] { "System Used Memory", "Total Reserved Memory" },
+                            out memoryCounterName))
+                        using (ProfilerRecorder gcRecorder = StartAvailableRecorder(
+                            new[] { "GC Allocated In Frame" }, out gcCounterName))
                         {
                             for (int frame = 0; frame < MeasurementFrames; frame++)
                             {
@@ -758,7 +909,9 @@ namespace Hairibar.Ragdoll.Demo
                             }
                             Require(result, cpuRecorder.Valid
                                 && memoryRecorder.Valid && gcRecorder.Valid,
-                                "A required ProfilerRecorder counter is unavailable.");
+                                "A required ProfilerRecorder counter is unavailable: CPU="
+                                + cpuCounterName + ", memory=" + memoryCounterName
+                                + ", GC=" + gcCounterName + ".");
                         }
                         measurements.Add(new PerformanceResult
                         {
@@ -787,7 +940,11 @@ namespace Hairibar.Ragdoll.Demo
             }
         }
 
-        RigInstance CreateRig(Vector3 position, ScenarioResult result)
+        RigInstance CreateRig(
+            Vector3 position,
+            ScenarioResult result,
+            bool includeHumanoidSystems = false,
+            Animator targetAnimator = null)
         {
             if (!ragdollPrefab || !animationProfile)
             {
@@ -816,6 +973,7 @@ namespace Hairibar.Ragdoll.Demo
                 bone.PowerSetting = PowerSetting.Powered;
                 bone.Rigidbody.isKinematic = false;
             }
+            if (includeHumanoidSystems) target.gameObject.SetActive(false);
             RagdollSetupResult setup =
                 RagdollRuntimeSetupService.ConvertHierarchyDirectlyToPuppet(
                     target, bindings, animationProfile, 30, 31);
@@ -825,6 +983,32 @@ namespace Hairibar.Ragdoll.Demo
                 Fail(result, setup.Error);
                 return null;
             }
+            RagdollFallBehaviour fall = null;
+            RegressionDeterministicIKSolver solver = null;
+            RagdollIKScheduler scheduler = null;
+            if (includeHumanoidSystems)
+            {
+                setup.Animator.TargetAnimator = targetAnimator;
+                // Behaviours are discovered below Character Behaviours when the
+                // controller initializes. The Target is deliberately inactive until
+                // every behaviour has been authored, matching the documented
+                // PuppetMaster lifecycle where behaviours are initiated by their
+                // owning PuppetMaster/controller.
+                fall = setup.PuppetBehaviour.gameObject
+                    .AddComponent<RagdollFallBehaviour>();
+                fall.StateName = "Fall";
+                fall.BlendParameter = "FallBlend";
+                fall.CanEnd = false;
+                fall.enabled = false;
+                solver = target.gameObject
+                    .AddComponent<RegressionDeterministicIKSolver>();
+                scheduler = target.gameObject.AddComponent<RagdollIKScheduler>();
+                scheduler.Configure(
+                    setup.Animator,
+                    RagdollIKSolvePhase.BeforePhysics,
+                    new MonoBehaviour[] { solver });
+                target.gameObject.SetActive(true);
+            }
             Transform physicalChild = puppet.childCount > 0
                 ? puppet.GetChild(0)
                 : null;
@@ -833,6 +1017,9 @@ namespace Hairibar.Ragdoll.Demo
                 Owner = owner,
                 Setup = setup,
                 Bindings = bindings,
+                Fall = fall,
+                IKSolver = solver,
+                IKScheduler = scheduler,
                 OriginalChildParent = physicalChild ? physicalChild.parent : null
             };
         }
@@ -939,6 +1126,45 @@ namespace Hairibar.Ragdoll.Demo
             return samples[index];
         }
 
+        static ProfilerRecorder StartAvailableRecorder(
+            string[] preferredNames,
+            out string resolvedName)
+        {
+            List<ProfilerRecorderHandle> handles =
+                new List<ProfilerRecorderHandle>();
+            ProfilerRecorderHandle.GetAvailable(handles);
+            for (int preferredIndex = 0;
+                preferredIndex < preferredNames.Length;
+                preferredIndex++)
+            {
+                string preferred = preferredNames[preferredIndex];
+                for (int handleIndex = 0;
+                    handleIndex < handles.Count;
+                    handleIndex++)
+                {
+                    ProfilerRecorderDescription description =
+                        ProfilerRecorderHandle.GetDescription(handles[handleIndex]);
+                    if (!string.Equals(
+                        description.Name,
+                        preferred,
+                        StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    resolvedName = description.Category.Name + "/"
+                        + description.Name;
+                    return ProfilerRecorder.StartNew(
+                        description.Category,
+                        description.Name,
+                        1);
+                }
+            }
+
+            resolvedName = "Unavailable";
+            return default;
+        }
+
         static bool IsValidHumanoid(Animator animator)
         {
             return animator && animator.avatar && animator.avatar.isValid
@@ -992,7 +1218,13 @@ namespace Hairibar.Ragdoll.Demo
 
         static void Require(ScenarioResult result, bool condition, string error)
         {
-            result.assertions++;
+            result.assertionBuffer.Add(new ScenarioAssertion
+            {
+                name = string.IsNullOrWhiteSpace(error)
+                    ? "Unnamed assertion"
+                    : error,
+                succeeded = condition
+            });
             if (!condition) Fail(result, error);
         }
 
@@ -1014,11 +1246,16 @@ namespace Hairibar.Ragdoll.Demo
         {
             bool succeeded = true;
             for (int index = 0; index < Results.Count; index++)
+            {
+                Results[index].assertions =
+                    Results[index].assertionBuffer.ToArray();
+                Results[index].assertionCount = Results[index].assertions.Length;
                 succeeded &= Results[index].succeeded;
+            }
             CertificationResult result = new CertificationResult
             {
                 unityVersion = Application.unityVersion,
-                platform = Application.platform.ToString(),
+                platform = CertificationPlatformName(Application.platform),
                 succeeded = succeeded,
                 scenarios = Results.ToArray()
             };
@@ -1031,6 +1268,18 @@ namespace Hairibar.Ragdoll.Demo
             if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
             File.WriteAllText(path, JsonUtility.ToJson(result, true));
             if (Application.isBatchMode) Application.Quit(succeeded ? 0 : 1);
+        }
+
+        static string CertificationPlatformName(RuntimePlatform platform)
+        {
+            switch (platform)
+            {
+                case RuntimePlatform.WindowsPlayer: return "Windows64";
+                case RuntimePlatform.LinuxPlayer: return "Linux64";
+                case RuntimePlatform.OSXPlayer: return "macOS";
+                case RuntimePlatform.WebGLPlayer: return "WebGL";
+                default: return platform.ToString();
+            }
         }
     }
 }

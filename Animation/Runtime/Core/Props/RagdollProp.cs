@@ -159,6 +159,12 @@ namespace Hairibar.Ragdoll.Animation
                 return body ? body : null;
             }
         }
+
+        /// <summary>Official PuppetMasterProp name for the currently owning body.</summary>
+        public Rigidbody GetRigidbody()
+        {
+            return CurrentRigidbody;
+        }
         public RagdollPropMuscle CurrentMuscle => owner;
         public bool IsHeld => pickupPrepared && pickupCommitted && owner;
         internal bool CanBeginMeleeAction => IsHeld
@@ -483,9 +489,12 @@ namespace Hairibar.Ragdoll.Animation
                 ApplyHeldSurfaceOverrides(physicalSlot, targetSlot);
 
                 body.detectCollisions = false;
+                if (!body.isKinematic)
+                {
+                    body.linearVelocity = Vector3.zero;
+                    body.angularVelocity = Vector3.zero;
+                }
                 body.isKinematic = true;
-                body.linearVelocity = Vector3.zero;
-                body.angularVelocity = Vector3.zero;
                 standaloneRigidbody = null;
                 bodyPendingDestruction = body;
                 DestroyBody(body);
@@ -720,6 +729,11 @@ namespace Hairibar.Ragdoll.Animation
                 melee && melee.IsHeldSession
                     ? melee.EffectivePinWeightMultiplier
                     : 1f,
+                melee && melee.IsHeldSession
+                    ? melee.EffectiveActionAdditionalPinWeight
+                    : 0f,
+                melee && melee.IsHeldSession
+                    && melee.UsesAbsoluteActionPinWeight,
                 deltaTime,
                 out step,
                 out error))

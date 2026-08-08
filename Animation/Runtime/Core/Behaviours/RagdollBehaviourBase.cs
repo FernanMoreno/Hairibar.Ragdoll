@@ -12,6 +12,8 @@ namespace Hairibar.Ragdoll.Animation
     {
         RagdollBehaviourContext context;
         bool isInitialized;
+        readonly List<RagdollSubBehaviourBase> subBehaviours =
+            new List<RagdollSubBehaviourBase>();
 
         public bool IsInitialized => isInitialized;
         public bool IsActive { get; private set; }
@@ -30,6 +32,29 @@ namespace Hairibar.Ragdoll.Animation
 
                 return context;
             }
+        }
+
+        /// <summary>
+        /// Registers a reusable sub-behaviour with this behaviour. Registered modules
+        /// receive activation, fixed-step, deactivation and shutdown callbacks in a
+        /// deterministic order. One failing module is logged and does not prevent the
+        /// remaining modules from running.
+        /// </summary>
+        protected void RegisterSubBehaviour(RagdollSubBehaviourBase subBehaviour)
+        {
+            if (subBehaviour == null)
+            {
+                throw new ArgumentNullException(nameof(subBehaviour));
+            }
+            if (!IsInitialized)
+            {
+                throw new InvalidOperationException(
+                    "Sub-behaviours can only be registered during or after behaviour initialization.");
+            }
+            if (subBehaviours.Contains(subBehaviour)) return;
+
+            subBehaviour.Initialize(this);
+            subBehaviours.Add(subBehaviour);
         }
 
         /// <summary>
@@ -72,6 +97,7 @@ namespace Hairibar.Ragdoll.Animation
             }
             catch
             {
+                ShutdownSubBehaviours();
                 context = null;
                 isInitialized = false;
                 throw;
@@ -120,13 +146,14 @@ namespace Hairibar.Ragdoll.Animation
         {
             if (!IsInitialized) return;
 
-            SetActiveInternal(false);
             try
             {
+                SetActiveInternal(false);
                 OnBehaviourShutdown();
             }
             finally
             {
+                ShutdownSubBehaviours();
                 context = null;
                 isInitialized = false;
             }
@@ -145,11 +172,19 @@ namespace Hairibar.Ragdoll.Animation
             IsActive = active;
             if (active)
             {
+                SetSubBehavioursActive(true, false);
                 OnBehaviourActivated();
             }
             else
             {
-                OnBehaviourDeactivated();
+                try
+                {
+                    OnBehaviourDeactivated();
+                }
+                finally
+                {
+                    SetSubBehavioursActive(false, true);
+                }
             }
         }
 
@@ -223,6 +258,7 @@ namespace Hairibar.Ragdoll.Animation
 
         internal void FixedUpdateInternal(float deltaTime)
         {
+            UpdateSubBehaviours(deltaTime);
             OnBehaviourFixedUpdate(deltaTime);
         }
 
@@ -257,6 +293,68 @@ namespace Hairibar.Ragdoll.Animation
             IReadOnlyList<RagdollAnimator.AnimatedPair> pairs)
         {
             OnModifyTargetPose(pairs);
+        }
+
+        void SetSubBehavioursActive(bool active, bool reverse)
+        {
+            if (reverse)
+            {
+                for (int index = subBehaviours.Count - 1; index >= 0; index--)
+                {
+                    SetSubBehaviourActiveSafely(subBehaviours[index], active);
+                }
+                return;
+            }
+
+            for (int index = 0; index < subBehaviours.Count; index++)
+            {
+                SetSubBehaviourActiveSafely(subBehaviours[index], active);
+            }
+        }
+
+        void UpdateSubBehaviours(float deltaTime)
+        {
+            for (int index = 0; index < subBehaviours.Count; index++)
+            {
+                try
+                {
+                    subBehaviours[index].FixedUpdate(deltaTime);
+                }
+                catch (Exception exception)
+                {
+                    UnityEngine.Debug.LogException(exception, this);
+                }
+            }
+        }
+
+        void ShutdownSubBehaviours()
+        {
+            for (int index = subBehaviours.Count - 1; index >= 0; index--)
+            {
+                try
+                {
+                    subBehaviours[index].Shutdown();
+                }
+                catch (Exception exception)
+                {
+                    UnityEngine.Debug.LogException(exception, this);
+                }
+            }
+            subBehaviours.Clear();
+        }
+
+        void SetSubBehaviourActiveSafely(
+            RagdollSubBehaviourBase subBehaviour,
+            bool active)
+        {
+            try
+            {
+                subBehaviour.SetActive(active);
+            }
+            catch (Exception exception)
+            {
+                UnityEngine.Debug.LogException(exception, this);
+            }
         }
 
         /// <summary>Called once after the controller has injected the runtime context.</summary>

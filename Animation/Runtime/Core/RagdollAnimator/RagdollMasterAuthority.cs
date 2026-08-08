@@ -30,6 +30,13 @@ namespace Hairibar.Ragdoll.Animation
             profile.rotationDampingRatio *= muscleDampingMultiplier;
         }
 
+        internal static void ApplyAbsoluteMuscleDamper(
+            ref JointDrive drive,
+            float muscleDamper)
+        {
+            drive.positionDamper += SanitizeNonNegative(muscleDamper, 0f);
+        }
+
         static float SanitizeUnit(float value)
         {
             if (float.IsNaN(value) || float.IsInfinity(value)) return 1f;

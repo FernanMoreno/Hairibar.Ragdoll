@@ -335,7 +335,8 @@ namespace Hairibar.Ragdoll.Animation
         }
 
         /// <summary>
-        /// Atomically replaces one leaf muscle while preserving its BoneName slot. The
+        /// Atomically replaces one muscle while preserving its BoneName slot. Direct
+        /// children are reconnected when the replacement is a branch root. The
         /// old generation handle becomes invalid after commit. Call from FixedUpdate.
         /// </summary>
         public RagdollBoneHandle ReplaceMuscle(
@@ -359,7 +360,10 @@ namespace Hairibar.Ragdoll.Animation
         {
             replacementHandle = RagdollBoneHandle.Invalid;
             error = null;
-            if (!ValidateHierarchyMutation(out error)) return false;
+            // Replacement preserves the current connected/disconnected state.
+            // This is required for atomic root/branch replacement while props or
+            // severed descendants remain owned by the same puppet.
+            if (!ValidateHierarchyMutation(true, out error)) return false;
             if (!Bindings.Topology.Contains(existing))
             {
                 error = "The replacement handle is stale or belongs to another ragdoll.";
@@ -367,19 +371,15 @@ namespace Hairibar.Ragdoll.Animation
             }
 
             RagdollBone oldBone = Bindings.GetBone(existing);
-            if (oldBone.IsRoot)
-            {
-                error = "The root muscle cannot be replaced at runtime.";
-                return false;
-            }
+            bool hasDescendants = false;
             for (int index = 0; index < Bindings.BoneCount; index++)
             {
                 RagdollBoneHandle candidate = Bindings.GetHandleAt(index);
                 if (candidate != existing
                     && Bindings.Topology.IsAncestorOf(existing, candidate))
                 {
-                    error = "ReplaceMuscle currently requires a leaf muscle; replace descendants first.";
-                    return false;
+                    hasDescendants = true;
+                    break;
                 }
             }
             if (replacement.Bone != oldBone.Name)
@@ -409,6 +409,7 @@ namespace Hairibar.Ragdoll.Animation
                 error = "The replacement requires an unregistered Rigidbody on its joint.";
                 return false;
             }
+
             for (int index = 0; index < animatedPairs.Length; index++)
             {
                 if (animatedPairs[index].TargetBone == replacement.Target
@@ -419,6 +420,27 @@ namespace Hairibar.Ragdoll.Animation
                 }
             }
 
+            if (oldBone.IsRoot)
+            {
+                return TryReplaceRootMuscle(
+                    existing,
+                    oldBone,
+                    replacement,
+                    newBody,
+                    out replacementHandle,
+                    out error);
+            }
+
+            if (hasDescendants)
+            {
+                return TryReplaceBranchRoot(
+                    existing,
+                    oldBone,
+                    replacement,
+                    newBody,
+                    out replacementHandle,
+                    out error);
+            }
             RagdollBoneHandle parentHandle;
             if (!Bindings.Topology.TryGetParent(existing, out parentHandle))
             {
@@ -513,6 +535,219 @@ namespace Hairibar.Ragdoll.Animation
             finally
             {
                 hierarchyTransactionInProgress = false;
+            }
+        }
+
+        bool TryReplaceRootMuscle(
+            RagdollBoneHandle existing,
+            RagdollBone oldBone,
+            RagdollRuntimeMuscleRegistration replacement,
+            Rigidbody newBody,
+            out RagdollBoneHandle replacementHandle,
+            out string error)
+        {
+            replacementHandle = RagdollBoneHandle.Invalid;
+            error = null;
+            AnimatedPair oldRootPair = GetAnimatedPair(existing);
+            if (replacement.Target != oldRootPair.TargetBone)
+            {
+                error = "Root replacement must retain the existing Target Transform.";
+                return false;
+            }
+            if (replacement.Joint.connectedBody)
+            {
+                error = "A replacement root joint cannot have a connectedBody.";
+                return false;
+            }
+
+            int childCount = Bindings.Topology.GetChildCount(existing);
+            ConfigurableJoint[] children = new ConfigurableJoint[childCount];
+            Rigidbody[] previousConnections = new Rigidbody[childCount];
+            bool[] restoreChildConnection = new bool[childCount];
+            for (int index = 0; index < childCount; index++)
+            {
+                RagdollBoneHandle childHandle =
+                    Bindings.Topology.GetChild(existing, index);
+                ConfigurableJoint child = Bindings.GetBone(childHandle).Joint;
+                children[index] = child;
+                previousConnections[index] = child ? child.connectedBody : null;
+                restoreChildConnection[index] = child
+                    && (child.connectedBody != oldBone.Rigidbody
+                        || (connectionRecords != null
+                            && GetMuscleConnectionState(childHandle)
+                                != RagdollMuscleConnectionState.Connected));
+            }
+
+            RagdollDefinitionBindings.RuntimeRegistrySnapshot bindingSnapshot =
+                Bindings.CaptureRuntimeRegistry();
+            Dictionary<BoneName, RuntimeMuscleData> runtimeSnapshot =
+                new Dictionary<BoneName, RuntimeMuscleData>(runtimeMuscles);
+            AnimatedPair[] oldPairs = animatedPairs;
+            RagdollHierarchySubsystemSnapshot subsystemSnapshot =
+                CaptureHierarchySubsystemSnapshot(oldPairs);
+            PhysicalAddSnapshot addSnapshot =
+                CaptureAddSnapshot(replacement, newBody);
+            RagdollMuscleChange[] removed = CreateRemovedChanges(
+                new[] { oldBone }, oldPairs);
+            RemovedPhysicalSnapshot[] removedPhysical =
+                CaptureRemovedSnapshots(new[] { oldBone }, removed, oldPairs);
+
+            hierarchyTransactionInProgress = true;
+            try
+            {
+                for (int index = 0; index < children.Length; index++)
+                {
+                    if (children[index]) children[index].connectedBody = newBody;
+                }
+                if (replacement.ForceLayers)
+                {
+                    replacement.Joint.gameObject.layer = Bindings.gameObject.layer;
+                    replacement.Target.gameObject.layer = gameObject.layer;
+                }
+                if (!newBody.isKinematic)
+                {
+                    newBody.linearVelocity = oldBone.Rigidbody.linearVelocity;
+                    newBody.angularVelocity = oldBone.Rigidbody.angularVelocity;
+                }
+
+                runtimeMuscles.Remove(oldBone.Name);
+                runtimeMuscles.Add(
+                    replacement.Bone,
+                    new RuntimeMuscleData(replacement));
+                if (!Bindings.TryReplaceRootBinding(
+                    replacement.Bone,
+                    replacement.Joint,
+                    out replacementHandle,
+                    out error))
+                {
+                    throw new InvalidOperationException(error);
+                }
+
+                RebuildRuntimeHierarchy(oldPairs, subsystemSnapshot);
+                for (int index = 0; index < children.Length; index++)
+                {
+                    if (restoreChildConnection[index]
+                        && children[index])
+                    {
+                        children[index].connectedBody =
+                            previousConnections[index];
+                    }
+                }
+                ReleaseRemovedMuscles(
+                    oldBone.Name,
+                    removedPhysical,
+                    false,
+                    false,
+                    RagdollMuscleRemoveMode.Sever);
+                RagdollMuscleChange added = new RagdollMuscleChange(
+                    replacement.Bone,
+                    replacement.Joint,
+                    replacement.Target,
+                    replacementHandle,
+                    true);
+                NotifyHierarchyCommitted(new[] { added }, removed);
+                return true;
+            }
+            catch (Exception exception)
+            {
+                error = "The root replacement was rolled back: " + exception.Message;
+                replacementHandle = RagdollBoneHandle.Invalid;
+                try
+                {
+                    ShutdownMuscleConnections();
+                    ShutdownInternalCollisions();
+                    ShutdownJointRuntime();
+                    runtimeMuscles.Clear();
+                    foreach (KeyValuePair<BoneName, RuntimeMuscleData> entry
+                        in runtimeSnapshot)
+                    {
+                        runtimeMuscles.Add(entry.Key, entry.Value);
+                    }
+                    Bindings.RestoreRuntimeRegistry(bindingSnapshot);
+                    RestoreRemovedSnapshots(removedPhysical);
+                    RestoreAddSnapshot(replacement, newBody, addSnapshot);
+                    for (int index = 0; index < children.Length; index++)
+                    {
+                        if (children[index])
+                            children[index].connectedBody = previousConnections[index];
+                    }
+                    RebuildRuntimeHierarchy(oldPairs, subsystemSnapshot);
+                }
+                catch (Exception rollbackException)
+                {
+                    UnityEngine.Debug.LogException(rollbackException, this);
+                    error += " Rollback also failed: " + rollbackException.Message;
+                }
+                return false;
+            }
+            finally
+            {
+                hierarchyTransactionInProgress = false;
+            }
+        }
+
+        bool TryReplaceBranchRoot(
+            RagdollBoneHandle existing,
+            RagdollBone oldBone,
+            RagdollRuntimeMuscleRegistration replacement,
+            Rigidbody newBody,
+            out RagdollBoneHandle replacementHandle,
+            out string error)
+        {
+            replacementHandle = RagdollBoneHandle.Invalid;
+            error = null;
+            Rigidbody oldBody = oldBone.Rigidbody;
+            int childCount = Bindings.Topology.GetChildCount(existing);
+            ConfigurableJoint[] children = new ConfigurableJoint[childCount];
+            Rigidbody[] previousConnections = new Rigidbody[childCount];
+            int reconnectCount = 0;
+            bool committed = false;
+            for (int index = 0; index < childCount; index++)
+            {
+                RagdollBoneHandle childHandle =
+                    Bindings.Topology.GetChild(existing, index);
+                ConfigurableJoint child = Bindings.GetBone(childHandle).Joint;
+                if (!child || child.connectedBody != oldBody) continue;
+                children[reconnectCount] = child;
+                previousConnections[reconnectCount] = child.connectedBody;
+                reconnectCount++;
+            }
+
+            try
+            {
+                for (int index = 0; index < reconnectCount; index++)
+                    children[index].connectedBody = newBody;
+
+                RagdollHierarchyTransactionResult transaction;
+                if (!TryReplaceMuscles(
+                    new[] { new RagdollMuscleReplacement(existing, replacement) },
+                    out transaction))
+                {
+                    error = transaction.Error;
+                    return false;
+                }
+                committed = true;
+                if (transaction.Added.Count == 1)
+                {
+                    replacementHandle = transaction.Added[0].Handle;
+                }
+                else if (!Bindings.TryGetBoneHandle(
+                    replacement.Bone,
+                    out replacementHandle))
+                    throw new InvalidOperationException(
+                        "A committed branch replacement produced no live handle.");
+                return true;
+            }
+            finally
+            {
+                if (!committed)
+                {
+                    for (int index = 0; index < reconnectCount; index++)
+                    {
+                        if (children[index])
+                            children[index].connectedBody = previousConnections[index];
+                    }
+                }
             }
         }
 
@@ -805,9 +1040,8 @@ namespace Hairibar.Ragdoll.Animation
                 error = "RagdollAnimator has not completed initialization.";
                 return false;
             }
-            if (!allowExistingConnectionState
-                && (HasDisconnectedMuscles
-                    || PendingMuscleConnectionOperationCount > 0))
+            if (PendingMuscleConnectionOperationCount > 0
+                || (!allowExistingConnectionState && HasDisconnectedMuscles))
             {
                 error = "Runtime hierarchy mutations require all muscles connected and no pending connection operations.";
                 return false;
@@ -861,8 +1095,11 @@ namespace Hairibar.Ragdoll.Animation
                 registration.Target.gameObject.layer = gameObject.layer;
             }
 
-            body.linearVelocity = parentBone.Rigidbody.linearVelocity;
-            body.angularVelocity = parentBone.Rigidbody.angularVelocity;
+            if (!body.isKinematic)
+            {
+                body.linearVelocity = parentBone.Rigidbody.linearVelocity;
+                body.angularVelocity = parentBone.Rigidbody.angularVelocity;
+            }
         }
 
         PhysicalAddSnapshot CaptureAddSnapshot(
@@ -931,10 +1168,13 @@ namespace Hairibar.Ragdoll.Animation
                 snapshot.AutoConfigureConnectedAnchor;
             joint.slerpDrive = snapshot.SlerpDrive;
             joint.targetAngularVelocity = snapshot.TargetAngularVelocity;
-            body.linearVelocity = snapshot.Velocity;
-            body.angularVelocity = snapshot.AngularVelocity;
-            if (snapshot.WasSleeping && !body.isKinematic) body.Sleep();
-            else if (!body.isKinematic) body.WakeUp();
+            if (!body.isKinematic)
+            {
+                body.linearVelocity = snapshot.Velocity;
+                body.angularVelocity = snapshot.AngularVelocity;
+                if (snapshot.WasSleeping) body.Sleep();
+                else body.WakeUp();
+            }
         }
 
         RagdollMuscleChange[] CreateRemovedChanges(
@@ -1069,15 +1309,14 @@ namespace Hairibar.Ragdoll.Animation
                 {
                     snapshot.Rigidbody.isKinematic = snapshot.IsKinematic;
                     snapshot.Rigidbody.detectCollisions = snapshot.DetectCollisions;
-                    snapshot.Rigidbody.linearVelocity = snapshot.Velocity;
-                    snapshot.Rigidbody.angularVelocity = snapshot.AngularVelocity;
-                    if (snapshot.WasSleeping && !snapshot.Rigidbody.isKinematic)
+                    if (!snapshot.Rigidbody.isKinematic)
                     {
-                        snapshot.Rigidbody.Sleep();
-                    }
-                    else if (!snapshot.Rigidbody.isKinematic)
-                    {
-                        snapshot.Rigidbody.WakeUp();
+                        snapshot.Rigidbody.linearVelocity = snapshot.Velocity;
+                        snapshot.Rigidbody.angularVelocity = snapshot.AngularVelocity;
+                        if (snapshot.WasSleeping)
+                            snapshot.Rigidbody.Sleep();
+                        else
+                            snapshot.Rigidbody.WakeUp();
                     }
                 }
                 if (snapshot.Target)
@@ -1321,6 +1560,137 @@ namespace Hairibar.Ragdoll.Animation
                 {
                     UnityEngine.Debug.LogException(exception, this);
                 }
+            }
+        }
+
+        /// <summary>
+        /// Parents every physical muscle to the authored Puppet container. Joint
+        /// connectedBody topology and world poses are preserved.
+        /// </summary>
+        public void FlattenHierarchy()
+        {
+            EnsureHierarchyLayoutReady();
+            Transform puppetParent = authoredPuppetContainer;
+            for (int index = 0; index < animatedPairs.Length; index++)
+            {
+                AnimatedPair pair = animatedPairs[index];
+                pair.RagdollBone.Transform.SetParent(puppetParent, true);
+            }
+        }
+
+        /// <summary>
+        /// Rebuilds physical Transform parenting from the registered muscle topology.
+        /// Joint connectedBody topology and world poses are preserved.
+        /// </summary>
+        public void TreeHierarchy()
+        {
+            EnsureHierarchyLayoutReady();
+            for (int index = 0; index < animatedPairs.Length; index++)
+            {
+                AnimatedPair pair = animatedPairs[index];
+                if (pair.RagdollBone.IsRoot)
+                {
+                    pair.RagdollBone.Transform.SetParent(
+                        authoredPuppetContainer,
+                        true);
+                    continue;
+                }
+
+                RagdollBoneHandle parentHandle;
+                if (!Bindings.Topology.TryGetParent(pair.Handle, out parentHandle))
+                {
+                    throw new InvalidOperationException(
+                        "A non-root muscle has no registered topology parent.");
+                }
+                Transform parent = Bindings.GetBone(parentHandle).Transform;
+                pair.RagdollBone.Transform.SetParent(parent, true);
+            }
+        }
+
+        public bool HierarchyIsFlat()
+        {
+            EnsureHierarchyLayoutReady();
+            Transform puppetParent = authoredPuppetContainer;
+            for (int index = 0; index < animatedPairs.Length; index++)
+            {
+                RagdollBone bone = animatedPairs[index].RagdollBone;
+                if (bone.Transform.parent != puppetParent)
+                    return false;
+            }
+            return true;
+        }
+
+        /// <summary>Moves every available muscle to its current Target position.</summary>
+        public void FixMusclePositions()
+        {
+            FixMusclePose(false);
+        }
+
+        /// <summary>Moves every available muscle to its current Target pose.</summary>
+        public void FixMusclePositionsAndRotations()
+        {
+            FixMusclePose(true);
+        }
+
+        public void SwitchToActiveMode()
+        {
+            GetSimulationModeController().SetMode(RagdollSimulationMode.Active);
+        }
+
+        public void SwitchToKinematicMode()
+        {
+            GetSimulationModeController().SetMode(RagdollSimulationMode.Kinematic);
+        }
+
+        public void SwitchToDisabledMode()
+        {
+            GetSimulationModeController().SetMode(RagdollSimulationMode.Disabled);
+        }
+
+        public void DisableImmediately()
+        {
+            GetSimulationModeController().SetModeImmediate(
+                RagdollSimulationMode.Disabled);
+        }
+
+        void FixMusclePose(bool includeRotations)
+        {
+            EnsureHierarchyLayoutReady();
+            for (int index = 0; index < animatedPairs.Length; index++)
+            {
+                AnimatedPair pair = animatedPairs[index];
+                if (IsMuscleUnavailable(pair)) continue;
+                AnimatedPose target = AnimatedPose.Read(pair.TargetBone);
+                AnimatedPose physical = pair.ConvertTargetPoseToRagdoll(target);
+                Rigidbody body = pair.RagdollBone.Rigidbody;
+                body.position = physical.worldPosition;
+                if (includeRotations) body.rotation = physical.worldRotation;
+            }
+        }
+
+        RagdollSimulationModeController GetSimulationModeController()
+        {
+            RagdollSimulationModeController controller =
+                GetComponent<RagdollSimulationModeController>();
+            if (!controller || !controller.IsInitialized)
+            {
+                throw new InvalidOperationException(
+                    "Ragdoll simulation mode is not initialized.");
+            }
+            return controller;
+        }
+
+        void EnsureHierarchyLayoutReady()
+        {
+            if (animatedPairs == null || !Bindings || !Bindings.IsInitialized)
+            {
+                throw new InvalidOperationException(
+                    "Ragdoll hierarchy is not initialized.");
+            }
+            if (hierarchyTransactionInProgress)
+            {
+                throw new InvalidOperationException(
+                    "Hierarchy layout cannot change during a muscle transaction.");
             }
         }
     }

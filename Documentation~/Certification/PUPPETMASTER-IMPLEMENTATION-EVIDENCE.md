@@ -10,6 +10,10 @@ observable capability, while Unity documentation defines engine mechanics.
   https://rootmotion.freshdesk.com/support/solutions/articles/77000057786-faq
 - RootMotion Support, PuppetMaster learning resources:
   https://rootmotion.freshdesk.com/support/solutions
+- RootMotion official PuppetMaster class reference:
+  http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html
+- RootMotion official BehaviourPuppet class reference:
+  http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_behaviour_puppet.html
 - Unity 6 `SimulationMode.Script`:
   https://docs.unity3d.com/6000.0/Documentation/ScriptReference/SimulationMode.Script.html
 - Unity 6 `PlayableGraph.SetTimeUpdateMode`:
@@ -24,6 +28,9 @@ observable capability, while Unity documentation defines engine mechanics.
   https://docs.unity3d.com/6000.0/Documentation/ScriptReference/Undo.RecordObjects.html
 - Unity 6 common `Collider` properties preserved during shape conversion:
   https://docs.unity3d.com/6000.0/Documentation/ScriptReference/Collider.html
+- Unity 6 runtime and immediate destruction contracts:
+  https://docs.unity3d.com/6000.0/Documentation/ScriptReference/Object.Destroy.html
+  https://docs.unity3d.com/6000.0/Documentation/ScriptReference/Object.DestroyImmediate.html
 
 The detailed PuppetMaster capability inventory remains the 140-row historical
 matrix in `PUPPETMASTER_COVERAGE_AUDIT.md`, derived from the official Doxygen
@@ -38,9 +45,9 @@ are official behaviour requirements.
   bones. They are not attributed to PuppetMaster.
 - Center-of-pressure weighting uses collision impulse with a unit fallback for
   zero-impulse contacts. RootMotion defines the exposed concept, not this solver.
-- Manual simulation names are `PrepareManualSimulation` and
-  `CompleteManualSimulation`; their ordering mirrors RootMotion's documented
-  pre-simulate / `Physics.Simulate` / post-simulate contract.
+- Manual simulation exposes the Hairibar names (`PrepareManualSimulation`,
+  `CompleteManualSimulation`) and the official conceptual names (`OnPreSimulate`,
+  `OnPostSimulate`). It rejects use while `RagdollAnimator` is enabled.
 - Runtime setup rollback and aggregate respawn errors are Hairibar transaction
   semantics built on Unity object and physics contracts.
 - Live authoring uses Unity's documented `Undo.AddComponent` path, whose undo
@@ -52,14 +59,15 @@ are official behaviour requirements.
 
 ## Current verification snapshot
 
-- PlayMode: 518 passing, including all three runtime setup paths, rollback,
+- PlayMode (2026-08-01, Unity 6000.5.2f1): 531 passing, including all three runtime setup paths, rollback,
   quadruped get-up event routing, collider-surface lifecycle restoration, and immediate
   respawn from Unpinned/GetUp/Dead/Frozen, post-initialization isolation, Legacy
   lifecycle restoration, manual simulation, and FixedUpdate add/replace/remove
   hierarchy transactions.
-- EditMode: 33 passing, including live-authoring, complete-setup commit, collider
+- EditMode (2026-08-01, Unity 6000.5.2f1): 202 passing, including live-authoring, complete-setup commit, collider
   conversion matrix, ownership, Undo/Redo, rollback and typed `BoneName` equality.
-- Development certification: Windows64, Linux64, macOS and WebGL BuildReports pass.
+- Development certification: the latest Windows64 build and executed Player pass;
+  prior Linux64, macOS and WebGL BuildReports remain compile-only evidence.
   The Windows player executes 109 assertions in four integral regression scenes;
   after 120 warm-up and 600 measured frames its GC counter reports zero for mapping,
   matching, COM, additional pin and Baker Realtime.

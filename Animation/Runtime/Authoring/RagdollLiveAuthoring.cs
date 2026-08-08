@@ -18,6 +18,7 @@ namespace Hairibar.Ragdoll.Animation
             RagdollAuthoringOptions.Default;
         [SerializeField] bool rebuildOnChange = true;
         [SerializeField, HideInInspector] RagdollAuthoredRig authoredRig;
+        [SerializeField, HideInInspector] string appliedConfigurationHash;
 
         public RagdollBipedReferences References => references;
         public RagdollAuthoringOptions Options => options;
@@ -65,8 +66,25 @@ namespace Hairibar.Ragdoll.Animation
         internal bool TryRebuild(out string error)
         {
             if (!TryValidate(out error)) return false;
-            if (authoredRig) RagdollRuntimeAuthoring.Clear(authoredRig);
-            authoredRig = null;
+            if (!TryValidateReplacementOwnership(out error)) return false;
+            if (authoredRig)
+            {
+                GameObject stage;
+                if (!TryBuildInactiveStage(out stage, out error)) return false;
+                try
+                {
+                    return RagdollRuntimeAuthoring.TryRebuild(
+                        authoredRig,
+                        references,
+                        options,
+                        RagdollRuntimeAuthoring.DefaultFactory,
+                        out error);
+                }
+                finally
+                {
+                    if (stage) DestroyImmediate(stage);
+                }
+            }
             RagdollAuthoredRig rebuilt;
             if (!RagdollRuntimeAuthoring.TryBuild(
                 references,
@@ -80,9 +98,104 @@ namespace Hairibar.Ragdoll.Animation
             return true;
         }
 
+        internal bool TryBuildInactiveStage(
+            out GameObject stage,
+            out string error)
+        {
+            stage = null;
+            error = string.Empty;
+            try
+            {
+                stage = Instantiate(gameObject);
+                stage.name = gameObject.name + " __RagdollAuthoringStage";
+                stage.hideFlags = HideFlags.HideAndDontSave;
+                stage.SetActive(false);
+                RagdollLiveAuthoring stagedAuthor =
+                    stage.GetComponent<RagdollLiveAuthoring>();
+                if (!stagedAuthor)
+                {
+                    error = "Inactive authoring stage did not clone its description.";
+                    return false;
+                }
+                if (stagedAuthor.authoredRig)
+                {
+                    RagdollRuntimeAuthoring.Clear(stagedAuthor.authoredRig);
+                    stagedAuthor.authoredRig = null;
+                }
+                RagdollAuthoredRig stagedRig;
+                if (!RagdollRuntimeAuthoring.TryBuild(
+                    stagedAuthor.references,
+                    options,
+                    out stagedRig,
+                    out error)) return false;
+                error = string.Empty;
+                return true;
+            }
+            catch (Exception exception)
+            {
+                error = "Inactive authoring stage failed: " + exception.Message;
+                return false;
+            }
+            finally
+            {
+                if (!string.IsNullOrEmpty(error) && stage)
+                {
+                    DestroyImmediate(stage);
+                    stage = null;
+                }
+            }
+        }
+
         internal void SetAuthoredRig(RagdollAuthoredRig value)
         {
             authoredRig = value;
+        }
+
+        internal bool RebuildOnChangeEnabled => rebuildOnChange;
+        internal string AppliedConfigurationHash =>
+            appliedConfigurationHash ?? string.Empty;
+        internal void MarkConfigurationApplied(string stableHash)
+        {
+            appliedConfigurationHash = stableHash ?? string.Empty;
+        }
+
+        internal bool TryValidateReplacementOwnership(out string error)
+        {
+            if (!authoredRig)
+            {
+                error = string.Empty;
+                return true;
+            }
+            foreach (Transform bone in references.EnumerateAll())
+            {
+                if (!bone) continue;
+                Rigidbody body = bone.GetComponent<Rigidbody>();
+                if (body && Array.IndexOf(authoredRig.Rigidbodies, body) < 0)
+                {
+                    error = bone.name + " contains a Rigidbody not owned by this author.";
+                    return false;
+                }
+                Collider[] colliders = bone.GetComponents<Collider>();
+                for (int index = 0; index < colliders.Length; index++)
+                {
+                    if (Array.IndexOf(authoredRig.Colliders, colliders[index]) < 0)
+                    {
+                        error = bone.name + " contains a Collider not owned by this author.";
+                        return false;
+                    }
+                }
+                ConfigurableJoint[] joints = bone.GetComponents<ConfigurableJoint>();
+                for (int index = 0; index < joints.Length; index++)
+                {
+                    if (Array.IndexOf(authoredRig.Joints, joints[index]) < 0)
+                    {
+                        error = bone.name + " contains a ConfigurableJoint not owned by this author.";
+                        return false;
+                    }
+                }
+            }
+            error = string.Empty;
+            return true;
         }
 
         void OnValidate()

@@ -40,13 +40,14 @@ escenario integral Player; por ello `D46` está verificado.
 no una API de PuppetMaster. Las pruebas automáticas del paquete no sustituyen perfiles
 en dispositivos, escalas, masas, fixed timestep y escenas del juego consumidor.
 
-## Evidencia final actualizada (2026-07-31)
+## Evidencia final actualizada (2026-08-01)
 
-- EditMode: **33/33**.
-- PlayMode: **518/518**.
-- Total: **551/551**, sin fallos, pruebas omitidas ni inconclusas.
+- EditMode: **202/202**.
+- PlayMode: **533/533**.
+- Total: **735/735**, sin fallos, pruebas omitidas ni inconclusas.
 - Compilación runtime/Editor: sin errores ni warnings C#.
-- Development builds: Windows64, Linux64, macOS y WebGL correctos.
+- Development Player Windows64 reconstruido y ejecutado correctamente. Los
+  BuildReports anteriores de Linux64, macOS y WebGL son evidencia compile-only.
 - Windows Player: 109 aserciones integrales; mapping, matching, COM, additional pin
   y Baker Realtime certificados sin `GC.Alloc` tras warm-up.
 - CPU y memoria: mediana/p95 para 1/10/25/50 puppets y cuatro modos.

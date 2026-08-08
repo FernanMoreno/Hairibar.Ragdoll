@@ -8,8 +8,8 @@ namespace Hairibar.Ragdoll.Animation
         bool manualSimulationPrepared;
         float manualSimulationDeltaTime;
         float manualSampleTime;
+        float manualSampleTimeBeforePrepare;
         bool manualAnimatorWasEnabled;
-        bool manualAnimationWasEnabled;
 
         public bool IsManualSimulationPrepared => manualSimulationPrepared;
 
@@ -21,13 +21,19 @@ namespace Hairibar.Ragdoll.Animation
         {
             if (manualSimulationPrepared)
             {
+                AbortManualSimulation(true);
                 throw new InvalidOperationException(
-                    "Manual simulation is already prepared.");
+                    "Manual simulation was already prepared and has been aborted.");
             }
-            if (!isActiveAndEnabled || animatedPairs == null)
+            if (!gameObject.activeInHierarchy || animatedPairs == null)
             {
                 throw new InvalidOperationException(
-                    "Manual simulation requires an active initialized RagdollAnimator.");
+                    "Manual simulation requires an active GameObject and an initialized RagdollAnimator.");
+            }
+            if (enabled)
+            {
+                throw new InvalidOperationException(
+                    "Manual simulation requires the RagdollAnimator component to be disabled.");
             }
             if (Physics.simulationMode != SimulationMode.Script)
             {
@@ -48,10 +54,8 @@ namespace Hairibar.Ragdoll.Animation
             }
 
             manualAnimatorWasEnabled = targetAnimator && targetAnimator.enabled;
-            manualAnimationWasEnabled = targetAnimation && targetAnimation.enabled;
-            if (targetAnimator) targetAnimator.enabled = false;
-            if (targetAnimation) targetAnimation.enabled = false;
             manualSimulationDeltaTime = deltaTime;
+            manualSampleTimeBeforePrepare = manualSampleTime;
             manualSampleTime = Mathf.Max(
                 manualSampleTime,
                 GetAnimationSampleTime()) + deltaTime;
@@ -59,6 +63,23 @@ namespace Hairibar.Ragdoll.Animation
 
             try
             {
+                // PuppetMaster's documented manual-simulation contract updates the
+                // Animator in the pre-simulation call and then forces it disabled.
+                // Legacy Animation remains externally driven; PuppetMaster does not
+                // claim ownership of its update loop.
+                if (targetAnimator && !usesLegacyTargetAnimation)
+                {
+                    targetAnimator.Update(deltaTime);
+                    targetAnimator.enabled = false;
+                }
+                else if (targetAnimation)
+                {
+                    targetAnimation.Sample();
+                }
+                // Automatic simulation drains teleports at its animation-read
+                // boundary. Manual simulation must provide the same boundary or a
+                // request made while the component is disabled can never commit.
+                ProcessPendingTeleport();
                 ReadAnimatedPose();
                 ProcessPendingMuscleConnectionOperations();
                 RestoreAnimatedPose();
@@ -70,8 +91,7 @@ namespace Hairibar.Ragdoll.Animation
             }
             catch
             {
-                RestoreManualAnimationComponents();
-                manualSimulationPrepared = false;
+                AbortManualSimulation(true);
                 throw;
             }
         }
@@ -87,33 +107,57 @@ namespace Hairibar.Ragdoll.Animation
                 throw new InvalidOperationException(
                     "PrepareManualSimulation must be called before completion.");
             }
-
             try
             {
+                if (enabled)
+                {
+                    throw new InvalidOperationException(
+                        "Manual simulation completion requires the RagdollAnimator component to remain disabled.");
+                }
                 if (!forceTargetPose) MapRagdollToTarget();
                 UpdateLifecycle(manualSimulationDeltaTime);
                 InvokePostLateUpdateHook();
             }
             finally
             {
-                RestoreManualAnimationComponents();
-                manualSimulationPrepared = false;
-                manualSimulationDeltaTime = 0f;
+                AbortManualSimulation(false);
             }
+        }
+
+        /// <summary>
+        /// PuppetMaster-compatible name for the documented pre-simulation contract.
+        /// The component must be disabled and Physics must use scripted simulation.
+        /// </summary>
+        public void OnPreSimulate(float deltaTime)
+        {
+            PrepareManualSimulation(deltaTime);
+        }
+
+        /// <summary>PuppetMaster-compatible name for the post-simulation contract.</summary>
+        public void OnPostSimulate()
+        {
+            CompleteManualSimulation();
         }
 
         void RestoreManualAnimationComponents()
         {
             if (targetAnimator) targetAnimator.enabled = manualAnimatorWasEnabled;
-            if (targetAnimation) targetAnimation.enabled = manualAnimationWasEnabled;
         }
 
         void CancelPreparedManualSimulation()
         {
             if (!manualSimulationPrepared) return;
+            AbortManualSimulation(true);
+        }
+
+        void AbortManualSimulation(bool rollbackSampleTime)
+        {
             RestoreManualAnimationComponents();
+            if (rollbackSampleTime)
+                manualSampleTime = manualSampleTimeBeforePrepare;
             manualSimulationPrepared = false;
             manualSimulationDeltaTime = 0f;
+            manualSampleTimeBeforePrepare = manualSampleTime;
         }
     }
 }

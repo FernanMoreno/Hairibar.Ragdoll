@@ -24,6 +24,10 @@ namespace Hairibar.Ragdoll.Animation
         [SerializeField, Range(0, 2)] int capsuleDirection = 2;
         [SerializeField, Min(MinimumDimension)] float actionColliderRadiusMultiplier = 1.5f;
         [SerializeField, Min(0f)] float actionPinWeightMultiplier = 1.5f;
+        [SerializeField, Min(0f)] float actionAdditionalPinWeight = 1.5f;
+        [SerializeField]
+        [Tooltip("When enabled, Action Additional Pin Weight is an absolute temporary weight. Disabled preserves legacy Hairibar multiplier semantics for existing serialized props.")]
+        bool useAbsoluteActionPinWeight;
         [SerializeField, Min(MinimumDimension)] float actionMassMultiplier = 1f;
         [SerializeField] Vector3 centerOfMassOffset;
 
@@ -60,6 +64,20 @@ namespace Hairibar.Ragdoll.Animation
             get => actionPinWeightMultiplier;
             set => actionPinWeightMultiplier = SanitizeNonNegative(value);
         }
+        public float ActionAdditionalPinWeight
+        {
+            get => actionAdditionalPinWeight;
+            set
+            {
+                actionAdditionalPinWeight = SanitizeNonNegative(value);
+                useAbsoluteActionPinWeight = true;
+            }
+        }
+        public bool UsesAbsoluteActionPinWeight
+        {
+            get => useAbsoluteActionPinWeight;
+            set => useAbsoluteActionPinWeight = value;
+        }
         public float ActionMassMultiplier
         {
             get => actionMassMultiplier;
@@ -86,6 +104,8 @@ namespace Hairibar.Ragdoll.Animation
                 SanitizeDimension(actionColliderRadiusMultiplier, 1f);
             actionPinWeightMultiplier =
                 SanitizeNonNegative(actionPinWeightMultiplier);
+            actionAdditionalPinWeight =
+                SanitizeNonNegative(actionAdditionalPinWeight);
             actionMassMultiplier = SanitizeDimension(actionMassMultiplier, 1f);
             centerOfMassOffset = SanitizeVector(centerOfMassOffset);
         }
@@ -103,6 +123,8 @@ namespace Hairibar.Ragdoll.Animation
                 capsuleDirection,
                 actionColliderRadiusMultiplier,
                 actionPinWeightMultiplier,
+                actionAdditionalPinWeight,
+                useAbsoluteActionPinWeight,
                 actionMassMultiplier,
                 centerOfMassOffset);
         }
@@ -187,6 +209,8 @@ namespace Hairibar.Ragdoll.Animation
         internal readonly int CapsuleDirection;
         internal readonly float ActionColliderRadiusMultiplier;
         internal readonly float ActionPinWeightMultiplier;
+        internal readonly float ActionAdditionalPinWeight;
+        internal readonly bool UseAbsoluteActionPinWeight;
         internal readonly float ActionMassMultiplier;
         internal readonly Vector3 CenterOfMassOffset;
 
@@ -203,6 +227,8 @@ namespace Hairibar.Ragdoll.Animation
             int capsuleDirection,
             float colliderMlp,
             float pinMlp,
+            float actionPinWeight,
+            bool useAbsolutePinWeight,
             float massMlp,
             Vector3 centerOfMassOffset)
         {
@@ -215,6 +241,8 @@ namespace Hairibar.Ragdoll.Animation
             CapsuleDirection = Mathf.Clamp(capsuleDirection, 0, 2);
             ActionColliderRadiusMultiplier = colliderMlp;
             ActionPinWeightMultiplier = pinMlp;
+            ActionAdditionalPinWeight = actionPinWeight;
+            UseAbsoluteActionPinWeight = useAbsolutePinWeight;
             ActionMassMultiplier = massMlp;
             CenterOfMassOffset = centerOfMassOffset;
         }
@@ -230,6 +258,8 @@ namespace Hairibar.Ragdoll.Animation
                 2,
                 1f,
                 1f,
+                1f,
+                true,
                 1f,
                 Vector3.zero);
     }

@@ -12,14 +12,23 @@ namespace Hairibar.Ragdoll.Animation.Editor
         int selectedCollider;
         int selectedJoint;
         bool symmetry = true;
+        float symmetryDistance = 0.25f;
         float massMultiplier = 1f;
 
         RagdollAuthoredRig Rig => (RagdollAuthoredRig)target;
+        internal float SymmetryDistance
+        {
+            get => symmetryDistance;
+            set => symmetryDistance = Mathf.Max(0f, value);
+        }
 
         public override void OnInspectorGUI()
         {
             mode = (EditMode)GUILayout.Toolbar((int)mode, new[] { "Colliders", "Joints" });
             symmetry = EditorGUILayout.Toggle("Symmetry", symmetry);
+            if (symmetry)
+                symmetryDistance = Mathf.Max(0f, EditorGUILayout.FloatField(
+                    "Symmetry Max Distance", symmetryDistance));
             EditorGUILayout.Space();
 
             DrawGlobalBodyTools();
@@ -198,6 +207,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
             limit.limit = z;
             joint.angularZLimit = limit;
             EditorUtility.SetDirty(joint);
+            if (symmetry) MirrorSelectedJoint();
         }
 
         void DrawDiagnostics()
@@ -436,7 +446,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
             SetColliderSize(mirror, ColliderSize(source));
         }
 
-        void MirrorSelectedJoint()
+        internal void MirrorSelectedJoint()
         {
             ConfigurableJoint source = Rig.Joints[selectedJoint];
             ConfigurableJoint mirror = FindMirror(source, Rig.Joints);
@@ -471,7 +481,9 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     best = candidate;
                 }
             }
-            return best;
+            return best && distance <= symmetryDistance * symmetryDistance
+                ? best
+                : null;
         }
 
         Vector3 ReflectDirection(Vector3 worldDirection)

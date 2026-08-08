@@ -49,7 +49,8 @@ namespace Hairibar.Ragdoll.Animation.Tests
 
         [UnityTest] public IEnumerator B21_BranchAuthoritySurvivesCollectionMutation()
         {
-            return RunSetupServiceIntegration();
+            return RunSetupServiceIntegration(test =>
+                test.OfficialStateWeightsAndModeFacadesAffectLiveRuntime());
         }
 
         [UnityTest] public IEnumerator B23_ManualAndLegacyUpdateLifecycle()
@@ -60,12 +61,14 @@ namespace Hairibar.Ragdoll.Animation.Tests
 
         [UnityTest] public IEnumerator B24_AllCoreHooksAreOrderedAndIsolated()
         {
-            return RunSetupServiceIntegration();
+            return RunSetupServiceIntegration(test =>
+                test.CoreHooksPreserveOrderAndIsolateEverySubscriber());
         }
 
         [UnityTest] public IEnumerator B26_CompleteCollectionCommitsAndRollsBackAtomically()
         {
-            return RunSetupServiceIntegration();
+            return RunSetupServiceIntegration(test =>
+                test.CollectionValidationFailuresLeaveRegistryAndPhysicsUntouched());
         }
 
         [Test] public void B27_DisconnectReconnectPreservesMappingContract()
@@ -96,18 +99,30 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 test => test.CollisionObserved_PrecedesFiltersAndIncludesAllPhases());
         }
 
-        [UnityTest] public IEnumerator C07_ReactivationTeleportAndSubscriberExceptions()
+        [Test] public void C07_ReactivationTeleportAndSubscriberExceptions()
         {
-            return RunSetupServiceIntegration();
+            var collisions = new RagdollInternalCollisionTests();
+            collisions.SetUp();
+            try
+            {
+                collisions.ReapplyCurrentPolicy_RestoresAutomaticStateLostByReactivation();
+            }
+            finally { collisions.TearDown(); }
+
+            new AnimatedPoseSamplerTests()
+                .Teleport_TransformsWorldPoseAndClearsCachedVelocities();
+            RunFixture(
+                new RagdollPuppetBehaviourEventIntegrationTests(),
+                test => test.CollisionSubscribers_AreIsolatedAndOfficialAliasSharesStream());
         }
 
-        [Test] public void D04_ActiveModeUsesFullPuppetMapping()
+        [Test] public void LegacyActiveModeMathUsesFullPuppetMapping()
         {
             new RagdollPuppetNormalModeMathTests()
                 .ActiveModeAlwaysRequestsFullMappingInPuppet();
         }
 
-        [Test] public void D05_UnmappedModeRequiresRecentPhysicalContact()
+        [Test] public void LegacyUnmappedModeMathRequiresRecentContact()
         {
             var mode = new RagdollPuppetNormalModeMathTests();
             mode.UnmappedModeRequiresRecentContactInPuppet();
@@ -115,7 +130,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 .ContactRemainsRecentAcrossOnePhysicsStep();
         }
 
-        [Test] public void D06_KinematicModeActivatesOnlyFromAcceptedContact()
+        [Test] public void LegacyKinematicModeMathRequiresAcceptedContact()
         {
             var tests = new RagdollPuppetKinematicActivationPolicyTests();
             tests.SourceClassificationSeparatesStaticKinematicAndDynamic();
@@ -124,19 +139,19 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 RagdollPuppetState.Unpinned);
         }
 
-        [Test] public void D07_MappingBlendIsRateLimitedWithoutOvershoot()
+        [Test] public void LegacyMappingBlendMathIsRateLimitedWithoutOvershoot()
         {
             new RagdollPuppetNormalModeMathTests()
                 .StepMappingWeightUsesUnitsPerSecondWithoutOvershoot();
         }
 
-        [Test] public void D08_StaticAndKinematicContactPolicyIsExplicit()
+        [Test] public void LegacyStaticAndKinematicContactPolicyIsExplicit()
         {
             new RagdollPuppetKinematicActivationPolicyTests()
                 .StaticAndKinematicSourcesUseStaticActivationFlag();
         }
 
-        [Test] public void D09_MinimumImpulseIsInclusiveAndFinite()
+        [Test] public void LegacyMinimumActivationImpulseIsInclusiveAndFinite()
         {
             var tests = new RagdollPuppetKinematicActivationPolicyTests();
             tests.MinimumImpulseIsInclusive();
@@ -164,7 +179,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
             tests.ZeroConfiguredPin_CanKnockOutWhenOptionIsEnabled();
         }
 
-        [Test] public void D43_TeleportPreservesGetUpPipeline()
+        [Test] public void TeleportPreservesGetUpPipeline_LegacyCoverage()
         {
             var tests = new RagdollPuppetBehaviourMathTests();
             tests.TeleportMoveToTarget_CompletesOnlyTheGetUpBlend();
@@ -198,19 +213,21 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 test => test.InterfaceSolver_ExposesIndependentAutomaticAndEnabledState());
         }
 
-        [UnityTest] public IEnumerator G04_SolverHooksAreIsolatedAroundReadWrite()
+        [Test] public void G04_SolverHooksAreIsolatedAroundReadWrite()
         {
-            return RunSetupServiceIntegration();
+            RunFixture(
+                new RagdollIKSchedulerTests(),
+                test => test.ReadWriteHook_RunsMatchingSolversAndIsolatesFailures());
         }
 
-        static IEnumerator RunSetupServiceIntegration()
+        static IEnumerator RunSetupServiceIntegration(
+            Func<RagdollRuntimeSetupServiceTests, IEnumerator> select)
         {
             var tests = new RagdollRuntimeSetupServiceTests();
             tests.SetUp();
             try
             {
-                IEnumerator routine =
-                    tests.ConvertDirectly_CreatesCompleteRuntimeAndLayerContract();
+                IEnumerator routine = select(tests);
                 while (routine.MoveNext()) yield return routine.Current;
             }
             finally

@@ -15,30 +15,30 @@ namespace Hairibar.Ragdoll
     {
         [SerializeField, Min(0)] int maxEventsPerFixedStep = 32;
 
-        Action<RagdollCollisionEvent> collisionReported;
-        Action<RagdollCollisionEvent> collisionEntered;
-        Action<RagdollCollisionEvent> collisionStayed;
-        Action<RagdollCollisionEvent> collisionExited;
+        readonly CollisionChannel collisionReported = new CollisionChannel();
+        readonly CollisionChannel collisionEntered = new CollisionChannel();
+        readonly CollisionChannel collisionStayed = new CollisionChannel();
+        readonly CollisionChannel collisionExited = new CollisionChannel();
 
         public event Action<RagdollCollisionEvent> CollisionReported
         {
-            add { collisionReported += value; RefreshRelayEnabledState(); }
-            remove { collisionReported -= value; RefreshRelayEnabledState(); }
+            add { collisionReported.Add(value); RefreshRelayEnabledState(); }
+            remove { collisionReported.Remove(value); RefreshRelayEnabledState(); }
         }
         public event Action<RagdollCollisionEvent> CollisionEntered
         {
-            add { collisionEntered += value; RefreshRelayEnabledState(); }
-            remove { collisionEntered -= value; RefreshRelayEnabledState(); }
+            add { collisionEntered.Add(value); RefreshRelayEnabledState(); }
+            remove { collisionEntered.Remove(value); RefreshRelayEnabledState(); }
         }
         public event Action<RagdollCollisionEvent> CollisionStayed
         {
-            add { collisionStayed += value; RefreshRelayEnabledState(); }
-            remove { collisionStayed -= value; RefreshRelayEnabledState(); }
+            add { collisionStayed.Add(value); RefreshRelayEnabledState(); }
+            remove { collisionStayed.Remove(value); RefreshRelayEnabledState(); }
         }
         public event Action<RagdollCollisionEvent> CollisionExited
         {
-            add { collisionExited += value; RefreshRelayEnabledState(); }
-            remove { collisionExited -= value; RefreshRelayEnabledState(); }
+            add { collisionExited.Add(value); RefreshRelayEnabledState(); }
+            remove { collisionExited.Remove(value); RefreshRelayEnabledState(); }
         }
 
         public int MaxEventsPerFixedStep
@@ -81,34 +81,34 @@ namespace Hairibar.Ragdoll
                 fixedTime,
                 ++sequence);
 
-            collisionReported?.Invoke(collisionEvent);
+            collisionReported.Invoke(collisionEvent, this);
 
             switch (phase)
             {
                 case RagdollCollisionPhase.Enter:
-                    collisionEntered?.Invoke(collisionEvent);
+                    collisionEntered.Invoke(collisionEvent, this);
                     break;
                 case RagdollCollisionPhase.Stay:
-                    collisionStayed?.Invoke(collisionEvent);
+                    collisionStayed.Invoke(collisionEvent, this);
                     break;
                 case RagdollCollisionPhase.Exit:
-                    collisionExited?.Invoke(collisionEvent);
+                    collisionExited.Invoke(collisionEvent, this);
                     break;
             }
         }
 
         bool HasSubscribers(RagdollCollisionPhase phase)
         {
-            if (collisionReported != null) return true;
+            if (collisionReported.HasSubscribers) return true;
 
             switch (phase)
             {
                 case RagdollCollisionPhase.Enter:
-                    return collisionEntered != null;
+                    return collisionEntered.HasSubscribers;
                 case RagdollCollisionPhase.Stay:
-                    return collisionStayed != null;
+                    return collisionStayed.HasSubscribers;
                 case RagdollCollisionPhase.Exit:
-                    return collisionExited != null;
+                    return collisionExited.HasSubscribers;
                 default:
                     return false;
             }
@@ -150,10 +150,90 @@ namespace Hairibar.Ragdoll
             }
         }
 
-        bool HasAnySubscribers => collisionReported != null
-            || collisionEntered != null
-            || collisionStayed != null
-            || collisionExited != null;
+        bool HasAnySubscribers => collisionReported.HasSubscribers
+            || collisionEntered.HasSubscribers
+            || collisionStayed.HasSubscribers
+            || collisionExited.HasSubscribers;
+
+        /// <summary>
+        /// Copy-on-write preserves multicast ordering and snapshot semantics without
+        /// allocating in the physics callback. Each listener is isolated so one gameplay
+        /// exception cannot suppress the remaining collision consumers.
+        /// </summary>
+        sealed class CollisionChannel
+        {
+            static readonly Action<RagdollCollisionEvent>[] Empty =
+                new Action<RagdollCollisionEvent>[0];
+
+            Action<RagdollCollisionEvent>[] subscribers = Empty;
+
+            internal bool HasSubscribers => subscribers.Length > 0;
+
+            internal void Add(Action<RagdollCollisionEvent> callback)
+            {
+                if (callback == null) return;
+
+                Action<RagdollCollisionEvent>[] previous = subscribers;
+                Action<RagdollCollisionEvent>[] next =
+                    new Action<RagdollCollisionEvent>[previous.Length + 1];
+                Array.Copy(previous, next, previous.Length);
+                next[previous.Length] = callback;
+                subscribers = next;
+            }
+
+            internal void Remove(Action<RagdollCollisionEvent> callback)
+            {
+                if (callback == null) return;
+
+                Action<RagdollCollisionEvent>[] previous = subscribers;
+                for (int index = previous.Length - 1; index >= 0; index--)
+                {
+                    if (previous[index] != callback) continue;
+
+                    if (previous.Length == 1)
+                    {
+                        subscribers = Empty;
+                        return;
+                    }
+
+                    Action<RagdollCollisionEvent>[] next =
+                        new Action<RagdollCollisionEvent>[previous.Length - 1];
+                    if (index > 0)
+                    {
+                        Array.Copy(previous, 0, next, 0, index);
+                    }
+                    if (index < previous.Length - 1)
+                    {
+                        Array.Copy(
+                            previous,
+                            index + 1,
+                            next,
+                            index,
+                            previous.Length - index - 1);
+                    }
+                    subscribers = next;
+                    return;
+                }
+            }
+
+            internal void Invoke(
+                RagdollCollisionEvent collisionEvent,
+                UnityEngine.Object context)
+            {
+                Action<RagdollCollisionEvent>[] snapshot = subscribers;
+                for (int index = 0; index < snapshot.Length; index++)
+                {
+                    try
+                    {
+                        snapshot[index](collisionEvent);
+                    }
+                    catch (Exception exception)
+                    {
+                        UnityEngine.Debug.LogException(exception, context);
+                    }
+                }
+            }
+        }
 
         void RefreshRelayEnabledState()
         {

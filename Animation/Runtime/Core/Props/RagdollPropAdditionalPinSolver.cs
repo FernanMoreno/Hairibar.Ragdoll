@@ -86,6 +86,8 @@ namespace Hairibar.Ragdoll.Animation
                 settings,
                 effectivePositionAuthority,
                 1f,
+                0f,
+                false,
                 deltaTime,
                 out step,
                 out error);
@@ -97,6 +99,8 @@ namespace Hairibar.Ragdoll.Animation
             RagdollPropAdditionalPinSnapshot settings,
             float effectivePositionAuthority,
             float weightMultiplier,
+            float absoluteWeight,
+            bool useAbsoluteWeight,
             float deltaTime,
             out RagdollPropAdditionalPinStep step,
             out string error)
@@ -132,10 +136,14 @@ namespace Hairibar.Ragdoll.Animation
                 RagdollPropAdditionalPinSettings.IsFinite(weightMultiplier)
                     ? Mathf.Max(0f, weightMultiplier)
                     : 0f;
+            float safeAbsoluteWeight =
+                RagdollPropAdditionalPinSettings.IsFinite(absoluteWeight)
+                    ? Mathf.Max(0f, absoluteWeight)
+                    : 0f;
             float appliedWeight = settings.Enabled
-                ? settings.Weight
+                ? (useAbsoluteWeight ? safeAbsoluteWeight
+                    : settings.Weight * safeWeightMultiplier)
                     * Mathf.Clamp01(effectivePositionAuthority)
-                    * safeWeightMultiplier
                 : 0f;
             Vector3 desiredVelocityChange = (
                 targetVelocity

@@ -50,7 +50,7 @@ namespace Hairibar.Ragdoll.Animation
 
             public void Destroy(UnityEngine.Object value)
             {
-                if (value) UnityEngine.Object.DestroyImmediate(value);
+                DestroyOwnedObject(value);
             }
         }
 
@@ -112,7 +112,10 @@ namespace Hairibar.Ragdoll.Animation
                 puppetObject = UnityEngine.Object.Instantiate(
                     originalObject,
                     originalTransform.parent);
-                puppetObject.name = "Puppet";
+                // Instantiate appends "(Clone)". Keep the authored root name
+                // through legacy name migration, then apply the public Puppet
+                // name only after direct Transform bindings have been captured.
+                puppetObject.name = originalName;
                 puppetObject.SetActive(true);
                 RagdollDefinitionBindings puppet =
                     puppetObject.GetComponent<RagdollDefinitionBindings>();
@@ -136,6 +139,7 @@ namespace Hairibar.Ragdoll.Animation
                 // Name-based binding must complete while the Target root still has the
                 // same authored name as the Puppet root. Renaming afterwards is safe
                 // because RagdollTargetBindings now holds direct Transform references.
+                puppetObject.name = "Puppet";
                 originalObject.name = "Target";
                 RemoveTargetPhysics(originalTransform, original);
                 originalObject.SetActive(originalActive);
@@ -144,11 +148,11 @@ namespace Hairibar.Ragdoll.Animation
             }
             catch (Exception exception)
             {
-                if (puppetObject) UnityEngine.Object.DestroyImmediate(puppetObject);
+                if (puppetObject) DestroyOwnedObject(puppetObject);
                 if (createdContainer)
                 {
                     originalTransform.SetParent(null, true);
-                    UnityEngine.Object.DestroyImmediate(createdContainer);
+                    DestroyOwnedObject(createdContainer);
                 }
                 else if (originalTransform.parent != originalParent)
                 {
@@ -291,6 +295,10 @@ namespace Hairibar.Ragdoll.Animation
                 GameObject behaviourRoot =
                     factory.CreateGameObject("Character Behaviours");
                 created.Add(behaviourRoot);
+                // The setup contract applies the character-controller layer to
+                // the complete Target hierarchy. This object is created after the
+                // recursive layer pass, so it must inherit that layer explicitly.
+                behaviourRoot.layer = targetLayer;
                 behaviourRoot.transform.SetParent(target, false);
                 result.PuppetBehaviour =
                     factory.AddComponent<RagdollPuppetBehaviour>(behaviourRoot);
@@ -355,15 +363,28 @@ namespace Hairibar.Ragdoll.Animation
             Rigidbody[] bodies = target.GetComponentsInChildren<Rigidbody>(true);
             for (int index = 0; index < joints.Length; index++)
             {
-                if (joints[index]) UnityEngine.Object.DestroyImmediate(joints[index]);
+                if (!joints[index]) continue;
+                joints[index].connectedBody = null;
+                DestroyOwnedObject(joints[index]);
             }
             for (int index = 0; index < colliders.Length; index++)
             {
-                if (colliders[index]) UnityEngine.Object.DestroyImmediate(colliders[index]);
+                if (!colliders[index]) continue;
+                colliders[index].enabled = false;
+                DestroyOwnedObject(colliders[index]);
             }
             for (int index = 0; index < bodies.Length; index++)
             {
-                if (bodies[index]) UnityEngine.Object.DestroyImmediate(bodies[index]);
+                Rigidbody body = bodies[index];
+                if (!body) continue;
+                if (!body.isKinematic)
+                {
+                    body.linearVelocity = Vector3.zero;
+                    body.angularVelocity = Vector3.zero;
+                }
+                body.detectCollisions = false;
+                body.isKinematic = true;
+                DestroyOwnedObject(body);
             }
 
             RagdollCollisionHub hub = ownedBindings
@@ -375,10 +396,28 @@ namespace Hairibar.Ragdoll.Animation
             RagdollAuthoredRig authored = ownedBindings
                 ? ownedBindings.GetComponent<RagdollAuthoredRig>()
                 : null;
-            if (hub) UnityEngine.Object.DestroyImmediate(hub);
-            if (settings) UnityEngine.Object.DestroyImmediate(settings);
-            if (authored) UnityEngine.Object.DestroyImmediate(authored);
-            if (ownedBindings) UnityEngine.Object.DestroyImmediate(ownedBindings);
+            DestroyOwnedObject(hub);
+            DestroyOwnedObject(settings);
+            DestroyOwnedObject(authored);
+            DestroyOwnedObject(ownedBindings);
+        }
+
+        static void DestroyOwnedObject(UnityEngine.Object value)
+        {
+            if (!value) return;
+            if (!Application.isPlaying)
+            {
+                UnityEngine.Object.DestroyImmediate(value);
+                return;
+            }
+
+            GameObject gameObject = value as GameObject;
+            if (gameObject) gameObject.SetActive(false);
+            Behaviour behaviour = value as Behaviour;
+            if (behaviour) behaviour.enabled = false;
+            Collider collider = value as Collider;
+            if (collider) collider.enabled = false;
+            UnityEngine.Object.Destroy(value);
         }
 
         static void CaptureLayers(Transform root, List<LayerSnapshot> snapshots)

@@ -5,6 +5,9 @@ namespace Hairibar.Ragdoll.Animation
 {
     public partial class RagdollAnimator
     {
+        bool ownsFixedAnimatorUpdate;
+        bool targetAnimatorLifecycleEnabled = true;
+
         void TransitionTo(RagdollAnimationProfile newProfile)
         {
             if (newProfile != currentProfile)
@@ -90,7 +93,7 @@ namespace Hairibar.Ragdoll.Animation
                 _masterPinWeight,
                 _masterMuscleWeight,
                 _masterDampingRatio,
-                _masterMuscleDamper);
+                _masterMuscleDamperMultiplier);
         }
 
 
@@ -145,12 +148,16 @@ namespace Hairibar.Ragdoll.Animation
             float effectiveAngularMass = RagdollSettings
                 ? RagdollSettings.GetRotationDriveEffectiveMass(rigidbody)
                 : rigidbody.mass;
-            bone.Joint.slerpDrive = AnimationMatching.GetRotationMatchingJointDrive(
+            JointDrive drive = AnimationMatching.GetRotationMatchingJointDrive(
                 alpha,
                 dampingRatio,
                 effectiveAngularMass,
                 dt,
                 boneProfile.maxAngularAcceleration);
+            RagdollMasterAuthority.ApplyAbsoluteMuscleDamper(
+                ref drive,
+                _masterMuscleDamper);
+            bone.Joint.slerpDrive = drive;
 
             if (pinSettings.AngularPinning)
             {
@@ -297,6 +304,63 @@ namespace Hairibar.Ragdoll.Animation
             return targetAnimation && targetAnimation.animatePhysics;
         }
 
+        void ReconcileFixedAnimatorOwnership()
+        {
+            bool shouldOwn = isActiveAndEnabled
+                && targetAnimator
+                && !usesLegacyTargetAnimation
+                && IsAnimatorFixedUpdate(targetAnimator);
+            if (shouldOwn == ownsFixedAnimatorUpdate)
+            {
+                if (ownsFixedAnimatorUpdate && targetAnimator.enabled)
+                {
+                    // A controlled Animator must not also be evaluated by Unity's
+                    // automatic animation loop.
+                    targetAnimator.enabled = false;
+                }
+                return;
+            }
+
+            if (!shouldOwn)
+            {
+                ReleaseFixedAnimatorOwnership();
+                return;
+            }
+
+            ownsFixedAnimatorUpdate = true;
+            targetAnimator.enabled = false;
+        }
+
+        void ReleaseFixedAnimatorOwnership()
+        {
+            if (!ownsFixedAnimatorUpdate) return;
+            ownsFixedAnimatorUpdate = false;
+            if (targetAnimator)
+            {
+                targetAnimator.enabled = targetAnimatorLifecycleEnabled;
+            }
+        }
+
+        void EvaluateControlledAnimator(float deltaTime)
+        {
+            ReconcileFixedAnimatorOwnership();
+            if (ownsFixedAnimatorUpdate
+                && targetAnimatorLifecycleEnabled
+                && targetAnimator)
+            {
+                targetAnimator.Update(deltaTime);
+            }
+        }
+
+        static bool IsAnimatorFixedUpdate(Animator animator)
+        {
+#if UNITY_6000_0_OR_NEWER
+            return animator.updateMode == AnimatorUpdateMode.Fixed;
+#else
+            return animator.updateMode == AnimatorUpdateMode.AnimatePhysics;
+#endif
+        }
+
         void RestoreAnimatedPose()
         {
             foreach (AnimatedPair pair in animatedPairs)
@@ -335,7 +399,11 @@ namespace Hairibar.Ragdoll.Animation
                 rb.position = ragdollPose.worldPosition;
                 rb.rotation = ragdollPose.worldRotation;
 
-                if (clearVelocities)
+                // Unity does not support assigning velocity to a kinematic
+                // Rigidbody. The simulation controller clears momentum after it
+                // restores dynamic bodies when entering Active mode; while the
+                // body remains Kinematic there is no physical velocity to clear.
+                if (clearVelocities && !rb.isKinematic)
                 {
                     rb.linearVelocity = Vector3.zero;
                     rb.angularVelocity = Vector3.zero;

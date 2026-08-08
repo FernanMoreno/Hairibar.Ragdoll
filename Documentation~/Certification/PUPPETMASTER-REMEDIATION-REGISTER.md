@@ -30,5 +30,5 @@ behaviour plus a regression test; symbol presence or compilation alone is not en
 | HR-017 | Medium | Automatic mass distribution is biometric | authoring | normalized regional-mass tests | Verified |
 | HR-018 | High | Manual physics and Legacy Animation lifecycles are supported | animator lifecycle | scripted-simulation and Legacy tests | Verified: scripted step plus Legacy kill, freeze, resurrect and respawn restoration |
 | HR-019 | Medium | Post-init and documented dynamic hierarchy operations are public | animator lifecycle/hierarchy | ordering and rollback tests | Verified: collection/replacement, stale handles, event order and rollback |
-| HR-020 | High | Historical coverage documents contain no unsupported closure | documentation | full 140-row re-audit | Verified: 139 V, G05 N/A, zero P/O |
+| HR-020 | High | Historical coverage documents contain no unsupported closure | documentation | full 140-row re-audit | Reopened by R11/R12/R34: historical 139 V and G05 N/A are not current certification |
 | HR-021 | High | Automatic ragdoll creator remains live-editable and ownership-safe | authoring | validate-before-rebuild, foreign-component and Undo/Redo tests | Verified |

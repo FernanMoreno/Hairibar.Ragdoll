@@ -36,6 +36,34 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [Test]
+        public void GroundContactFilteringPreservesPerContactImpulseDistribution()
+        {
+            Vector3 weighted = Vector3.zero;
+            float total = 0f;
+            int count = 0;
+            float minimumDot = Mathf.Cos(60f * Mathf.Deg2Rad);
+
+            Assert.That(RagdollGroundProbe.AccumulateGroundContact(
+                Vector3.zero, Vector3.up, 1f, Vector3.up, minimumDot,
+                ref weighted, ref total, ref count), Is.True);
+            Assert.That(RagdollGroundProbe.AccumulateGroundContact(
+                new Vector3(4f, 0f, 0f), Vector3.up, 3f,
+                Vector3.up, minimumDot,
+                ref weighted, ref total, ref count), Is.True);
+            Assert.That(RagdollGroundProbe.AccumulateGroundContact(
+                Vector3.right * 100f, Vector3.right, 100f,
+                Vector3.up, minimumDot,
+                ref weighted, ref total, ref count), Is.False,
+                "Wall contacts must not contribute ground pressure.");
+
+            Vector3 pressure;
+            Assert.That(RagdollCenterOfPressureMath.Resolve(
+                weighted, total, count, out pressure), Is.True);
+            Assert.That(pressure, Is.EqualTo(new Vector3(3f, 0f, 0f)));
+            Assert.That(count, Is.EqualTo(2));
+        }
+
+        [Test]
         public void SnapshotResolvesComVectorDirectionDistanceAndArbitraryUpAngle()
         {
             RagdollGroundingSnapshot snapshot = new RagdollGroundingSnapshot(

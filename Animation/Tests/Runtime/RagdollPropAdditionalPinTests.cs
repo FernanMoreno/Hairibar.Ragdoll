@@ -346,6 +346,32 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [Test]
+        public void HeldAdditionalPinCriticalPath_AllocatesZeroManagedBytes()
+        {
+            using (RagdollPropTestRig rig = new RagdollPropTestRig())
+            {
+                rig.PropA.AdditionalPin.Enabled = true;
+                rig.PropA.AdditionalPin.Weight = 1f;
+                rig.PropA.AdditionalPin.Mass = 1f;
+                rig.TargetSlot.transform.position = Vector3.right;
+                rig.PrimeEmptySlot();
+                rig.PickUp(rig.PropA);
+
+                for (int index = 0; index < 128; index++)
+                    rig.Muscle.ApplyAdditionalPinForDiagnostics();
+
+                long before = System.GC.GetAllocatedBytesForCurrentThread();
+                for (int index = 0; index < 10000; index++)
+                    rig.Muscle.ApplyAdditionalPinForDiagnostics();
+                long allocated = System.GC.GetAllocatedBytesForCurrentThread()
+                    - before;
+
+                Assert.That(allocated, Is.Zero,
+                    "The synchronous held override, authority lookup and additional-pin solver path allocated managed memory.");
+            }
+        }
+
+        [Test]
         public void Muscle_SuspendsAdditionalPinWhenRuntimeAuthorityUnavailable()
         {
             using (RagdollPropTestRig rig = new RagdollPropTestRig())

@@ -1,6 +1,9 @@
+using System;
 using System.Reflection;
 using NUnit.Framework;
+using System.Text.RegularExpressions;
 using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace Hairibar.Ragdoll.Animation.Tests
 {
@@ -19,7 +22,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
         [TearDown]
         public void TearDown()
         {
-            if (owner) Object.DestroyImmediate(owner);
+            if (owner) UnityEngine.Object.DestroyImmediate(owner);
         }
 
         [Test]
@@ -136,6 +139,102 @@ namespace Hairibar.Ragdoll.Animation.Tests
 
             Assert.That(observed, Is.EqualTo(3));
             Assert.That(accepted, Is.Zero);
+        }
+
+        [Test]
+        public void CollisionStay_IsAcceptedWithoutApplyingRepeatedUnpinDamage()
+        {
+            int accepted = 0;
+            int unpinned = 0;
+            behaviour.CollisionLayers = -1;
+            behaviour.CollisionThreshold = 0f;
+            behaviour.CollisionAccepted += _ => accepted++;
+            behaviour.CollisionUnpinApplied += (_, __) => unpinned++;
+
+            InvokePrivate(
+                "OnBehaviourCollision",
+                new RagdollCollisionEvent(
+                    RagdollBoneHandle.Invalid,
+                    RagdollCollisionPhase.Stay,
+                    null,
+                    7f,
+                    0));
+
+            Assert.That(accepted, Is.EqualTo(1));
+            Assert.That(unpinned, Is.Zero);
+        }
+
+        [Test]
+        public void CollisionSubscribers_AreIsolatedAndOfficialAliasSharesStream()
+        {
+            int afterFailure = 0;
+            int alias = 0;
+            behaviour.CollisionLayers = 0;
+            behaviour.CollisionObserved += _ =>
+                throw new InvalidOperationException("expected collision subscriber failure");
+            behaviour.CollisionObserved += _ => afterFailure++;
+            behaviour.OnCollision += _ => alias++;
+            LogAssert.Expect(
+                LogType.Exception,
+                new Regex("expected collision subscriber failure"));
+
+            InvokePrivate(
+                "OnBehaviourCollision",
+                new RagdollCollisionEvent(
+                    RagdollBoneHandle.Invalid,
+                    RagdollCollisionPhase.Enter,
+                    null,
+                    1f,
+                    1));
+
+            Assert.That(afterFailure, Is.EqualTo(1));
+            Assert.That(alias, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void OnCollisionImpulseAliasPublishesResolvedSuppression()
+        {
+            float observed = 0f;
+            behaviour.OnCollisionImpulse += (_, suppression) =>
+                observed = suppression;
+            FieldInfo cacheField = typeof(RagdollPuppetBehaviour).GetField(
+                "collisionUnpinSubscribers",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            object cache = cacheField.GetValue(behaviour);
+            PropertyInfo snapshotProperty = cache.GetType().GetProperty(
+                "Snapshot",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Delegate[] snapshot = (Delegate[])snapshotProperty.GetValue(cache);
+
+            InvokePrivate(
+                "InvokeCollisionImpulseSafely",
+                snapshot,
+                default(RagdollCollisionEvent),
+                0.25f);
+
+            Assert.That(observed, Is.EqualTo(0.25f));
+        }
+
+        [Test]
+        public void SerializedUnityEventFailureIsExposedAsAggregateDiagnostic()
+        {
+            RagdollPuppetEvent puppetEvent = new RagdollPuppetEvent();
+            int laterListener = 0;
+            puppetEvent.UnityEvent.AddListener(() =>
+                throw new InvalidOperationException(
+                    "expected serialized listener failure"));
+            puppetEvent.UnityEvent.AddListener(() => laterListener++);
+
+            RagdollPuppetEventInvocationResult result =
+                puppetEvent.InvokeWithDiagnostics(null);
+
+            Assert.That(result.Succeeded, Is.False);
+            Assert.That(result.Failures.Count, Is.EqualTo(1));
+            Assert.That(result.Failures[0].Message,
+                Does.Contain("expected serialized listener failure"));
+            Assert.That(laterListener, Is.Zero,
+                "Unity exposes the serialized UnityEvent as one invocation unit; callers can now detect its aborted remainder.");
+            Assert.Throws<AggregateException>(() => result.ThrowIfFailed());
         }
 
         static RagdollPuppetEvent CreateEvent(UnityEngine.Events.UnityAction action)

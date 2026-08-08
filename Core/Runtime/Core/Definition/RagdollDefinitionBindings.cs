@@ -382,6 +382,68 @@ namespace Hairibar.Ragdoll
             return TryGetBoneHandle(name, out handle);
         }
 
+        /// <summary>
+        /// Atomically substitutes the authored root binding with a runtime root using
+        /// the same BoneName. Hairibar-owned registry operation used by documented
+        /// ReplaceMuscle semantics; caller owns physical reconnection and rollback.
+        /// </summary>
+        internal bool TryReplaceRootBinding(
+            BoneName name,
+            ConfigurableJoint joint,
+            out RagdollBoneHandle handle,
+            out string error)
+        {
+            handle = RagdollBoneHandle.Invalid;
+            error = null;
+            ThrowExceptionIfNotInitialized();
+            if (name != _definition.Root)
+            {
+                error = "Only the definition root BoneName can replace the root binding.";
+                return false;
+            }
+            if (!joint || !joint.GetComponent<Rigidbody>())
+            {
+                error = "A replacement root requires a ConfigurableJoint and Rigidbody.";
+                return false;
+            }
+
+            RagdollBone current;
+            if (!TryGetBone(name, out current) || !current.IsRoot)
+            {
+                error = "The active registry has no replaceable root.";
+                return false;
+            }
+            RagdollBone occupied;
+            if (TryGetBone(joint, out occupied) && occupied.Name != name)
+            {
+                error = "The replacement root joint already belongs to another muscle.";
+                return false;
+            }
+
+            RuntimeRegistrySnapshot snapshot = CaptureRuntimeRegistry();
+            for (int index = runtimeBindings.Count - 1; index >= 0; index--)
+            {
+                if (runtimeBindings[index].Name == name)
+                    runtimeBindings.RemoveAt(index);
+            }
+            removedDefinitionBones.Add(name);
+            runtimeBindings.Add(new RuntimeBinding(name, joint));
+            if (!TryCreateRagdollBones())
+            {
+                error = lastInitializationError
+                    ?? "The replacement root registry could not be rebuilt.";
+                RestoreRuntimeRegistry(snapshot);
+                return false;
+            }
+            if (!TryGetBoneHandle(name, out handle))
+            {
+                error = "The replacement root produced no live handle.";
+                RestoreRuntimeRegistry(snapshot);
+                return false;
+            }
+            return true;
+        }
+
         internal bool TryRemoveRuntimeSubtree(
             ConfigurableJoint joint,
             out RagdollBone[] removedBones,

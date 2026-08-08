@@ -101,7 +101,9 @@ namespace Hairibar.Ragdoll.Tests
                 BindingFlags.Public | BindingFlags.Static);
             if (measurementMethod == null)
             {
-                Assert.Ignore("This Unity runtime does not expose per-thread allocation measurement.");
+                Assert.Fail(
+                    "Unity 6 certification requires GC.GetAllocatedBytesForCurrentThread; " +
+                    "the test must fail instead of being silently skipped when unavailable.");
             }
 
             Func<long> measure = (Func<long>)Delegate.CreateDelegate(typeof(Func<long>), measurementMethod);

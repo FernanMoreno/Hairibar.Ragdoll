@@ -125,6 +125,7 @@ namespace Hairibar.Ragdoll.Animation
         public int PendingMuscleConnectionOperationCount =>
             pendingConnectionOperations.Count;
         public bool HasDisconnectedMuscles => disconnectedMuscleCount > 0;
+        internal bool ConnectionRuntimeIsInitialized => connectionRecords != null;
 
         public event Action<RagdollMuscleConnectionChange> MuscleDisconnected;
         public event Action<RagdollMuscleConnectionChange> MuscleReconnected;
@@ -920,18 +921,24 @@ namespace Hairibar.Ragdoll.Animation
                 body.isKinematic = true;
                 body.position = record.Pair.currentPose.worldPosition;
                 body.rotation = record.Pair.currentPose.worldRotation;
-                body.linearVelocity = Vector3.zero;
-                body.angularVelocity = Vector3.zero;
                 body.isKinematic = ResolveReconnectedKinematic(record.Pair);
-                body.WakeUp();
+                if (!body.isKinematic)
+                {
+                    body.linearVelocity = Vector3.zero;
+                    body.angularVelocity = Vector3.zero;
+                    body.WakeUp();
+                }
             }
             else
             {
                 body.isKinematic = snapshot.IsKinematic;
-                body.linearVelocity = snapshot.Velocity;
-                body.angularVelocity = snapshot.AngularVelocity;
-                if (snapshot.WasSleeping && !body.isKinematic) body.Sleep();
-                else if (!body.isKinematic) body.WakeUp();
+                if (!body.isKinematic)
+                {
+                    body.linearVelocity = snapshot.Velocity;
+                    body.angularVelocity = snapshot.AngularVelocity;
+                    if (snapshot.WasSleeping) body.Sleep();
+                    else body.WakeUp();
+                }
             }
             if (releaseSnapshot) record.SnapshotCaptured = false;
         }

@@ -63,7 +63,8 @@ namespace Hairibar.Ragdoll.Animation
 
         public bool IsReady => animator
             && animator.Bindings
-            && animator.Bindings.IsInitialized;
+            && animator.Bindings.IsInitialized
+            && animator.ConnectionRuntimeIsInitialized;
 
         public bool IsSimulationDisabled
         {

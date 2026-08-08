@@ -534,7 +534,7 @@ namespace Hairibar.Ragdoll.Animation
             {
                 AnimatedPair pair = animatedPairs[index];
                 Rigidbody rigidbody = pair.RagdollBone.Rigidbody;
-                if (!rigidbody) continue;
+                if (!rigidbody || rigidbody.isKinematic) continue;
 
                 rigidbody.linearVelocity = pair.poseLinearVelocity;
                 rigidbody.angularVelocity = pair.poseAngularVelocity;
@@ -738,9 +738,12 @@ namespace Hairibar.Ragdoll.Animation
 
         void SetTargetAnimationEnabled(bool enabled)
         {
+            targetAnimatorLifecycleEnabled = enabled;
             if (targetAnimator && !usesLegacyTargetAnimation)
             {
-                targetAnimator.enabled = enabled;
+                targetAnimator.enabled = ownsFixedAnimatorUpdate
+                    ? false
+                    : enabled;
             }
             if (targetAnimation && usesLegacyTargetAnimation)
             {

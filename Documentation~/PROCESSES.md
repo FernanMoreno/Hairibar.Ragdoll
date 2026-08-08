@@ -208,12 +208,13 @@ autoridades debe modificar.
 ## Proceso L — Simulación manual
 
 1. Comprueba que `Physics.simulationMode` permite control manual.
-2. Deshabilita temporalmente el Animator controlado, conservando su estado.
-3. Llama `PrepareManualSimulation(deltaTime)` una sola vez.
+2. Deshabilita el componente `RagdollAnimator`; el Target y su Animator permanecen
+   accesibles para evaluación manual.
+3. Llama `PrepareManualSimulation(deltaTime)` o `OnPreSimulate(deltaTime)` una sola vez.
 4. Ejecuta las fases de lectura, modifiers, matching, mapping, hooks y PhysX en el
    orden del controlador.
 5. Llama `Physics.Simulate(deltaTime)`.
-6. Llama `CompleteManualSimulation()` una sola vez.
+6. Llama `CompleteManualSimulation()` o `OnPostSimulate()` una sola vez.
 7. Comprueba que Animator, update mode y lifecycle fueron restaurados.
 8. Rechaza llamada invertida, duplicada o con `deltaTime` inválido.
 

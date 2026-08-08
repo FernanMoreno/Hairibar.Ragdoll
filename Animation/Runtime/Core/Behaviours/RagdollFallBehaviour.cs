@@ -141,7 +141,7 @@ namespace Hairibar.Ragdoll.Animation
 
         protected override void OnBehaviourInitialize()
         {
-            targetAnimator = Context.Animator.GetComponent<Animator>();
+            RefreshTargetAnimator();
             RefreshPelvis();
             CacheBlendParameter();
         }
@@ -155,6 +155,7 @@ namespace Hairibar.Ragdoll.Animation
 
         protected override void OnBehaviourActivated()
         {
+            RefreshTargetAnimator();
             elapsedTime = 0f;
             mappingBlend = 0f;
             ended = false;
@@ -173,11 +174,13 @@ namespace Hairibar.Ragdoll.Animation
 
         protected override void OnBehaviourReactivated()
         {
+            RefreshTargetAnimator();
             RefreshPelvis();
         }
 
         protected override void OnBehaviourFixedUpdate(float deltaTime)
         {
+            RefreshTargetAnimator();
             if (pelvis == null) RefreshPelvis();
             if (pelvis == null) return;
 
@@ -321,6 +324,16 @@ namespace Hairibar.Ragdoll.Animation
             blendParameterHash = string.IsNullOrEmpty(blendParameter)
                 ? 0
                 : Animator.StringToHash(blendParameter);
+        }
+
+        void RefreshTargetAnimator()
+        {
+            Animator resolved = Context != null && Context.Animator
+                ? Context.Animator.TargetAnimator
+                : null;
+            if (resolved == targetAnimator) return;
+            targetAnimator = resolved;
+            CacheBlendParameter();
         }
 
         void WriteAnimatorBlend()

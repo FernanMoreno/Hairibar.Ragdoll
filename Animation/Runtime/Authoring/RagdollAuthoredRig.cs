@@ -45,10 +45,13 @@ namespace Hairibar.Ragdoll.Animation
         {
             if (flatHierarchy) return;
             if (!container) throw new ArgumentNullException(nameof(container));
-            for (int index = 1; index < rigidbodies.Length; index++)
+            for (int index = 0; index < rigidbodies.Length; index++)
             {
-                if (rigidbodies[index])
+                if (rigidbodies[index]
+                    && rigidbodies[index].transform != container)
+                {
                     rigidbodies[index].transform.SetParent(container, true);
+                }
             }
             flatHierarchy = true;
         }
@@ -62,7 +65,7 @@ namespace Hairibar.Ragdoll.Animation
                 throw new InvalidOperationException(
                     "The authored tree-parent snapshot is missing or incompatible.");
             }
-            for (int index = 1; index < rigidbodies.Length; index++)
+            for (int index = 0; index < rigidbodies.Length; index++)
             {
                 if (rigidbodies[index])
                     rigidbodies[index].transform.SetParent(treeParents[index], true);

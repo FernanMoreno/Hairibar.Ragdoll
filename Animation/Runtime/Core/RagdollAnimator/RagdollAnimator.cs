@@ -39,8 +39,59 @@ namespace Hairibar.Ragdoll.Animation
         public RagdollSettings RagdollSettings { get; private set; }
         public RagdollDefinitionBindings Bindings => _ragdollBindings;
         public RagdollTargetBindings TargetBindings => _targetBindings;
-        public Animator TargetAnimator => targetAnimator;
-        public UnityEngine.Animation TargetAnimation => targetAnimation;
+        public Animator TargetAnimator
+        {
+            get => targetAnimator;
+            set => AssignTargetAnimationComponents(value, targetAnimation);
+        }
+        public UnityEngine.Animation TargetAnimation
+        {
+            get => targetAnimation;
+            set => AssignTargetAnimationComponents(targetAnimator, value);
+        }
+        /// <summary>
+        /// True while this component owns evaluation of an Animator configured for
+        /// fixed-time animation updates.
+        /// </summary>
+        public bool ControlsAnimator => ownsFixedAnimatorUpdate;
+        public RagdollSimulationMode Mode
+        {
+            get
+            {
+                RagdollSimulationModeController controller =
+                    GetComponent<RagdollSimulationModeController>();
+                return controller && controller.IsInitialized
+                    ? controller.TargetMode
+                    : RagdollSimulationMode.Active;
+            }
+            set => GetSimulationModeController().SetMode(value);
+        }
+        public bool IsSwitchingMode
+        {
+            get
+            {
+                RagdollSimulationModeController controller =
+                    GetComponent<RagdollSimulationModeController>();
+                return controller && controller.IsInitialized
+                    && controller.IsTransitioning;
+            }
+        }
+        public bool IsActive
+        {
+            get
+            {
+                RagdollSimulationModeController controller =
+                    GetComponent<RagdollSimulationModeController>();
+                if (!controller || !controller.IsInitialized) return enabled;
+                return controller.CurrentMode == RagdollSimulationMode.Active
+                    || (controller.IsTransitioning
+                        && (controller.CurrentMode == RagdollSimulationMode.Active
+                            || controller.TargetMode == RagdollSimulationMode.Active));
+            }
+        }
+        public bool IsBlending => IsSwitchingMode || IsSwitchingState;
+        public bool Initiated => animatedPairs != null
+            && Bindings && Bindings.IsInitialized;
         public AnimatorUpdateMode EffectiveUpdateMode
         {
             get
@@ -95,18 +146,29 @@ namespace Hairibar.Ragdoll.Animation
         public float MasterMuscleDamper
         {
             get => _masterMuscleDamper;
-            set => _masterMuscleDamper = SanitizeNonNegative(value, 1f);
+            set => _masterMuscleDamper = SanitizeNonNegative(value, 0f);
         }
 
-        [Obsolete("Use MasterMuscleDamper. This compatibility property also affects positional damping.")]
+        /// <summary>
+        /// Hairibar compatibility multiplier for authored rotational damping.
+        /// PuppetMaster's documented muscleDamper is the separate absolute channel.
+        /// </summary>
+        public float MasterMuscleDamperMultiplier
+        {
+            get => _masterMuscleDamperMultiplier;
+            set => _masterMuscleDamperMultiplier =
+                SanitizeNonNegative(value, 1f);
+        }
+
+        [Obsolete("Use MasterMuscleDamperMultiplier. This compatibility property also affects positional damping.")]
         public float MasterDampingRatio
         {
-            get => _masterMuscleDamper;
+            get => _masterMuscleDamperMultiplier;
             set
             {
                 float damper = SanitizeNonNegative(value, 1f);
                 _masterDampingRatio = damper;
-                _masterMuscleDamper = damper;
+                _masterMuscleDamperMultiplier = damper;
             }
         }
 
@@ -117,6 +179,162 @@ namespace Hairibar.Ragdoll.Animation
         }
 
         public bool HasPendingTeleport => teleportPending;
+
+        public void SetMuscleWeights(
+            int muscleIndex,
+            float muscleWeight,
+            float pinWeight,
+            float mappingWeight,
+            float muscleDamper)
+        {
+            RequireMuscles().SetAuthorityWeights(
+                GetHandleByIndex(muscleIndex),
+                mappingWeight,
+                pinWeight,
+                muscleWeight,
+                muscleDamper);
+        }
+
+        public void SetMuscleWeights(
+            Transform target,
+            float muscleWeight,
+            float pinWeight = 1f,
+            float mappingWeight = 1f,
+            float muscleDamper = 1f)
+        {
+            RequireMuscles().SetAuthorityWeights(
+                GetHandleByTarget(target),
+                mappingWeight,
+                pinWeight,
+                muscleWeight,
+                muscleDamper);
+        }
+
+        public void SetMuscleWeights(
+            HumanBodyBones humanBodyBone,
+            float muscleWeight,
+            float pinWeight = 1f,
+            float mappingWeight = 1f,
+            float muscleDamper = 1f)
+        {
+            SetMuscleWeights(
+                GetHumanoidTarget(humanBodyBone),
+                muscleWeight,
+                pinWeight,
+                mappingWeight,
+                muscleDamper);
+        }
+
+        public void SetMuscleWeights(
+            RagdollMuscleGroup group,
+            float muscleWeight,
+            float pinWeight = 1f,
+            float mappingWeight = 1f,
+            float muscleDamper = 1f)
+        {
+            RequireMuscles().SetAuthorityWeights(
+                group,
+                mappingWeight,
+                pinWeight,
+                muscleWeight,
+                muscleDamper);
+        }
+
+        public void SetMuscleWeightsRecursive(
+            int muscleIndex,
+            float muscleWeight,
+            float pinWeight = 1f,
+            float mappingWeight = 1f,
+            float muscleDamper = 1f)
+        {
+            RequireMuscles().SetAuthorityWeightsRecursive(
+                GetHandleByIndex(muscleIndex),
+                mappingWeight,
+                pinWeight,
+                muscleWeight,
+                muscleDamper);
+        }
+
+        public void SetMuscleWeightsRecursive(
+            Transform target,
+            float muscleWeight,
+            float pinWeight = 1f,
+            float mappingWeight = 1f,
+            float muscleDamper = 1f)
+        {
+            RequireMuscles().SetAuthorityWeightsRecursive(
+                GetHandleByTarget(target),
+                mappingWeight,
+                pinWeight,
+                muscleWeight,
+                muscleDamper);
+        }
+
+        public void SetMuscleWeightsRecursive(
+            HumanBodyBones humanBodyBone,
+            float muscleWeight,
+            float pinWeight = 1f,
+            float mappingWeight = 1f,
+            float muscleDamper = 1f)
+        {
+            SetMuscleWeightsRecursive(
+                GetHumanoidTarget(humanBodyBone),
+                muscleWeight,
+                pinWeight,
+                mappingWeight,
+                muscleDamper);
+        }
+
+        RagdollMuscleController RequireMuscles()
+        {
+            RagdollMuscleController muscles =
+                GetComponent<RagdollMuscleController>();
+            if (!muscles || !muscles.IsInitialized)
+                throw new InvalidOperationException(
+                    "Muscle weights require an initialized RagdollAnimator.");
+            return muscles;
+        }
+
+        RagdollBoneHandle GetHandleByIndex(int muscleIndex)
+        {
+            if (!Initiated || muscleIndex < 0
+                || muscleIndex >= Bindings.BoneCount)
+                throw new ArgumentOutOfRangeException(nameof(muscleIndex));
+            return Bindings.GetHandleAt(muscleIndex);
+        }
+
+        RagdollBoneHandle GetHandleByTarget(Transform target)
+        {
+            if (!target) throw new ArgumentNullException(nameof(target));
+            if (!Initiated)
+                throw new InvalidOperationException(
+                    "Target lookup requires an initialized RagdollAnimator.");
+            for (int index = 0; index < animatedPairs.Length; index++)
+            {
+                if (animatedPairs[index].TargetBone == target)
+                    return animatedPairs[index].Handle;
+            }
+            throw new ArgumentException(
+                "No muscle uses the supplied Target Transform.",
+                nameof(target));
+        }
+
+        Transform GetHumanoidTarget(HumanBodyBones humanBodyBone)
+        {
+            if (!Enum.IsDefined(typeof(HumanBodyBones), humanBodyBone)
+                || humanBodyBone == HumanBodyBones.LastBone)
+                throw new ArgumentOutOfRangeException(nameof(humanBodyBone));
+            if (!targetAnimator || !targetAnimator.isHuman
+                || !targetAnimator.avatar || !targetAnimator.avatar.isValid)
+                throw new InvalidOperationException(
+                    "HumanBodyBones lookup requires a valid Humanoid TargetAnimator.");
+            Transform target = targetAnimator.GetBoneTransform(humanBodyBone);
+            if (!target)
+                throw new ArgumentException(
+                    "The Humanoid avatar does not map the requested bone.",
+                    nameof(humanBodyBone));
+            return target;
+        }
 
         public RagdollPinSettings PinSettings
         {
@@ -197,6 +415,52 @@ namespace Hairibar.Ragdoll.Animation
             currentProfile = profile;
             previousProfile = profile;
         }
+
+        void AssignTargetAnimationComponents(
+            Animator animator,
+            UnityEngine.Animation animation)
+        {
+            if (animator == targetAnimator && animation == targetAnimation) return;
+            if (manualSimulationPrepared)
+            {
+                throw new InvalidOperationException(
+                    "Target animation components cannot change during a manual simulation step.");
+            }
+
+            Animator previousAnimator = targetAnimator;
+            UnityEngine.Animation previousAnimation = targetAnimation;
+            bool previousUsesLegacy = usesLegacyTargetAnimation;
+            bool previousLifecycleEnabled = targetAnimatorLifecycleEnabled;
+
+            ReleaseFixedAnimatorOwnership();
+            try
+            {
+                if (animator && animation
+                    && animator.enabled && animation.enabled)
+                {
+                    throw new InvalidOperationException(
+                        "Animator and legacy Animation cannot control the Target simultaneously.");
+                }
+
+                targetAnimator = animator;
+                targetAnimation = animation;
+                usesLegacyTargetAnimation = animation && animation.enabled
+                    && (!animator || !animator.enabled);
+                targetAnimatorLifecycleEnabled = animator
+                    ? animator.enabled
+                    : true;
+                ReconcileFixedAnimatorOwnership();
+            }
+            catch
+            {
+                targetAnimator = previousAnimator;
+                targetAnimation = previousAnimation;
+                usesLegacyTargetAnimation = previousUsesLegacy;
+                targetAnimatorLifecycleEnabled = previousLifecycleEnabled;
+                ReconcileFixedAnimatorOwnership();
+                throw;
+            }
+        }
         #endregion
 
         #region Serialized Fields
@@ -209,7 +473,8 @@ namespace Hairibar.Ragdoll.Animation
         [SerializeField] float _masterDampingRatio = 1;
         [SerializeField] float _masterPinWeight = 1f;
         [SerializeField] float _masterMuscleWeight = 1f;
-        [SerializeField] float _masterMuscleDamper = 1f;
+        [SerializeField] float _masterMuscleDamper;
+        [SerializeField] float _masterMuscleDamperMultiplier = 1f;
         [SerializeField, HideInInspector] int masterAuthoritySerializationVersion;
         [SerializeField] float _profileTransitionLength = 1;
         [SerializeField] RagdollPinSettings pinSettings = RagdollPinSettings.Default;
@@ -225,6 +490,7 @@ namespace Hairibar.Ragdoll.Animation
         Animator targetAnimator;
         UnityEngine.Animation targetAnimation;
         bool usesLegacyTargetAnimation;
+        Transform authoredPuppetContainer;
 
         ITargetPoseModifier[] targetPoseModifiers;
         IBoneProfileModifier[] boneProfileModifiers;
@@ -233,6 +499,7 @@ namespace Hairibar.Ragdoll.Animation
         #region Unity Update Messages
         void Update()
         {
+            ReconcileFixedAnimatorOwnership();
             if (!isActiveAndEnabled || animatedPairs is null
                 || manualSimulationPrepared) return;
             FixTargetTransformsAtUpdateBoundary();
@@ -246,13 +513,13 @@ namespace Hairibar.Ragdoll.Animation
             if (UsesFixedAnimatorUpdate()
                 && LifecycleAllowsAnimationSampling())
             {
+                EvaluateControlledAnimator(Time.fixedDeltaTime);
                 ReadAnimatedPose();
             }
             else
             {
                 ProcessPendingTeleportAtFixedBoundary();
             }
-
             ProcessPendingMuscleConnectionOperations();
             if (LifecycleIsFrozenStable()) return;
 
@@ -311,6 +578,9 @@ namespace Hairibar.Ragdoll.Animation
             RagdollProfile.ValidateAsInspectorField(currentProfile, Bindings.Definition, true, "A RagdollAnimationProfile must be assigned at RagdollAnimator.");
 
             RagdollSettings = _ragdollBindings.GetComponent<RagdollSettings>();
+            // RagdollDefinitionBindings initializes in OnEnable. Unity does not
+            // guarantee Awake order between components, so Root is not safe here.
+            // Cache the authored container after every OnEnable has completed.
             targetAnimator = GetComponent<Animator>();
             targetAnimation = GetComponent<UnityEngine.Animation>();
             if (targetAnimator && targetAnimation
@@ -327,6 +597,12 @@ namespace Hairibar.Ragdoll.Animation
 
         void Start()
         {
+            if (!_ragdollBindings.IsInitialized)
+            {
+                throw new InvalidOperationException(
+                    "RagdollDefinitionBindings did not initialize before RagdollAnimator.Start.");
+            }
+            authoredPuppetContainer = _ragdollBindings.Root.Transform.parent;
             CreateRagdollToTargetMapper();
             CreateAnimatedPairs(mapper.BonePairs);
 
@@ -346,6 +622,7 @@ namespace Hairibar.Ragdoll.Animation
             InitializeMuscleConnections();
 
             SnapToTargetPose();
+            ReconcileFixedAnimatorOwnership();
             InvokePostInitializedHook();
         }
 
@@ -356,6 +633,7 @@ namespace Hairibar.Ragdoll.Animation
                 SnapToTargetPose();
             }
             RestoreLifecycleAfterEnable();
+            ReconcileFixedAnimatorOwnership();
             RefreshJointRuntimeConfiguration();
             ApplyDisconnectedMasksToPhysicalOwners();
             ReapplyDisconnectedPhysicalPolicies();
@@ -377,6 +655,7 @@ namespace Hairibar.Ragdoll.Animation
         void OnDestroy()
         {
             CancelPreparedManualSimulation();
+            ReleaseFixedAnimatorOwnership();
             ShutdownLifecycle();
             ShutdownMuscleConnections();
             ShutdownInternalCollisions();
@@ -387,6 +666,7 @@ namespace Hairibar.Ragdoll.Animation
         {
             CancelPreparedManualSimulation();
             SettleLifecycleBeforeDisable();
+            ReleaseFixedAnimatorOwnership();
             UnpowerAllJoints();
         }
 
@@ -408,6 +688,15 @@ namespace Hairibar.Ragdoll.Animation
                 masterAuthoritySerializationVersion = 1;
             }
 
+            if (masterAuthoritySerializationVersion < 2)
+            {
+                _masterMuscleDamperMultiplier = SanitizeNonNegative(
+                    _masterMuscleDamper,
+                    1f);
+                _masterMuscleDamper = 0f;
+                masterAuthoritySerializationVersion = 2;
+            }
+
             _masterPinWeight = SanitizeUnit(_masterPinWeight, 1f);
             _masterMappingWeight = SanitizeUnit(_masterMappingWeight, 1f);
             _masterMuscleWeight = SanitizeUnit(_masterMuscleWeight, 1f);
@@ -416,6 +705,9 @@ namespace Hairibar.Ragdoll.Animation
                 1f);
             _masterMuscleDamper = SanitizeNonNegative(
                 _masterMuscleDamper,
+                0f);
+            _masterMuscleDamperMultiplier = SanitizeNonNegative(
+                _masterMuscleDamperMultiplier,
                 1f);
         }
 

@@ -127,6 +127,9 @@ namespace Hairibar.Ragdoll.Animation
         RagdollAnimator.AnimatedPair rootPair;
         RagdollAnimator.AnimatedPair getUpReferencePair;
         RagdollBoneHandle lastKnockOutBone = RagdollBoneHandle.Invalid;
+        float lastKnockOutDistance;
+        float lastKnockOutThreshold;
+        float lastKnockOutEffectivePinWeight;
         RagdollGetUpOrientation getUpOrientation = RagdollGetUpOrientation.Unknown;
         Vector3 preparedGroundNormal = Vector3.up;
         bool targetAlignmentPending;
@@ -152,9 +155,13 @@ namespace Hairibar.Ragdoll.Animation
 
         const float KinematicSuppressionEpsilon = 0.0001f;
 
-        public RagdollPuppetState State => stateMachine != null
-            ? stateMachine.State
-            : RagdollPuppetState.Puppet;
+        public RagdollPuppetState State
+        {
+            get => stateMachine != null
+                ? stateMachine.State
+                : RagdollPuppetState.Puppet;
+            set => SetState(value);
+        }
 
         public bool LoseBalanceOnTargetDrift
         {
@@ -185,6 +192,10 @@ namespace Hairibar.Ragdoll.Animation
             : 1f;
 
         public RagdollBoneHandle LastKnockOutBone => lastKnockOutBone;
+        public float LastKnockOutDistance => lastKnockOutDistance;
+        public float LastKnockOutThreshold => lastKnockOutThreshold;
+        public float LastKnockOutEffectivePinWeight =>
+            lastKnockOutEffectivePinWeight;
         public RagdollGetUpOrientation GetUpOrientation => getUpOrientation;
         public bool QuadrupedGetUp
         {
@@ -491,11 +502,38 @@ namespace Hairibar.Ragdoll.Animation
             }
         }
 
-        public event Action<
-            RagdollPuppetState,
-            RagdollPuppetState,
-            RagdollPuppetTransitionReason> StateChanged;
-        public event Action<RagdollGetUpOrientation> GetUpPoseSelected;
+        readonly CachedSubscribers<Action<RagdollPuppetState,
+            RagdollPuppetState, RagdollPuppetTransitionReason>>
+            stateChangedSubscribers = new CachedSubscribers<Action<
+                RagdollPuppetState, RagdollPuppetState,
+                RagdollPuppetTransitionReason>>();
+        readonly CachedSubscribers<Action<RagdollGetUpOrientation>>
+            getUpPoseSubscribers =
+                new CachedSubscribers<Action<RagdollGetUpOrientation>>();
+        readonly CachedSubscribers<Action<RagdollCollisionEvent>>
+            collisionAcceptedSubscribers =
+                new CachedSubscribers<Action<RagdollCollisionEvent>>();
+        readonly CachedSubscribers<Action<RagdollCollisionEvent>>
+            collisionObservedSubscribers =
+                new CachedSubscribers<Action<RagdollCollisionEvent>>();
+        readonly CachedSubscribers<Action<RagdollCollisionEvent, float>>
+            collisionUnpinSubscribers =
+                new CachedSubscribers<Action<RagdollCollisionEvent, float>>();
+        readonly CachedSubscribers<Action<RagdollPuppetKinematicActivationSource, float>>
+            kinematicActivatedSubscribers = new CachedSubscribers<
+                Action<RagdollPuppetKinematicActivationSource, float>>();
+
+        public event Action<RagdollPuppetState, RagdollPuppetState,
+            RagdollPuppetTransitionReason> StateChanged
+        {
+            add => stateChangedSubscribers.Add(value);
+            remove => stateChangedSubscribers.Remove(value);
+        }
+        public event Action<RagdollGetUpOrientation> GetUpPoseSelected
+        {
+            add => getUpPoseSubscribers.Add(value);
+            remove => getUpPoseSubscribers.Remove(value);
+        }
 
         public RagdollPuppetEvent OnGetUpProne
         {
@@ -533,26 +571,56 @@ namespace Hairibar.Ragdoll.Animation
         /// squared-impulse threshold and per-step budget policy. The embedded Collision
         /// reference is callback-scoped and must not be retained.
         /// </summary>
-        public event Action<RagdollCollisionEvent> CollisionAccepted;
+        public event Action<RagdollCollisionEvent> CollisionAccepted
+        {
+            add => collisionAcceptedSubscribers.Add(value);
+            remove => collisionAcceptedSubscribers.Remove(value);
+        }
 
         /// <summary>
         /// Raised once for every muscular Enter, Stay or Exit event delivered by the
         /// collision hub, before lifecycle, layer, threshold and budget filters.
         /// </summary>
-        public event Action<RagdollCollisionEvent> CollisionObserved;
+        public event Action<RagdollCollisionEvent> CollisionObserved
+        {
+            add => collisionObservedSubscribers.Add(value);
+            remove => collisionObservedSubscribers.Remove(value);
+        }
 
         /// <summary>
         /// Raised after an accepted collision has applied position-authority suppression.
         /// The float is the resolved source suppression in the range 0..1.
         /// </summary>
-        public event Action<RagdollCollisionEvent, float> CollisionUnpinApplied;
+        public event Action<RagdollCollisionEvent, float> CollisionUnpinApplied
+        {
+            add => collisionUnpinSubscribers.Add(value);
+            remove => collisionUnpinSubscribers.Remove(value);
+        }
+
+        /// <summary>Official BehaviourPuppet collision callback name.</summary>
+        public event Action<RagdollCollisionEvent> OnCollision
+        {
+            add => collisionObservedSubscribers.Add(value);
+            remove => collisionObservedSubscribers.Remove(value);
+        }
+
+        /// <summary>Official callback name for collisions that reduced pinning.</summary>
+        public event Action<RagdollCollisionEvent, float> OnCollisionImpulse
+        {
+            add => collisionUnpinSubscribers.Add(value);
+            remove => collisionUnpinSubscribers.Remove(value);
+        }
 
         /// <summary>
         /// Raised after a queued Kinematic contact has safely switched the global
         /// simulation controller back to Active.
         /// </summary>
         public event Action<RagdollPuppetKinematicActivationSource, float>
-            KinematicActivated;
+            KinematicActivated
+        {
+            add => kinematicActivatedSubscribers.Add(value);
+            remove => kinematicActivatedSubscribers.Remove(value);
+        }
 
         /// <summary>
         /// Raises immunity and outgoing impulse multiplier for every muscle. Values never
@@ -822,6 +890,75 @@ namespace Hairibar.Ragdoll.Animation
         }
 
         /// <summary>
+        /// Selects the documented Puppet/Unpinned/GetUp state directly. Unlike
+        /// automatic GetUp, explicit assignment intentionally bypasses readiness gates.
+        /// This is Hairibar's implementation of BehaviourPuppet.state [get,set].
+        /// </summary>
+        public bool SetState(RagdollPuppetState value)
+        {
+            if (!Enum.IsDefined(typeof(RagdollPuppetState), value))
+                throw new ArgumentOutOfRangeException(nameof(value));
+            if (!IsInitialized || stateMachine == null)
+                throw new InvalidOperationException(
+                    "State assignment requires an initialized RagdollPuppetBehaviour.");
+            if (value == State) return false;
+
+            if (value != RagdollPuppetState.Puppet)
+                EnsureActiveForNonPuppetState();
+
+            if (!TransitionTo(
+                value,
+                RagdollPuppetTransitionReason.Manual,
+                true))
+            {
+                return false;
+            }
+
+            if (value == RagdollPuppetState.Unpinned)
+            {
+                targetAlignmentPending = false;
+                getUpBlendCompletedByTeleport = false;
+                getUpOrientation = RagdollGetUpOrientation.Unknown;
+                lastKnockOutBone = RagdollBoneHandle.Invalid;
+            }
+            else if (value == RagdollPuppetState.GetUp)
+            {
+                Vector3 groundNormal = Grounding.IsGrounded
+                    ? Grounding.GroundNormal
+                    : GetWorldUp();
+                RagdollGetUpOrientation orientation =
+                    ResolveGetUpOrientation(groundNormal);
+                PrepareExplicitGetUp(orientation, groundNormal);
+            }
+            else
+            {
+                targetAlignmentPending = false;
+                getUpOrientation = RagdollGetUpOrientation.Unknown;
+            }
+            return true;
+        }
+
+        /// <summary>Official BehaviourPuppet name for immediately losing balance.</summary>
+        public void Unpin()
+        {
+            LoseBalance();
+        }
+
+        /// <summary>
+        /// Returns whether the currently resolved recovery pose is prone. Ambiguous
+        /// orientation uses the configured fallback, matching the recovery selector.
+        /// </summary>
+        public bool IsProne()
+        {
+            if (!IsInitialized) return false;
+            Vector3 groundNormal = Grounding.IsGrounded
+                ? Grounding.GroundNormal
+                : GetWorldUp();
+            return ResolveGetUpOrientation(groundNormal)
+                == RagdollGetUpOrientation.Prone;
+        }
+
+        /// <summary>
         /// Repositions Target and Puppet, clears physical momentum and all temporary
         /// BehaviourPuppet state, then restores the live Puppet state. Restoration is
         /// best-effort; all failures are reported together after every cleanup ran.
@@ -882,6 +1019,14 @@ namespace Hairibar.Ragdoll.Animation
             }
         }
 
+        /// <summary>Official BehaviourPuppet name for transactional respawn.</summary>
+#pragma warning disable UNT0006
+        public void Reset(Vector3 position, Quaternion rotation)
+        {
+            Respawn(position, rotation);
+        }
+#pragma warning restore UNT0006
+
         void ResetRespawnState()
         {
             stateMachine.Reset(RagdollPuppetState.Puppet);
@@ -904,7 +1049,10 @@ namespace Hairibar.Ragdoll.Animation
             for (int index = 0; index < Context.Bindings.BoneCount; index++)
             {
                 Rigidbody body = Context.Bindings.GetBoneAt(index).Rigidbody;
-                if (!body) continue;
+                // Unity rejects velocity assignments on kinematic bodies. A later
+                // Kinematic -> Active transition clears both velocities after the
+                // simulation controller restores the body to dynamic operation.
+                if (!body || body.isKinematic) continue;
                 body.linearVelocity = Vector3.zero;
                 body.angularVelocity = Vector3.zero;
             }
@@ -930,6 +1078,12 @@ namespace Hairibar.Ragdoll.Animation
             return colliderSurfaceController.Apply(
                 unpinned ? RagdollPuppetState.Unpinned : RagdollPuppetState.Puppet,
                 true);
+        }
+
+        /// <summary>Official BehaviourPuppet name for its collider surface policy.</summary>
+        public void SetColliders(bool unpinned)
+        {
+            SetColliderSurfaceState(unpinned);
         }
 
         /// <summary>Clears accepted/rejected collision telemetry and step state.</summary>
@@ -1267,7 +1421,9 @@ namespace Hairibar.Ragdoll.Animation
         protected override void OnBehaviourCollision(
             RagdollCollisionEvent collisionEvent)
         {
-            InvokeCollisionSafely(CollisionObserved, collisionEvent);
+            InvokeCollisionSafely(
+                collisionObservedSubscribers.Snapshot,
+                collisionEvent);
             if (centerOfMass != null)
             {
                 centerOfMass.RegisterCollision(collisionEvent);
@@ -1304,13 +1460,22 @@ namespace Hairibar.Ragdoll.Animation
             lastAcceptedCollisionImpulse = collisionEvent.ImpulseMagnitude;
             lastAcceptedCollisionFixedTime = collisionEvent.FixedTime;
 
-            float positionSuppression = ApplyCollisionUnpin(
-                collisionEvent,
-                layerResolution);
-            InvokeCollisionSafely(CollisionAccepted, collisionEvent);
+            // Collision.impulse is also the support impulse used to resolve a
+            // persistent contact. Reapplying it as damage on every Stay makes a
+            // stationary character continuously lose pin authority under gravity.
+            // Stay remains accepted for contact-driven modes and diagnostics; only
+            // the beginning of a collision may apply a new unpin impulse.
+            float positionSuppression =
+                collisionEvent.Phase == RagdollCollisionPhase.Enter
+                    ? ApplyCollisionUnpin(collisionEvent, layerResolution)
+                    : 0f;
+            InvokeCollisionSafely(
+                collisionAcceptedSubscribers.Snapshot,
+                collisionEvent);
             if (positionSuppression > 0f)
             {
-                CollisionUnpinApplied?.Invoke(
+                InvokeCollisionImpulseSafely(
+                    collisionUnpinSubscribers.Snapshot,
                     collisionEvent,
                     positionSuppression);
             }
@@ -1477,6 +1642,18 @@ namespace Hairibar.Ragdoll.Animation
             ref RagdollMappingWeights mappingWeights,
             RagdollAnimator.AnimatedPair pair)
         {
+            // BehaviourPuppet.canMoveTarget explicitly owns the Target root while
+            // Unpinned and GetUp. Child mapping remains active so a network-owned
+            // root can still display the physical pose without being displaced.
+            if (!canMoveTarget
+                && State != RagdollPuppetState.Puppet
+                && pair.RagdollBone.IsRoot)
+            {
+                mappingWeights.positionWeight = 0f;
+                mappingWeights.rotationWeight = 0f;
+                return;
+            }
+
             if (State == RagdollPuppetState.Puppet)
             {
                 float normalMapping = Mathf.Clamp01(normalModeMappingWeight);
@@ -1616,7 +1793,10 @@ namespace Hairibar.Ragdoll.Animation
             lastKinematicActivationImpulse = impulse;
             lastKinematicActivationFixedTime = fixedTime;
             kinematicActivationCount++;
-            KinematicActivated?.Invoke(source, impulse);
+            InvokeKinematicActivatedSafely(
+                kinematicActivatedSubscribers.Snapshot,
+                source,
+                impulse);
         }
 
         void UpdateKinematicSimulationMode()
@@ -1916,26 +2096,35 @@ namespace Hairibar.Ragdoll.Animation
                 return false;
             }
 
+            PrepareExplicitGetUp(orientation, groundNormal);
+            return true;
+        }
+
+        void PrepareExplicitGetUp(
+            RagdollGetUpOrientation orientation,
+            Vector3 groundNormal)
+        {
             getUpOrientation = orientation;
             preparedGroundNormal = groundNormal.sqrMagnitude > Mathf.Epsilon
                 ? groundNormal.normalized
                 : GetWorldUp();
             targetAlignmentPending = true;
             getUpBlendCompletedByTeleport = false;
-            GetUpPoseSelected?.Invoke(orientation);
+            InvokeGetUpPoseSelectedSafely(
+                getUpPoseSubscribers.Snapshot,
+                orientation);
             InvokeGetUpEvent(orientation);
-            return true;
         }
 
         void InvokeGetUpEvent(RagdollGetUpOrientation orientation)
         {
             if (orientation == RagdollGetUpOrientation.Prone)
             {
-                onGetUpProne.Invoke(this);
+                InvokePuppetEventSafely(onGetUpProne);
             }
             else if (orientation == RagdollGetUpOrientation.Supine)
             {
-                onGetUpSupine.Invoke(this);
+                InvokePuppetEventSafely(onGetUpSupine);
             }
         }
 
@@ -2102,6 +2291,10 @@ namespace Hairibar.Ragdoll.Animation
                 }
 
                 knockOutBone = pair.Handle;
+                lastKnockOutDistance = targetDistance;
+                lastKnockOutThreshold = settings.knockOutDistance
+                    * stateDistanceMultiplier;
+                lastKnockOutEffectivePinWeight = effectivePinWeight;
                 return true;
             }
 
@@ -2134,12 +2327,15 @@ namespace Hairibar.Ragdoll.Animation
 
         bool TransitionTo(
             RagdollPuppetState next,
-            RagdollPuppetTransitionReason reason)
+            RagdollPuppetTransitionReason reason,
+            bool direct = false)
         {
             if (stateMachine == null) return false;
 
             RagdollPuppetState previous = stateMachine.State;
-            if (!stateMachine.TryTransition(next))
+            if (!(direct
+                ? stateMachine.TrySetState(next)
+                : stateMachine.TryTransition(next)))
             {
                 return false;
             }
@@ -2173,7 +2369,7 @@ namespace Hairibar.Ragdoll.Animation
             {
                 RagdollAnimator.AnimatedPair pair = Context.Pairs[index];
                 Rigidbody rigidbody = pair.RagdollBone.Rigidbody;
-                if (rigidbody)
+                if (rigidbody && !rigidbody.isKinematic)
                 {
                     rigidbody.linearVelocity =
                         RagdollPuppetBehaviourMath.LimitVelocity(
@@ -2203,10 +2399,7 @@ namespace Hairibar.Ragdoll.Animation
             RagdollPuppetState current,
             RagdollPuppetTransitionReason reason)
         {
-            Action<RagdollPuppetState, RagdollPuppetState,
-                RagdollPuppetTransitionReason> callback = StateChanged;
-            if (callback == null) return;
-            Delegate[] subscribers = callback.GetInvocationList();
+            Delegate[] subscribers = stateChangedSubscribers.Snapshot;
             for (int index = 0; index < subscribers.Length; index++)
             {
                 try
@@ -2225,18 +2418,77 @@ namespace Hairibar.Ragdoll.Animation
         }
 
         void InvokeCollisionSafely(
-            Action<RagdollCollisionEvent> callback,
+            Delegate[] subscribers,
             RagdollCollisionEvent collisionEvent)
         {
-            if (callback == null) return;
-            try
+            for (int index = 0; index < subscribers.Length; index++)
             {
-                // Direct multicast invocation is allocation-free on the collision hot path.
-                callback(collisionEvent);
+                try
+                {
+                    ((Action<RagdollCollisionEvent>)subscribers[index])(
+                        collisionEvent);
+                }
+                catch (Exception exception)
+                {
+                    UnityEngine.Debug.LogException(exception, this);
+                }
             }
-            catch (Exception exception)
+        }
+
+        void InvokeCollisionImpulseSafely(
+            Delegate[] subscribers,
+            RagdollCollisionEvent collisionEvent,
+            float suppression)
+        {
+            for (int index = 0; index < subscribers.Length; index++)
             {
-                UnityEngine.Debug.LogException(exception, this);
+                try
+                {
+                    ((Action<RagdollCollisionEvent, float>)subscribers[index])(
+                        collisionEvent,
+                        suppression);
+                }
+                catch (Exception exception)
+                {
+                    UnityEngine.Debug.LogException(exception, this);
+                }
+            }
+        }
+
+        void InvokeGetUpPoseSelectedSafely(
+            Delegate[] subscribers,
+            RagdollGetUpOrientation orientation)
+        {
+            for (int index = 0; index < subscribers.Length; index++)
+            {
+                try
+                {
+                    ((Action<RagdollGetUpOrientation>)subscribers[index])(
+                        orientation);
+                }
+                catch (Exception exception)
+                {
+                    UnityEngine.Debug.LogException(exception, this);
+                }
+            }
+        }
+
+        void InvokeKinematicActivatedSafely(
+            Delegate[] subscribers,
+            RagdollPuppetKinematicActivationSource source,
+            float impulse)
+        {
+            for (int index = 0; index < subscribers.Length; index++)
+            {
+                try
+                {
+                    ((Action<RagdollPuppetKinematicActivationSource, float>)
+                        subscribers[index])(source, impulse);
+                }
+                catch (Exception exception)
+                {
+                    UnityEngine.Debug.LogException(exception, this);
+                }
             }
         }
 
@@ -2272,6 +2524,30 @@ namespace Hairibar.Ragdoll.Animation
             catch (Exception exception)
             {
                 UnityEngine.Debug.LogException(exception, this);
+            }
+        }
+
+        sealed class CachedSubscribers<T> where T : Delegate
+        {
+            Delegate combined;
+            Delegate[] snapshot = Array.Empty<Delegate>();
+
+            internal Delegate[] Snapshot => snapshot;
+
+            internal void Add(T value)
+            {
+                if (value == null) return;
+                combined = Delegate.Combine(combined, value);
+                snapshot = combined.GetInvocationList();
+            }
+
+            internal void Remove(T value)
+            {
+                if (value == null) return;
+                combined = Delegate.Remove(combined, value);
+                snapshot = combined == null
+                    ? Array.Empty<Delegate>()
+                    : combined.GetInvocationList();
             }
         }
 

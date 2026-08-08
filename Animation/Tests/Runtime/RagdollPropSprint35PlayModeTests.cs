@@ -1,4 +1,5 @@
 ﻿using System.Collections;
+using System.Collections.Generic;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
@@ -7,6 +8,35 @@ namespace Hairibar.Ragdoll.Animation.Tests
 {
     public sealed class RagdollPropSprint35PlayModeTests
     {
+        readonly List<string> kinematicVelocityWarnings = new List<string>();
+
+        [SetUp]
+        public void SetUp()
+        {
+            kinematicVelocityWarnings.Clear();
+            Application.logMessageReceived += CaptureKinematicVelocityWarning;
+        }
+
+        [TearDown]
+        public void TearDown()
+        {
+            Application.logMessageReceived -= CaptureKinematicVelocityWarning;
+            Assert.That(kinematicVelocityWarnings, Is.Empty,
+                string.Join("\n", kinematicVelocityWarnings));
+        }
+
+        void CaptureKinematicVelocityWarning(
+            string condition,
+            string stackTrace,
+            LogType type)
+        {
+            if (type == LogType.Warning
+                && condition.IndexOf("velocity of a kinematic body",
+                    System.StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                kinematicVelocityWarnings.Add(condition + "\n" + stackTrace);
+            }
+        }
         [UnityTest]
         public IEnumerator ForcedIgnore_IsRearmedAfterColliderDisableEnable()
         {

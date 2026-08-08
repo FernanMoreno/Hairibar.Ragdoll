@@ -89,6 +89,66 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
             Assert.That(rig.Colliders[0], Is.SameAs(original));
         }
 
+        [Test]
+        public void MirrorJoint_CopiesLimitsWithinToleranceAndIsUndoable()
+        {
+            Object.DestroyImmediate(inspector);
+            Object.DestroyImmediate(owner);
+            owner = new GameObject("Symmetric authored rig");
+            GameObject leftObject = new GameObject("Left");
+            GameObject rightObject = new GameObject("Right");
+            leftObject.transform.SetParent(owner.transform, false);
+            rightObject.transform.SetParent(owner.transform, false);
+            leftObject.transform.localPosition = Vector3.left;
+            rightObject.transform.localPosition = Vector3.right;
+            Rigidbody leftBody = leftObject.AddComponent<Rigidbody>();
+            Rigidbody rightBody = rightObject.AddComponent<Rigidbody>();
+            ConfigurableJoint left = leftObject.AddComponent<ConfigurableJoint>();
+            ConfigurableJoint right = rightObject.AddComponent<ConfigurableJoint>();
+            SoftJointLimit limit = left.angularYLimit;
+            limit.limit = 73f;
+            left.angularYLimit = limit;
+            rig = owner.AddComponent<RagdollAuthoredRig>();
+            rig.SetOwnedComponents(
+                new[] { leftBody, rightBody },
+                new Collider[0],
+                new[] { left, right });
+            inspector = (RagdollAuthoredRigEditor)UnityEditor.Editor.CreateEditor(
+                rig, typeof(RagdollAuthoredRigEditor));
+            inspector.SymmetryDistance = 0.1f;
+
+            inspector.MirrorSelectedJoint();
+
+            Assert.That(right.angularYLimit.limit, Is.EqualTo(73f));
+            Undo.PerformUndo();
+            Assert.That(right.angularYLimit.limit, Is.Not.EqualTo(73f));
+        }
+
+        [Test]
+        public void MirrorJoint_RejectsRemoteCandidateOutsideTolerance()
+        {
+            Object.DestroyImmediate(inspector);
+            ConfigurableJoint source = rig.Joints[0];
+            GameObject remote = new GameObject("Remote");
+            remote.transform.SetParent(owner.transform, false);
+            remote.transform.localPosition = Vector3.right * 100f;
+            Rigidbody remoteBody = remote.AddComponent<Rigidbody>();
+            ConfigurableJoint remoteJoint = remote.AddComponent<ConfigurableJoint>();
+            SoftJointLimit remoteBefore = remoteJoint.angularYLimit;
+            rig.SetOwnedComponents(
+                new[] { rig.Rigidbodies[0], remoteBody },
+                rig.Colliders,
+                new[] { source, remoteJoint });
+            inspector = (RagdollAuthoredRigEditor)UnityEditor.Editor.CreateEditor(
+                rig, typeof(RagdollAuthoredRigEditor));
+            inspector.SymmetryDistance = 0.25f;
+
+            inspector.MirrorSelectedJoint();
+
+            Assert.That(remoteJoint.angularYLimit.limit,
+                Is.EqualTo(remoteBefore.limit));
+        }
+
         void AssertCommon(Collider value)
         {
             Assert.That(value, Is.Not.Null);

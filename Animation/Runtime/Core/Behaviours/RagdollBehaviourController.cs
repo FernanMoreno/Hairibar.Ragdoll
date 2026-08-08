@@ -775,7 +775,16 @@ namespace Hairibar.Ragdoll.Animation
             {
                 if (registered[index])
                 {
-                    registered[index].ShutdownInternal();
+                    try
+                    {
+                        registered[index].ShutdownInternal();
+                    }
+                    catch (Exception exception)
+                    {
+                        UnityEngine.Debug.LogException(
+                            exception,
+                            registered[index]);
+                    }
                 }
             }
 

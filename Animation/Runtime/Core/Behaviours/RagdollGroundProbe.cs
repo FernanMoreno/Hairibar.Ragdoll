@@ -55,18 +55,62 @@ namespace Hairibar.Ragdoll.Animation
                 : Vector3.up;
             float minimumGroundDot = Mathf.Cos(
                 Mathf.Clamp(maximumGroundAngle, 0f, 89.9f) * Mathf.Deg2Rad);
-            Vector3 normal = collisionEvent.ContactNormal.sqrMagnitude
-                    > Mathf.Epsilon
-                ? collisionEvent.ContactNormal.normalized
-                : up;
-            if (Vector3.Dot(normal, up) < minimumGroundDot) return;
+            Collision collision = collisionEvent.Collision;
+            if (collision != null && collision.contactCount > 0)
+            {
+                // Unity 6 exposes the impulse of each ContactPoint. Preserve that
+                // distribution: averaging the points first and weighting with the
+                // aggregate Collision.impulse produces a false pressure center.
+                for (int index = 0; index < collision.contactCount; index++)
+                {
+                    ContactPoint contact = collision.GetContact(index);
+                    AccumulateGroundContact(
+                        contact.point,
+                        contact.normal,
+                        contact.impulse.magnitude,
+                        up,
+                        minimumGroundDot,
+                        ref weightedPressure,
+                        ref pressureWeight,
+                        ref pressureContactCount);
+                }
+                return;
+            }
 
-            RagdollCenterOfPressureMath.Accumulate(
+            AccumulateGroundContact(
                 collisionEvent.ContactPoint,
+                collisionEvent.ContactNormal,
                 collisionEvent.ImpulseMagnitude,
+                up,
+                minimumGroundDot,
                 ref weightedPressure,
                 ref pressureWeight,
                 ref pressureContactCount);
+        }
+
+        internal static bool AccumulateGroundContact(
+            Vector3 point,
+            Vector3 normal,
+            float impulseMagnitude,
+            Vector3 up,
+            float minimumGroundDot,
+            ref Vector3 weightedPressure,
+            ref float pressureWeight,
+            ref int pressureContactCount)
+        {
+            Vector3 resolvedNormal = normal.sqrMagnitude > Mathf.Epsilon
+                ? normal.normalized
+                : up;
+            if (Vector3.Dot(resolvedNormal, up) < minimumGroundDot)
+                return false;
+
+            RagdollCenterOfPressureMath.Accumulate(
+                point,
+                impulseMagnitude,
+                ref weightedPressure,
+                ref pressureWeight,
+                ref pressureContactCount);
+            return true;
         }
 
         internal void Update(

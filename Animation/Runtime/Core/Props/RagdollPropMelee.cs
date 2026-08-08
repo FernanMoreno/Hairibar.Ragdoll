@@ -4,10 +4,9 @@ using UnityEngine;
 namespace Hairibar.Ragdoll.Animation
 {
     /// <summary>
-    /// Pickup-owned melee surface. A hidden child owns both supported Collider types,
-    /// exactly one of which participates in the held transaction. Keeping the Collider
-    /// alive but disabled outside actions makes surface snapshots, internal ignores and
-    /// lifecycle cleanup deterministic without creating a second Rigidbody.
+    /// Pickup-owned melee surface. A hidden Capsule replaces the authored dropped Box
+    /// for the complete held transaction, as documented by RootMotion PropMelee.
+    /// StartAction temporarily changes radius, additional-pin weight and mass only.
     /// </summary>
     [AddComponentMenu("Ragdoll/Props/Ragdoll Prop Melee")]
     [DisallowMultipleComponent]
@@ -24,6 +23,8 @@ namespace Hairibar.Ragdoll.Animation
         [SerializeField, HideInInspector] GameObject actionColliderObject;
         [SerializeField, HideInInspector] BoxCollider actionBox;
         [SerializeField, HideInInspector] CapsuleCollider actionCapsule;
+        BoxCollider droppedBox;
+        bool droppedBoxWasEnabled;
 
         RagdollProp prop;
         Collider actionCollider;
@@ -54,6 +55,10 @@ namespace Hairibar.Ragdoll.Animation
         public float EffectivePinWeightMultiplier => actionActive
             ? held.ActionPinWeightMultiplier
             : 1f;
+        internal bool UsesAbsoluteActionPinWeight => actionActive
+            && held.UseAbsoluteActionPinWeight;
+        internal float EffectiveActionAdditionalPinWeight =>
+            held.ActionAdditionalPinWeight;
         public float EffectiveMassMultiplier => actionActive
             ? held.ActionMassMultiplier
             : 1f;
@@ -78,7 +83,7 @@ namespace Hairibar.Ragdoll.Animation
             // Inspector edits during Play Mode must not tear down the frozen action
             // transaction. The edited settings are intentionally deferred to the next
             // pickup; only idle/edit-time colliders are forced off here.
-            if (!Application.isPlaying || !actionActive)
+            if (!Application.isPlaying || !heldSession)
             {
                 DisableOwnedColliders();
             }
@@ -92,6 +97,7 @@ namespace Hairibar.Ragdoll.Animation
             // relinquishes all melee overrides for the active transaction.
             if (!enabled)
             {
+                RestoreDroppedColliderState();
                 heldSession = false;
                 held = RagdollPropMeleeSnapshot.Disabled;
             }
@@ -101,6 +107,7 @@ namespace Hairibar.Ragdoll.Animation
         void OnDestroy()
         {
             CancelAction();
+            RestoreDroppedColliderState();
             heldSession = false;
             held = RagdollPropMeleeSnapshot.Disabled;
             RefreshPropOverridesAfterActionChange();
@@ -261,11 +268,14 @@ namespace Hairibar.Ragdoll.Animation
 
             ApplyColliderGeometry(false);
             actionCollider.isTrigger = false;
+            CaptureAndDisableDroppedBox();
+            actionCollider.enabled = true;
         }
 
         internal void EndHeldSession()
         {
             CancelAction();
+            RestoreDroppedColliderState();
             heldSession = false;
             held = RagdollPropMeleeSnapshot.Disabled;
             lastActionError = null;
@@ -380,9 +390,9 @@ namespace Hairibar.Ragdoll.Animation
 
         void SelectActionCollider()
         {
-            actionCollider = held.Shape == RagdollPropMeleeShape.Box
-                ? (Collider)actionBox
-                : actionCapsule;
+            // Official PropMelee contract uses Box when dropped and Capsule for the
+            // complete pickup. Shape remains serialized only for source compatibility.
+            actionCollider = actionCapsule;
         }
 
         void CancelAction()
@@ -396,6 +406,34 @@ namespace Hairibar.Ragdoll.Animation
             {
                 ApplyColliderGeometry(false);
             }
+            if (heldSession && actionCollider)
+            {
+                actionCollider.enabled = true;
+                if (actionBox) actionBox.enabled = false;
+            }
+            else DisableOwnedColliders();
+        }
+
+        void CaptureAndDisableDroppedBox()
+        {
+            // PropMelee's dropped collider belongs to the prop object itself. Never
+            // disable a BoxCollider from an unrelated child hierarchy.
+            droppedBox = GetComponent<BoxCollider>();
+            if (!droppedBox || IsOwnedCollider(droppedBox))
+            {
+                droppedBox = null;
+                droppedBoxWasEnabled = false;
+                return;
+            }
+            droppedBoxWasEnabled = droppedBox.enabled;
+            droppedBox.enabled = false;
+        }
+
+        void RestoreDroppedColliderState()
+        {
+            if (droppedBox) droppedBox.enabled = droppedBoxWasEnabled;
+            droppedBox = null;
+            droppedBoxWasEnabled = false;
             DisableOwnedColliders();
         }
 
@@ -441,10 +479,11 @@ namespace Hairibar.Ragdoll.Animation
             actionCollider = null;
             actionBox = null;
             actionCapsule = null;
-            // OnDestroy is already an immediate ownership boundary. Leaving a disabled
-            // compound collider until end-of-frame can mutate the standalone body's
-            // automatically computed mass properties after this component is gone.
-            DestroyImmediate(owned);
+            // Unity documents DestroyImmediate as an Editor-only operation that should
+            // not be used in game code. Colliders are disabled before this point, so
+            // deferred runtime destruction cannot participate in physics.
+            if (Application.isPlaying) Destroy(owned);
+            else DestroyImmediate(owned);
         }
     }
 }

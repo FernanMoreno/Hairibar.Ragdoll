@@ -43,6 +43,19 @@ namespace Hairibar.Ragdoll.Animation
             return true;
         }
 
+        internal bool TrySetState(RagdollPuppetState next)
+        {
+            if (!Enum.IsDefined(typeof(RagdollPuppetState), next))
+            {
+                throw new ArgumentOutOfRangeException(nameof(next));
+            }
+            if (next == State) return false;
+
+            State = next;
+            StateElapsedTime = 0f;
+            return true;
+        }
+
         /// <summary>
         /// Advances state-local time. Returns true when GetUp completed automatically.
         /// </summary>

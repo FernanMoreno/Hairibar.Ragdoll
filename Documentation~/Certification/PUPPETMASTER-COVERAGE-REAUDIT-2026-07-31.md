@@ -6,7 +6,12 @@ manual y la referencia pública enlazados por RootMotion. La página oficial his
 de Doxygen actualmente responde 404; por ello no se amplía ningún contrato a partir
 de memoria, nombres de símbolos o código propietario.
 
-Estados:
+Estado vigente: **reabierto por la auditoria R01-R34 del 2026-08-01**. Las marcas
+`V` siguientes son el resultado historico del pase de 2026-07-31 y no vuelven a
+ser certificacion vigente hasta enlazarse a una fuente oficial, un test especifico
+y un artefacto ejecutado en el nuevo manifiesto.
+
+Estados historicos:
 
 - `V`: comportamiento observable cubierto por pruebas ejecutadas en este pase.
 - `N/A`: exclusión deliberada que no forma parte de la dependencia del paquete.
@@ -197,8 +202,8 @@ La lista contiene cada ID histórico exactamente una vez (12 A + 30 B + 7 C +
 | ID | Estado | Evidencia o brecha concreta |
 |---|---:|---|
 | J01 | V | Compilación limpia en Unity 6000.5.2f1. |
-| J02 | V | EditMode 33/33. |
-| J03 | V | PlayMode 518/518. |
+| J02 | V | EditMode 202/202. |
+| J03 | V | PlayMode 533/533. |
 | J04 | V | Las cuatro escenas ejecutan 109 aserciones integrales deterministas en Windows Development Player. |
 | J05 | V | Player confirma cero GC en caminos críticos y registra mediana/p95 de CPU y memoria. |
 | J06 | V | Reauditoría cerrada: 139 filas verificadas y G05 como único N/A justificado. |
@@ -207,7 +212,7 @@ La lista contiene cada ID histórico exactamente una vez (12 A + 30 B + 7 C +
 ## Cierre actual
 
 Reauditoría cerrada con 139 filas verificadas y G05 como única exclusión deliberada.
-La evidencia comprende 551 pruebas NUnit, 109 aserciones integrales en Windows
+La evidencia comprende 735 pruebas NUnit, 109 aserciones integrales en Windows
 Development Player, cuatro BuildReports válidos y perfil de 120 frames de warm-up
 más 600 frames medidos. Linux64 está compilado; su ejecución queda explícitamente
 reservada para un host Linux real.

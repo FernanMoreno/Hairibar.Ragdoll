@@ -1,8 +1,10 @@
 ﻿using System;
+using System.Collections;
 using System.Linq;
 using System.Reflection;
 using NUnit.Framework;
 using UnityEngine;
+using UnityEngine.TestTools;
 #if UNITY_6000_0_OR_NEWER
 using PhysicMaterial = UnityEngine.PhysicsMaterial;
 #endif
@@ -55,7 +57,8 @@ namespace Hairibar.Ragdoll.Animation.Tests
                     Is.EqualTo(go.transform));
                 Assert.That(melee.ActionCollider.gameObject,
                     Is.Not.EqualTo(go));
-                Assert.That(melee.ActionCollider.enabled, Is.False);
+                Assert.That(melee.ActionCollider.enabled, Is.True);
+                Assert.That(go.GetComponent<BoxCollider>().enabled, Is.False);
                 Assert.That(
                     melee.ActionCollider.GetComponentInParent<Rigidbody>(),
                     Is.EqualTo(go.GetComponent<Rigidbody>()));
@@ -96,7 +99,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
                     Is.EqualTo(4f));
 
                 melee.EndAction();
-                Assert.That(melee.ActionCollider.enabled, Is.False);
+                Assert.That(melee.ActionCollider.enabled, Is.True);
             }
             finally
             {
@@ -105,24 +108,24 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [Test]
-        public void BoxAction_ExpandsEveryAxisAndRestoresBaseline()
+        public void HeldSession_AlwaysUsesCapsuleAndRestoresItsRadius()
         {
             GameObject go = CreateMinimalProp("BoxMelee");
             try
             {
                 RagdollPropMelee melee = go.AddComponent<RagdollPropMelee>();
                 melee.Settings.Shape = RagdollPropMeleeShape.Box;
-                melee.Settings.BoxSize = new Vector3(1f, 2f, 3f);
+                melee.Settings.Radius = 0.25f;
                 melee.Settings.ActionColliderRadiusMultiplier = 2f;
                 melee.BeginHeldSession();
                 melee.BeginActionForTesting();
 
-                BoxCollider box = melee.ActionCollider as BoxCollider;
-                Assert.That(box.size,
-                    Is.EqualTo(new Vector3(2f, 4f, 6f)));
+                CapsuleCollider capsule = melee.ActionCollider as CapsuleCollider;
+                Assert.That(capsule, Is.Not.Null);
+                Assert.That(capsule.radius, Is.EqualTo(0.5f));
                 melee.EndAction();
-                Assert.That(box.size,
-                    Is.EqualTo(new Vector3(1f, 2f, 3f)));
+                Assert.That(capsule.radius, Is.EqualTo(0.25f));
+                Assert.That(capsule.enabled, Is.True);
             }
             finally
             {
@@ -196,6 +199,29 @@ namespace Hairibar.Ragdoll.Animation.Tests
             }
         }
 
+        [TestCase(true)]
+        [TestCase(false)]
+        public void EndHeldSession_RestoresAuthoredBoxEnabledState(bool enabled)
+        {
+            GameObject go = CreateMinimalProp("Melee collider switch");
+            try
+            {
+                BoxCollider authoredBox = go.GetComponent<BoxCollider>();
+                authoredBox.enabled = enabled;
+                RagdollPropMelee melee = go.AddComponent<RagdollPropMelee>();
+
+                melee.BeginHeldSession();
+                Assert.That(authoredBox.enabled, Is.False);
+                Assert.That(melee.ActionCollider, Is.TypeOf<CapsuleCollider>());
+                Assert.That(melee.ActionCollider.enabled, Is.True);
+
+                melee.EndHeldSession();
+                Assert.That(authoredBox.enabled, Is.EqualTo(enabled));
+                Assert.That(melee.ActionCollider.enabled, Is.False);
+            }
+            finally { UnityEngine.Object.DestroyImmediate(go); }
+        }
+
         [TestCase(float.NaN)]
         [TestCase(float.PositiveInfinity)]
         [TestCase(-0.01f)]
@@ -231,7 +257,8 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 Assert.That(melee.IsActionActive, Is.True);
                 melee.AdvanceTimedAction(0.1f);
                 Assert.That(melee.IsActionActive, Is.False);
-                Assert.That(melee.ActionCollider.enabled, Is.False);
+                Assert.That(melee.ActionCollider.enabled, Is.True);
+                Assert.That(go.GetComponent<BoxCollider>().enabled, Is.False);
             }
             finally
             {
@@ -357,7 +384,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 go.SetActive(false);
                 Assert.That(melee.IsHeldSession, Is.True);
                 Assert.That(melee.IsActionActive, Is.False);
-                Assert.That(melee.ActionCollider.enabled, Is.False);
+                Assert.That(melee.ActionCollider.enabled, Is.True);
 
                 go.SetActive(true);
                 Assert.That(melee.IsHeldSession, Is.True);
@@ -550,7 +577,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [Test]
-        public void ActionPinMultiplier_BoostsConfiguredWeightBeyondFullAuthority()
+        public void ActionAdditionalPinWeight_IsAbsoluteDuringAction()
         {
             using (RagdollPropTestRig rig = new RagdollPropTestRig())
             {
@@ -559,7 +586,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 rig.PropA.AdditionalPin.Mass = 1f;
                 RagdollPropMelee melee =
                     rig.PropA.gameObject.AddComponent<RagdollPropMelee>();
-                melee.Settings.ActionPinWeightMultiplier = 3f;
+                melee.Settings.ActionAdditionalPinWeight = 0.8f;
                 rig.PrimeEmptySlot();
                 rig.PickUp(rig.PropA);
                 rig.TargetSlot.transform.position += Vector3.right;
@@ -568,7 +595,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 rig.Muscle.ResetAdditionalPinSampling();
                 rig.Muscle.ApplyAdditionalPinForTesting();
                 Assert.That(rig.PropA.LastAdditionalPinStep.AppliedWeight,
-                    Is.EqualTo(1.5f).Within(0.0001f));
+                    Is.EqualTo(0.8f).Within(0.0001f));
 
                 Assert.That(melee.EndAction(), Is.True);
                 rig.Muscle.ResetAdditionalPinSampling();
@@ -881,6 +908,10 @@ namespace Hairibar.Ragdoll.Animation.Tests
                         rig.PropA,
                         "collisionSession",
                         session);
+                    // TryCreate applies the held-session ignore immediately. This
+                    // test exercises BeginAction's public re-arm path, so emulate
+                    // the inactive transient action surface before invoking it.
+                    Physics.IgnoreCollision(melee.ActionCollider, other, false);
 
                     Assert.That(Physics.GetIgnoreCollision(
                         melee.ActionCollider,
@@ -969,7 +1000,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 Assert.That(rig.Muscle.State,
                     Is.EqualTo(RagdollPropMuscleState.Disconnecting));
                 Assert.That(melee.IsActionActive, Is.False);
-                Assert.That(melee.ActionCollider.enabled, Is.False);
+                Assert.That(melee.ActionCollider.enabled, Is.True);
                 Assert.That(slotBody.mass, Is.EqualTo(2f));
                 Assert.That(melee.IsHeldSession, Is.True);
                 Assert.That(melee.BeginAction(), Is.False);
@@ -998,7 +1029,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 Assert.That(rig.Muscle.State,
                     Is.EqualTo(RagdollPropMuscleState.Faulted));
                 Assert.That(melee.IsActionActive, Is.False);
-                Assert.That(melee.ActionCollider.enabled, Is.False);
+                Assert.That(melee.ActionCollider.enabled, Is.True);
                 Assert.That(slotBody.mass, Is.EqualTo(3f));
             }
         }
@@ -1096,8 +1127,8 @@ namespace Hairibar.Ragdoll.Animation.Tests
             }
         }
 
-        [Test]
-        public void DestroyingMeleeComponent_RemovesOwnedColliderObject()
+        [UnityTest]
+        public IEnumerator DestroyingMeleeComponent_RemovesOwnedColliderObject()
         {
             GameObject go = CreateMinimalProp("Destroy Owner");
             try
@@ -1106,7 +1137,8 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 melee.BeginHeldSession();
                 GameObject owned = melee.ActionCollider.gameObject;
 
-                UnityEngine.Object.DestroyImmediate(melee);
+                UnityEngine.Object.Destroy(melee);
+                yield return null;
 
                 Assert.That(owned == null, Is.True);
                 Assert.That(go.GetComponentsInChildren<Collider>(true).Length,

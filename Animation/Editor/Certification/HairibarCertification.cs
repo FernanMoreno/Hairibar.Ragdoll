@@ -6,6 +6,7 @@ using UnityEditor;
 using UnityEditor.Animations;
 using UnityEditor.Build;
 using UnityEditor.Build.Reporting;
+using UnityEditor.Compilation;
 using UnityEditor.SceneManagement;
 using UnityEditor.PackageManager.UI;
 using UnityEngine;
@@ -31,20 +32,55 @@ namespace Hairibar.Ragdoll.Animation.Editor
             GeneratedRoot + "/HairibarRegressionDefinition.asset";
         const string RegressionProfilePath =
             GeneratedRoot + "/HairibarRegressionProfile.asset";
+        const string GeneratedRegressionRoot =
+            GeneratedRoot + "/Regression";
+        const string PendingOperationKey =
+            "Hairibar.Ragdoll.Certification.PendingOperation";
+        const string ContinuationScheduledKey =
+            "Hairibar.Ragdoll.Certification.ContinuationScheduled";
+        const string RunnerWaitStartedKey =
+            "Hairibar.Ragdoll.Certification.RunnerWaitStarted";
+        const string RegressionRunnerTypeName =
+            "Hairibar.Ragdoll.Demo.RegressionScenarioRunner";
+
+        enum PendingOperation
+        {
+            None,
+            PrepareAssets,
+            RunAll,
+            RunWebGL,
+            RunWindows
+        }
+
+        [Serializable]
+        sealed class BuildDiagnosticEntry
+        {
+            public string severity;
+            public bool own;
+            public string message;
+        }
 
         [Serializable]
         sealed class BuildEntry
         {
             public string target;
+            public string result;
             public bool succeeded;
+            public bool development;
+            public bool allowDebugging;
+            public bool outputExists;
             public string output;
             public string error;
             public ulong totalSize;
+            public string[] ownDiagnostics;
+            public string[] externalWarnings;
+            public BuildDiagnosticEntry[] diagnostics;
         }
 
         [Serializable]
         sealed class BuildManifest
         {
+            public int schemaVersion = 2;
             public string unityVersion;
             public string generatedUtc;
             public BuildEntry[] builds;
@@ -53,11 +89,159 @@ namespace Hairibar.Ragdoll.Animation.Editor
         [MenuItem("Tools/Hairibar Ragdoll/Certification/Prepare Assets")]
         public static void PrepareAssets()
         {
-            Sample sample = FindDemoSample();
-            if (!sample.isImported)
+            BeginWhenDemoScriptsAreAvailable(PendingOperation.PrepareAssets);
+        }
+
+        [InitializeOnLoadMethod]
+        static void ResumePendingOperationAfterDomainReload()
+        {
+            if (GetPendingOperation() != PendingOperation.None)
             {
+                SchedulePendingOperation();
+            }
+        }
+
+        static void BeginWhenDemoScriptsAreAvailable(PendingOperation operation)
+        {
+            Sample sample = FindDemoSample();
+            if (!sample.isImported || !SampleImportIsCurrent(sample))
+            {
+                SetPendingOperation(operation);
+                SessionState.SetFloat(RunnerWaitStartedKey,
+                    (float)EditorApplication.timeSinceStartup);
                 sample.Import(Sample.ImportOptions.OverridePreviousImports);
                 AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+                // Refresh imports assets synchronously, but Unity compiles newly
+                // imported scripts after this editor callback returns. Persisting the
+                // operation allows the InitializeOnLoad continuation to resume after
+                // that domain reload instead of opening scenes with Missing Scripts.
+                CompilationPipeline.RequestScriptCompilation();
+                return;
+            }
+
+            if (EditorApplication.isCompiling
+                || EditorApplication.isUpdating
+                || FindRegressionScenarioRunnerType() == null)
+            {
+                SetPendingOperation(operation);
+                if (!SessionState.GetBool(ContinuationScheduledKey, false))
+                {
+                    SessionState.SetFloat(RunnerWaitStartedKey,
+                        (float)EditorApplication.timeSinceStartup);
+                }
+                SchedulePendingOperation();
+                return;
+            }
+
+            ClearPendingOperation();
+            ExecuteOperation(operation);
+        }
+
+        static void SchedulePendingOperation()
+        {
+            if (SessionState.GetBool(ContinuationScheduledKey, false)) return;
+            SessionState.SetBool(ContinuationScheduledKey, true);
+            EditorApplication.delayCall += ResumePendingOperation;
+        }
+
+        static void ResumePendingOperation()
+        {
+            SessionState.SetBool(ContinuationScheduledKey, false);
+            PendingOperation operation = GetPendingOperation();
+            if (operation == PendingOperation.None) return;
+            try
+            {
+                if (EditorApplication.isCompiling || EditorApplication.isUpdating)
+                {
+                    SchedulePendingOperation();
+                    return;
+                }
+                if (FindRegressionScenarioRunnerType() == null)
+                {
+                    float waitStarted = SessionState.GetFloat(RunnerWaitStartedKey,
+                        (float)EditorApplication.timeSinceStartup);
+                    if (EditorApplication.timeSinceStartup - waitStarted < 60d)
+                    {
+                        SchedulePendingOperation();
+                        return;
+                    }
+                    ThrowRunnerUnavailable();
+                }
+
+                ClearPendingOperation();
+                ExecuteOperation(operation);
+            }
+            catch
+            {
+                // A failed continuation must not survive into the next domain
+                // reload. Otherwise every reload retries a known-failed operation
+                // and makes the certification command impossible to recover.
+                ClearPendingOperation();
+                throw;
+            }
+        }
+
+        static void ThrowRunnerUnavailable()
+        {
+            // The timeout is terminal for this invocation. Erase SessionState before
+            // throwing so the next domain reload does not re-arm a failed command.
+            ClearPendingOperation();
+            throw new InvalidOperationException(
+                "The Demo Scenes sample is imported but "
+                + RegressionRunnerTypeName
+                + " is unavailable after script compilation. Check the "
+                + "RegressionScenarioRunner compile errors before certification.");
+        }
+
+        static void ExecuteOperation(PendingOperation operation)
+        {
+            bool succeeded = false;
+            try
+            {
+                switch (operation)
+                {
+                    case PendingOperation.PrepareAssets:
+                        PrepareAssetsCore();
+                        break;
+                    case PendingOperation.RunAll:
+                        PrepareAssetsCore();
+                        RunAllCore();
+                        break;
+                    case PendingOperation.RunWebGL:
+                        PrepareAssetsCore();
+                        RunWebGLCore();
+                        break;
+                    case PendingOperation.RunWindows:
+                        PrepareAssetsCore();
+                        RunWindowsCore();
+                        break;
+                    default:
+                        throw new ArgumentOutOfRangeException(nameof(operation));
+                }
+                succeeded = true;
+            }
+            finally
+            {
+                // In batch mode the first call can import source files and trigger a
+                // domain reload. Do not pass -quit to that invocation: this explicit
+                // exit runs only after the persisted continuation has completed.
+                if (Application.isBatchMode)
+                {
+                    EditorApplication.Exit(succeeded ? 0 : 1);
+                }
+            }
+        }
+
+        internal static void PrepareAssetsCore()
+        {
+            Sample sample = FindDemoSample();
+            if (!sample.isImported
+                || !SampleImportIsCurrent(sample)
+                || FindRegressionScenarioRunnerType() == null)
+            {
+                throw new InvalidOperationException(
+                    "PrepareAssetsCore requires imported Demo Scenes and a compiled "
+                    + RegressionRunnerTypeName + ".");
             }
 
             EnsureGeneratedFolder();
@@ -80,10 +264,163 @@ namespace Hairibar.Ragdoll.Animation.Editor
             AssetDatabase.Refresh();
         }
 
+        internal static bool SampleImportIsCurrent(Sample sample)
+        {
+            if (!sample.isImported
+                || string.IsNullOrWhiteSpace(sample.resolvedPath)
+                || string.IsNullOrWhiteSpace(sample.importPath))
+            {
+                return false;
+            }
+
+            string sourceRoot = Path.GetFullPath(sample.resolvedPath);
+            string importedAssetPath = NormalizeAssetPath(sample.importPath);
+            string projectRoot = Path.GetFullPath(
+                Path.Combine(Application.dataPath, ".."));
+            string importedRoot = Path.GetFullPath(
+                Path.Combine(projectRoot, importedAssetPath));
+            if (!Directory.Exists(sourceRoot) || !Directory.Exists(importedRoot))
+            {
+                return false;
+            }
+
+            return SamplePayloadTreesMatch(sourceRoot, importedRoot);
+        }
+
+        internal static bool SamplePayloadTreesMatch(
+            string sourceRoot,
+            string importedRoot)
+        {
+            if (string.IsNullOrWhiteSpace(sourceRoot)
+                || string.IsNullOrWhiteSpace(importedRoot)
+                || !Directory.Exists(sourceRoot)
+                || !Directory.Exists(importedRoot))
+            {
+                return false;
+            }
+            sourceRoot = Path.GetFullPath(sourceRoot);
+            importedRoot = Path.GetFullPath(importedRoot);
+            string[] sourceFiles = GetSamplePayloadFiles(sourceRoot);
+            string[] importedFiles = GetSamplePayloadFiles(importedRoot);
+            if (sourceFiles.Length != importedFiles.Length) return false;
+
+            for (int index = 0; index < sourceFiles.Length; index++)
+            {
+                string relative = Path.GetRelativePath(
+                    sourceRoot,
+                    sourceFiles[index]);
+                string imported = Path.Combine(importedRoot, relative);
+                if (!File.Exists(imported)
+                    || !FilesHaveEqualContent(sourceFiles[index], imported))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        static string[] GetSamplePayloadFiles(string root)
+        {
+            string[] files = Directory.GetFiles(
+                root,
+                "*",
+                SearchOption.AllDirectories);
+            List<string> payload = new List<string>(files.Length);
+            for (int index = 0; index < files.Length; index++)
+            {
+                if (!files[index].EndsWith(
+                    ".meta",
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    payload.Add(files[index]);
+                }
+            }
+            payload.Sort(StringComparer.OrdinalIgnoreCase);
+            return payload.ToArray();
+        }
+
+        static bool FilesHaveEqualContent(string left, string right)
+        {
+            FileInfo leftInfo = new FileInfo(left);
+            FileInfo rightInfo = new FileInfo(right);
+            if (leftInfo.Length != rightInfo.Length) return false;
+
+            const int BufferSize = 81920;
+            byte[] leftBuffer = new byte[BufferSize];
+            byte[] rightBuffer = new byte[BufferSize];
+            using (FileStream leftStream = File.OpenRead(left))
+            using (FileStream rightStream = File.OpenRead(right))
+            {
+                while (true)
+                {
+                    int leftRead = leftStream.Read(
+                        leftBuffer, 0, leftBuffer.Length);
+                    int rightRead = rightStream.Read(
+                        rightBuffer, 0, rightBuffer.Length);
+                    if (leftRead != rightRead) return false;
+                    if (leftRead == 0) return true;
+                    for (int index = 0; index < leftRead; index++)
+                    {
+                        if (leftBuffer[index] != rightBuffer[index]) return false;
+                    }
+                }
+            }
+        }
+
         [MenuItem("Tools/Hairibar Ragdoll/Certification/Run All Builds")]
         public static void RunAll()
         {
-            PrepareAssets();
+            BeginWhenDemoScriptsAreAvailable(PendingOperation.RunAll);
+        }
+
+        /// <summary>
+        /// CLI stage entry used by Tools~/Run-HairibarClosure.ps1. Unity tests are
+        /// intentionally executed by separate official -runTests processes; this
+        /// method dispatches only the non-test stage selected by
+        /// HAIRIBAR_CLOSURE_PHASE.
+        /// </summary>
+        public static void RunClosure()
+        {
+            string phase = Environment.GetEnvironmentVariable(
+                "HAIRIBAR_CLOSURE_PHASE");
+            switch (phase)
+            {
+                case "Prepare": PrepareAssets(); break;
+                case "Build": RunAll(); break;
+                case "Provisional": GenerateClosureProvisional(); break;
+                case "Validate": ValidateClosureProvisional(); break;
+                case "Finalize": FinalizeClosure(); break;
+                default:
+                    throw new InvalidOperationException(
+                        "HAIRIBAR_CLOSURE_PHASE must be Prepare, Build, " +
+                        "Provisional, Validate or Finalize. Invoke the durable " +
+                        "Tools~/Run-HairibarClosure.ps1 coordinator.");
+            }
+        }
+
+        public static void GenerateClosureProvisional()
+        {
+            string path = RagdollClosureCoordinator.GenerateProvisional();
+            UnityEngine.Debug.Log("Hairibar provisional closure manifest: " + path);
+        }
+
+        public static void ValidateClosureProvisional()
+        {
+            RagdollClosurePipeline.IndependentValidation validation =
+                RagdollClosureCoordinator.ValidateProvisional();
+            if (!validation.succeeded)
+                throw new InvalidDataException(
+                    "Independent closure validation failed: "
+                    + string.Join(" | ", validation.errors ?? Array.Empty<string>()));
+        }
+
+        public static void FinalizeClosure()
+        {
+            RagdollClosureCoordinator.FinalizeClosure();
+        }
+
+        static void RunAllCore()
+        {
             Sample importedSample = FindDemoSample();
             string outputRoot = Environment.GetEnvironmentVariable(
                 "HAIRIBAR_CERTIFICATION_OUTPUT");
@@ -148,7 +485,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 + manifestPath);
         }
 
-        static Sample FindDemoSample()
+        internal static Sample FindDemoSample()
         {
             IEnumerable<Sample> samples = Sample.FindByPackage(
                 PackageName,
@@ -162,6 +499,37 @@ namespace Hairibar.Ragdoll.Animation.Editor
             }
             throw new InvalidOperationException(
                 "The package does not expose the Demo Scenes sample.");
+        }
+
+        static void SetPendingOperation(PendingOperation operation)
+        {
+            SessionState.SetInt(PendingOperationKey, (int)operation);
+        }
+
+        static PendingOperation GetPendingOperation()
+        {
+            int value = SessionState.GetInt(PendingOperationKey, 0);
+            return Enum.IsDefined(typeof(PendingOperation), value)
+                ? (PendingOperation)value
+                : PendingOperation.None;
+        }
+
+        static void ClearPendingOperation()
+        {
+            SessionState.EraseInt(PendingOperationKey);
+            SessionState.EraseBool(ContinuationScheduledKey);
+            SessionState.EraseFloat(RunnerWaitStartedKey);
+        }
+
+        static Type FindRegressionScenarioRunnerType()
+        {
+            foreach (System.Reflection.Assembly assembly in
+                AppDomain.CurrentDomain.GetAssemblies())
+            {
+                Type type = assembly.GetType(RegressionRunnerTypeName, false);
+                if (type != null) return type;
+            }
+            return null;
         }
 
         static string PackageInfoVersion()
@@ -185,10 +553,28 @@ namespace Hairibar.Ragdoll.Animation.Editor
             }
         }
 
+        static void EnsureAssetFolder(string path)
+        {
+            path = NormalizeAssetPath(path).TrimEnd('/');
+            string[] parts = path.Split('/');
+            string current = parts[0];
+            for (int index = 1; index < parts.Length; index++)
+            {
+                string next = current + "/" + parts[index];
+                if (!AssetDatabase.IsValidFolder(next))
+                    AssetDatabase.CreateFolder(current, parts[index]);
+                current = next;
+            }
+        }
+
         [MenuItem("Tools/Hairibar Ragdoll/Certification/Run WebGL Build")]
         public static void RunWebGL()
         {
-            PrepareAssets();
+            BeginWhenDemoScriptsAreAvailable(PendingOperation.RunWebGL);
+        }
+
+        static void RunWebGLCore()
+        {
             Sample importedSample = FindDemoSample();
             string outputRoot = Environment.GetEnvironmentVariable(
                 "HAIRIBAR_CERTIFICATION_OUTPUT");
@@ -224,7 +610,11 @@ namespace Hairibar.Ragdoll.Animation.Editor
         [MenuItem("Tools/Hairibar Ragdoll/Certification/Run Windows Player")]
         public static void RunWindows()
         {
-            PrepareAssets();
+            BeginWhenDemoScriptsAreAvailable(PendingOperation.RunWindows);
+        }
+
+        static void RunWindowsCore()
+        {
             Sample importedSample = FindDemoSample();
             string outputRoot = Environment.GetEnvironmentVariable(
                 "HAIRIBAR_CERTIFICATION_OUTPUT");
@@ -396,6 +786,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 "CoreLifecycle", "HumanoidBakerFall",
                 "HierarchyProps", "CollisionsPerformance"
             };
+            EnsureAssetFolder(GeneratedRegressionRoot);
             for (int sceneIndex = 0; sceneIndex < names.Length; sceneIndex++)
             {
                 string[] guids = AssetDatabase.FindAssets(
@@ -407,8 +798,17 @@ namespace Hairibar.Ragdoll.Animation.Editor
                         names[sceneIndex]
                         + " regression scene was not imported exactly once.");
                 }
+                string sourceScene = AssetDatabase.GUIDToAssetPath(guids[0]);
+                string certifiedScene = GeneratedRegressionRoot + "/"
+                    + names[sceneIndex] + ".unity";
+                if (AssetDatabase.LoadAssetAtPath<SceneAsset>(certifiedScene))
+                    AssetDatabase.DeleteAsset(certifiedScene);
+                if (!AssetDatabase.CopyAsset(sourceScene, certifiedScene))
+                    throw new InvalidOperationException(
+                        "Could not create isolated certified scene '"
+                        + certifiedScene + "'.");
                 Scene scene = EditorSceneManager.OpenScene(
-                    AssetDatabase.GUIDToAssetPath(guids[0]),
+                    certifiedScene,
                     OpenSceneMode.Additive);
                 bool assigned = false;
                 try
@@ -416,28 +816,45 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     GameObject[] roots = scene.GetRootGameObjects();
                     for (int rootIndex = 0; rootIndex < roots.Length; rootIndex++)
                     {
-                        MonoBehaviour[] behaviours = roots[rootIndex]
-                            .GetComponentsInChildren<MonoBehaviour>(true);
-                        for (int index = 0; index < behaviours.Length; index++)
+                        Transform[] transforms = roots[rootIndex]
+                            .GetComponentsInChildren<Transform>(true);
+                        for (int transformIndex = 0;
+                             transformIndex < transforms.Length;
+                             transformIndex++)
                         {
-                            MonoBehaviour behaviour = behaviours[index];
-                            if (!behaviour || behaviour.GetType().FullName
-                                != "Hairibar.Ragdoll.Demo.RegressionScenarioRunner")
+                            MonoBehaviour[] behaviours = transforms[transformIndex]
+                                .GetComponents<MonoBehaviour>();
+                            for (int index = 0; index < behaviours.Length; index++)
                             {
-                                continue;
+                                MonoBehaviour behaviour = behaviours[index];
+                                if (!behaviour)
+                                {
+                                    throw new InvalidOperationException(
+                                        names[sceneIndex]
+                                        + " contains a Missing Script at GameObject '"
+                                        + GetHierarchyPath(transforms[transformIndex])
+                                        + "', MonoBehaviour component index " + index
+                                        + ". The scene cannot be certified until that "
+                                        + "specific serialized reference is repaired.");
+                                }
+                                if (behaviour.GetType().FullName
+                                    != RegressionRunnerTypeName)
+                                {
+                                    continue;
+                                }
+                                SerializedObject serialized =
+                                    new SerializedObject(behaviour);
+                                serialized.FindProperty("humanoidPrefab")
+                                    .objectReferenceValue = humanoid;
+                                serialized.FindProperty("ragdollPrefab")
+                                    .objectReferenceValue = regressionRig;
+                                serialized.FindProperty("animationProfile")
+                                    .objectReferenceValue = profile;
+                                serialized.FindProperty("humanoidController")
+                                    .objectReferenceValue = controller;
+                                serialized.ApplyModifiedPropertiesWithoutUndo();
+                                assigned = true;
                             }
-                            SerializedObject serialized =
-                                new SerializedObject(behaviour);
-                            serialized.FindProperty("humanoidPrefab")
-                                .objectReferenceValue = humanoid;
-                            serialized.FindProperty("ragdollPrefab")
-                                .objectReferenceValue = regressionRig;
-                            serialized.FindProperty("animationProfile")
-                                .objectReferenceValue = profile;
-                            serialized.FindProperty("humanoidController")
-                                .objectReferenceValue = controller;
-                            serialized.ApplyModifiedPropertiesWithoutUndo();
-                            assigned = true;
                         }
                     }
                     if (!assigned)
@@ -450,6 +867,17 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     EditorSceneManager.CloseScene(scene, true);
                 }
             }
+        }
+
+        static string GetHierarchyPath(Transform transform)
+        {
+            string path = transform.name;
+            while (transform.parent)
+            {
+                transform = transform.parent;
+                path = transform.name + "/" + path;
+            }
+            return path;
         }
 
         static void CreateAnimatorController(string samplePath)
@@ -573,7 +1001,6 @@ namespace Hairibar.Ragdoll.Animation.Editor
 
         static string[] FindRegressionScenes(string sampleRoot)
         {
-            sampleRoot += "/Regression";
             string[] names =
             {
                 "CoreLifecycle",
@@ -586,7 +1013,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
             {
                 string[] guids = AssetDatabase.FindAssets(
                     names[index] + " t:Scene",
-                    new[] { sampleRoot });
+                    new[] { GeneratedRegressionRoot });
                 if (guids.Length != 1)
                 {
                     throw new InvalidOperationException(
@@ -607,8 +1034,14 @@ namespace Hairibar.Ragdoll.Animation.Editor
         {
             BuildEntry entry = new BuildEntry
             {
-                target = target.ToString(),
-                output = output
+                target = CertificationTargetName(target),
+                output = output,
+                development = true,
+                allowDebugging = true,
+                result = "Unknown",
+                ownDiagnostics = Array.Empty<string>(),
+                externalWarnings = Array.Empty<string>(),
+                diagnostics = Array.Empty<BuildDiagnosticEntry>()
             };
             BuildTargetGroup group = target == BuildTarget.WebGL
                 ? BuildTargetGroup.WebGL
@@ -646,6 +1079,14 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     options = BuildOptions.Development | BuildOptions.AllowDebugging
                 });
                 entry.totalSize = report.summary.totalSize;
+                entry.result = report.summary.result.ToString();
+                CollectBuildDiagnostics(report, entry);
+                if (entry.ownDiagnostics.Length > 0)
+                {
+                    entry.error = "Hairibar build diagnostics: "
+                        + string.Join(" | ", entry.ownDiagnostics);
+                    return entry;
+                }
                 if (report.summary.result != BuildResult.Succeeded)
                 {
                     entry.error = report.summary.result.ToString();
@@ -656,6 +1097,11 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 {
                     ExecuteWindowsPlayer(output, outputRoot);
                 }
+                entry.outputExists = target == BuildTarget.WebGL
+                    ? Directory.Exists(output)
+                    : File.Exists(output)
+                        || (target == BuildTarget.StandaloneOSX
+                            && Directory.Exists(output));
                 entry.succeeded = true;
                 return entry;
             }
@@ -673,6 +1119,63 @@ namespace Hairibar.Ragdoll.Animation.Editor
                         previousCompiler);
                 }
             }
+        }
+
+        static void CollectBuildDiagnostics(BuildReport report, BuildEntry entry)
+        {
+            List<string> own = new List<string>();
+            List<string> external = new List<string>();
+            List<BuildDiagnosticEntry> diagnostics =
+                new List<BuildDiagnosticEntry>();
+            BuildStep[] steps = report.steps;
+            for (int stepIndex = 0; stepIndex < steps.Length; stepIndex++)
+            {
+                BuildStepMessage[] messages = steps[stepIndex].messages;
+                for (int messageIndex = 0; messageIndex < messages.Length; messageIndex++)
+                {
+                    BuildStepMessage message = messages[messageIndex];
+                    if (message.type != LogType.Warning
+                        && message.type != LogType.Error
+                        && message.type != LogType.Exception
+                        && message.type != LogType.Assert) continue;
+                    string content = message.content ?? string.Empty;
+                    bool isHairibar = IsHairibarBuildDiagnostic(content);
+                    (isHairibar ? own : external).Add(
+                        message.type + ": " + content);
+                    diagnostics.Add(new BuildDiagnosticEntry
+                    {
+                        severity = message.type.ToString(),
+                        own = isHairibar,
+                        message = content
+                    });
+                }
+            }
+            entry.ownDiagnostics = own.ToArray();
+            entry.externalWarnings = external.ToArray();
+            entry.diagnostics = diagnostics.ToArray();
+        }
+
+        static string CertificationTargetName(BuildTarget target)
+        {
+            switch (target)
+            {
+                case BuildTarget.StandaloneWindows64: return "Windows64";
+                case BuildTarget.StandaloneLinux64: return "Linux64";
+                case BuildTarget.StandaloneOSX: return "macOS";
+                case BuildTarget.WebGL: return "WebGL";
+                default: return target.ToString();
+            }
+        }
+
+        internal static bool IsHairibarBuildDiagnostic(string content)
+        {
+            content = content ?? string.Empty;
+            return content.IndexOf(
+                    "Hairibar.Ragdoll",
+                    StringComparison.OrdinalIgnoreCase) >= 0
+                || content.IndexOf(
+                    "com.hairibar.ragdoll",
+                    StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         static void ExecuteWindowsPlayer(string executable, string outputRoot)
@@ -730,7 +1233,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
         [Serializable]
         sealed class PlayerResult
         {
-            public bool succeeded;
+            public bool succeeded = false;
         }
     }
 }

@@ -1047,6 +1047,16 @@ namespace Hairibar.Ragdoll.Animation
 
         internal void ApplyAdditionalPinForTesting()
         {
+            ApplyAdditionalPinForDiagnostics();
+        }
+
+        /// <summary>
+        /// Runs the exact held-override and additional-pin path synchronously so the
+        /// certification sample can scope managed-allocation measurement to Hairibar
+        /// code instead of attributing unrelated frame allocations to the prop.
+        /// </summary>
+        internal void ApplyAdditionalPinForDiagnostics()
+        {
             RefreshHeldPhysicalOverrides();
             ApplyAdditionalPinAfterAnimationMatching();
         }

@@ -40,6 +40,12 @@ namespace Hairibar.Ragdoll.Animation.Editor
         static readonly Dictionary<int, BakerSession> sessions =
             new Dictionary<int, BakerSession>();
 
+        sealed class AssetBackup
+        {
+            internal AnimationClip Destination;
+            internal AnimationClip Snapshot;
+        }
+
         static RagdollBakerSessionManager()
         {
             EditorApplication.playModeStateChanged += state =>
@@ -73,7 +79,14 @@ namespace Hairibar.Ragdoll.Animation.Editor
         sealed class BakerSession : IDisposable
         {
             readonly RagdollBaker baker;
+            readonly List<PendingClip> pending = new List<PendingClip>();
             IClipRecorder recorder;
+
+            sealed class PendingClip
+            {
+                internal string Path;
+                internal AnimationClip Clip;
+            }
 
             public BakerSession(RagdollBaker baker)
             {
@@ -81,6 +94,9 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 baker.SegmentStarted += OnSegmentStarted;
                 baker.SampleRequested += OnSample;
                 baker.SegmentFinished += OnSegmentFinished;
+                baker.SegmentCanceled += OnSegmentCanceled;
+                baker.RecordingCommitRequested += OnRecordingCommitRequested;
+                baker.BakingCompleted += OnBakingCompleted;
                 baker.BakingFinished += OnBakingFinished;
             }
 
@@ -90,9 +106,13 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 baker.SegmentStarted -= OnSegmentStarted;
                 baker.SampleRequested -= OnSample;
                 baker.SegmentFinished -= OnSegmentFinished;
+                baker.SegmentCanceled -= OnSegmentCanceled;
+                baker.RecordingCommitRequested -= OnRecordingCommitRequested;
+                baker.BakingCompleted -= OnBakingCompleted;
                 baker.BakingFinished -= OnBakingFinished;
                 recorder?.Dispose();
                 recorder = null;
+                DiscardPending();
             }
 
             void OnSegmentStarted(
@@ -118,14 +138,90 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 AnimationClip sourceClip)
             {
                 if (recorder == null) return;
-                AnimationClip clip = LoadOrCreateClip(source, name);
-                recorder.Save(clip);
-                RagdollBakerClipSettingsUtility.Apply(source, sourceClip, clip);
-                EditorUtility.SetDirty(clip);
-                AssetDatabase.SaveAssets();
-                UnityEngine.Debug.Log("Baked animation: " + AssetDatabase.GetAssetPath(clip), clip);
-                recorder.Dispose();
+                AnimationClip temporary = new AnimationClip { name = name };
+                try
+                {
+                    string path = DestinationPath(source, name);
+                    for (int index = 0; index < pending.Count; index++)
+                    {
+                        if (string.Equals(
+                            pending[index].Path,
+                            path,
+                            StringComparison.OrdinalIgnoreCase))
+                        {
+                            throw new InvalidOperationException(
+                                "A Baker session produced the destination twice: "
+                                + path);
+                        }
+                    }
+
+                    UnityEngine.Object mainAsset =
+                        AssetDatabase.LoadMainAssetAtPath(path);
+                    if (mainAsset && !(mainAsset is AnimationClip))
+                    {
+                        throw new InvalidOperationException(
+                            "Baker refuses to overwrite a non-AnimationClip asset: "
+                            + path);
+                    }
+                    AnimationClip destination = mainAsset as AnimationClip;
+                    if (destination && source.clipSettingsPolicy
+                        == RagdollBakerClipSettingsPolicy.PreserveDestination)
+                    {
+                        AnimationUtility.SetAnimationClipSettings(
+                            temporary,
+                            AnimationUtility.GetAnimationClipSettings(destination));
+                        temporary.wrapMode = destination.wrapMode;
+                    }
+
+                    recorder.Save(temporary);
+                    if (source.loop && source is RagdollGenericBaker)
+                        RagdollBakerLoopUtility.MatchEndKeysToStart(temporary);
+                    RagdollBakerClipSettingsUtility.Apply(
+                        source, sourceClip, temporary);
+                    pending.Add(new PendingClip
+                    {
+                        Path = path,
+                        Clip = temporary
+                    });
+                    temporary = null;
+                }
+                finally
+                {
+                    recorder.Dispose();
+                    recorder = null;
+                    if (temporary) UnityEngine.Object.DestroyImmediate(temporary);
+                }
+            }
+
+            void OnSegmentCanceled(
+                RagdollBaker source,
+                string name,
+                AnimationClip sourceClip)
+            {
+                recorder?.Dispose();
                 recorder = null;
+            }
+
+            string OnRecordingCommitRequested(RagdollBaker source)
+            {
+                try
+                {
+                    CommitPending();
+                    return string.Empty;
+                }
+                catch (Exception exception)
+                {
+                    DiscardPending();
+                    UnityEngine.Debug.LogException(exception, source);
+                    return exception.Message;
+                }
+            }
+
+            void OnBakingCompleted(
+                RagdollBaker source,
+                RagdollBakerResult result)
+            {
+                if (!result.Succeeded) DiscardPending();
             }
 
             void OnBakingFinished(RagdollBaker source)
@@ -135,26 +231,37 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 Dispose();
             }
 
-            static AnimationClip LoadOrCreateClip(RagdollBaker source, string name)
+            void CommitPending()
+            {
+                AnimationClip[] clips = new AnimationClip[pending.Count];
+                string[] paths = new string[pending.Count];
+                for (int index = 0; index < pending.Count; index++)
+                {
+                    clips[index] = pending[index].Clip;
+                    paths[index] = pending[index].Path;
+                }
+                CommitClipsAtomically(clips, paths);
+                DiscardPending();
+            }
+
+            void DiscardPending()
+            {
+                for (int index = 0; index < pending.Count; index++)
+                    if (pending[index].Clip)
+                        UnityEngine.Object.DestroyImmediate(pending[index].Clip);
+                pending.Clear();
+            }
+
+            static string DestinationPath(RagdollBaker source, string name)
             {
                 string folder = source.saveToFolder.Replace('\\', '/').TrimEnd('/');
                 if (!folder.StartsWith("Assets", StringComparison.Ordinal))
                     throw new InvalidOperationException("Baker folder must be inside Assets.");
-                EnsureFolder(folder);
                 string filename = Sanitize(name) + ".anim";
-                string path = folder + "/" + filename;
-                AnimationClip existing = AssetDatabase.LoadAssetAtPath<AnimationClip>(path);
-                if (existing)
-                {
-                    existing.ClearCurves();
-                    return existing;
-                }
-                AnimationClip clip = new AnimationClip { name = name };
-                AssetDatabase.CreateAsset(clip, AssetDatabase.GenerateUniqueAssetPath(path));
-                return clip;
+                return folder + "/" + filename;
             }
 
-            static void EnsureFolder(string folder)
+            internal static void EnsureFolder(string folder)
             {
                 string[] parts = folder.Split('/');
                 string current = parts[0];
@@ -175,13 +282,134 @@ namespace Hairibar.Ragdoll.Animation.Editor
             }
         }
 
-        interface IClipRecorder : IDisposable
+        internal static void CommitClipsAtomically(
+            IReadOnlyList<AnimationClip> clips,
+            IReadOnlyList<string> paths,
+            Action<int> afterWrite = null)
+        {
+            if (clips == null) throw new ArgumentNullException(nameof(clips));
+            if (paths == null) throw new ArgumentNullException(nameof(paths));
+            if (clips.Count != paths.Count)
+                throw new ArgumentException(
+                    "Clip and destination counts must match.");
+
+            var backups = new List<AssetBackup>(clips.Count);
+            var createdPaths = new List<string>(clips.Count);
+            try
+            {
+                for (int index = 0; index < clips.Count; index++)
+                {
+                    AnimationClip clip = clips[index];
+                    string path = paths[index];
+                    if (!clip) throw new ArgumentException(
+                        "Pending Baker clips cannot be null.", nameof(clips));
+                    if (string.IsNullOrWhiteSpace(path)
+                        || !path.Replace('\\', '/').StartsWith(
+                            "Assets/", StringComparison.Ordinal))
+                    {
+                        throw new ArgumentException(
+                            "Every Baker destination must be inside Assets.",
+                            nameof(paths));
+                    }
+
+                    string directory = Path.GetDirectoryName(path);
+                    BakerSession.EnsureFolder(directory.Replace('\\', '/'));
+                    UnityEngine.Object mainAsset =
+                        AssetDatabase.LoadMainAssetAtPath(path);
+                    if (mainAsset && !(mainAsset is AnimationClip))
+                    {
+                        throw new InvalidOperationException(
+                            "Baker refuses to overwrite a non-AnimationClip asset: "
+                            + path);
+                    }
+                    AnimationClip destination = mainAsset as AnimationClip;
+                    if (destination)
+                    {
+                        backups.Add(new AssetBackup
+                        {
+                            Destination = destination,
+                            Snapshot = UnityEngine.Object.Instantiate(destination)
+                        });
+                        EditorUtility.CopySerialized(clip, destination);
+                        EditorUtility.SetDirty(destination);
+                    }
+                    else
+                    {
+                        AnimationClip asset = UnityEngine.Object.Instantiate(clip);
+                        asset.name = clip.name;
+                        AssetDatabase.CreateAsset(asset, path);
+                        createdPaths.Add(path);
+                    }
+                    afterWrite?.Invoke(index);
+                }
+                AssetDatabase.SaveAssets();
+                for (int index = 0; index < paths.Count; index++)
+                {
+                    AnimationClip committed =
+                        AssetDatabase.LoadAssetAtPath<AnimationClip>(paths[index]);
+                    UnityEngine.Debug.Log(
+                        "Baked animation: " + paths[index], committed);
+                }
+            }
+            catch (Exception commitException)
+            {
+                var rollbackFailures = new List<Exception>();
+                for (int index = backups.Count - 1; index >= 0; index--)
+                {
+                    AssetBackup backup = backups[index];
+                    if (!backup.Destination || !backup.Snapshot) continue;
+                    try
+                    {
+                        EditorUtility.CopySerialized(
+                            backup.Snapshot, backup.Destination);
+                        EditorUtility.SetDirty(backup.Destination);
+                    }
+                    catch (Exception exception)
+                    {
+                        rollbackFailures.Add(exception);
+                    }
+                }
+                for (int index = createdPaths.Count - 1; index >= 0; index--)
+                {
+                    try
+                    {
+                        if (!AssetDatabase.DeleteAsset(createdPaths[index]))
+                            rollbackFailures.Add(new IOException(
+                                "Failed to remove Baker asset created by a failed "
+                                + "transaction: " + createdPaths[index]));
+                    }
+                    catch (Exception exception)
+                    {
+                        rollbackFailures.Add(exception);
+                    }
+                }
+                try { AssetDatabase.SaveAssets(); }
+                catch (Exception exception) { rollbackFailures.Add(exception); }
+                if (rollbackFailures.Count != 0)
+                {
+                    rollbackFailures.Insert(0, commitException);
+                    throw new AggregateException(
+                        "Baker commit and rollback both failed.",
+                        rollbackFailures);
+                }
+                throw;
+            }
+            finally
+            {
+                for (int index = 0; index < backups.Count; index++)
+                    if (backups[index].Snapshot)
+                        UnityEngine.Object.DestroyImmediate(
+                            backups[index].Snapshot);
+            }
+        }
+
+        internal interface IClipRecorder : IDisposable
         {
             void Sample(float deltaTime);
             void Save(AnimationClip clip);
         }
 
-        sealed class GenericClipRecorder : IClipRecorder
+        internal sealed class GenericClipRecorder : IClipRecorder
         {
             readonly RagdollGenericBaker baker;
             readonly GameObjectRecorder recorder;
@@ -395,6 +623,32 @@ namespace Hairibar.Ragdoll.Animation.Editor
             ISet<Transform> positions)
         {
             return value && positions != null && positions.Contains(value);
+        }
+    }
+
+    /// <summary>
+    /// Hairibar-owned loop seam policy. RootMotion documents matching final keys to
+    /// initial keys for Generic Baker loop output. Unity curve APIs preserve key time,
+    /// tangents and weights while only final value changes.
+    /// </summary>
+    internal static class RagdollBakerLoopUtility
+    {
+        internal static void MatchEndKeysToStart(AnimationClip clip)
+        {
+            if (!clip) throw new ArgumentNullException(nameof(clip));
+            EditorCurveBinding[] bindings = AnimationUtility.GetCurveBindings(clip);
+            for (int index = 0; index < bindings.Length; index++)
+            {
+                EditorCurveBinding binding = bindings[index];
+                AnimationCurve curve = AnimationUtility.GetEditorCurve(clip, binding);
+                if (curve == null || curve.length < 2) continue;
+                Keyframe[] keys = curve.keys;
+                Keyframe last = keys[keys.Length - 1];
+                last.value = keys[0].value;
+                keys[keys.Length - 1] = last;
+                curve.keys = keys;
+                AnimationUtility.SetEditorCurve(clip, binding, curve);
+            }
         }
     }
 

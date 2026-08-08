@@ -16,6 +16,11 @@ namespace Hairibar.Ragdoll.Animation
             void Destroy(UnityEngine.Object value);
         }
 
+        internal interface ITransactionBoundaryProbe
+        {
+            void AfterRegistryCommit();
+        }
+
         sealed class DefaultObjectFactory : IObjectFactory
         {
             internal static readonly DefaultObjectFactory Instance =
@@ -31,6 +36,9 @@ namespace Hairibar.Ragdoll.Animation
                 DestroyObject(value);
             }
         }
+
+        internal static IObjectFactory DefaultFactory =>
+            DefaultObjectFactory.Instance;
 
         sealed class Node
         {
@@ -55,6 +63,136 @@ namespace Hairibar.Ragdoll.Animation
                 DefaultObjectFactory.Instance,
                 out authoredRig,
                 out error);
+        }
+
+        internal static bool TryRebuild(
+            RagdollAuthoredRig existing,
+            RagdollBipedReferences references,
+            RagdollAuthoringOptions options,
+            IObjectFactory factory,
+            out string error)
+        {
+            if (!existing)
+                throw new ArgumentNullException(nameof(existing));
+            if (factory == null) throw new ArgumentNullException(nameof(factory));
+            if (references == null)
+            {
+                error = "Biped references are required.";
+                return false;
+            }
+            if (!references.Validate(out error)) return false;
+            options.Normalize();
+            List<Node> nodes = BuildNodes(references, options);
+            HashSet<UnityEngine.Object> oldOwned = new HashSet<UnityEngine.Object>();
+            AddOwned(oldOwned, existing.Rigidbodies);
+            AddOwned(oldOwned, existing.Colliders);
+            AddOwned(oldOwned, existing.Joints);
+            if (!ValidateReplacementComponents(nodes, oldOwned, out error))
+                return false;
+
+            List<UnityEngine.Object> created = new List<UnityEngine.Object>();
+            List<Action> rollback = new List<Action>();
+            Rigidbody[] originalBodies = existing.Rigidbodies;
+            Collider[] originalColliders = existing.Colliders;
+            ConfigurableJoint[] originalJoints = existing.Joints;
+            bool registryCommitted = false;
+            try
+            {
+                for (int index = 0; index < nodes.Count; index++)
+                {
+                    Node node = nodes[index];
+                    node.Body = FindOwnedAt(existing.Rigidbodies, node.Transform);
+                    if (!node.Body)
+                    {
+                        node.Body = factory.AddComponent<Rigidbody>(
+                            node.Transform.gameObject);
+                        created.Add(node.Body);
+                    }
+                    else
+                    {
+                        Rigidbody body = node.Body;
+                        float mass = body.mass;
+                        rollback.Add(() => { if (body) body.mass = mass; });
+                    }
+
+                    Collider compatible = FindCompatibleOwnedCollider(
+                        existing.Colliders, node.Transform, node.Shape);
+                    if (compatible)
+                    {
+                        node.Collider = compatible;
+                        rollback.Add(CaptureColliderRollback(compatible));
+                    }
+                    else
+                    {
+                        node.Collider = AddCollider(node, factory);
+                        created.Add(node.Collider);
+                    }
+                    ConfigureCollider(node, options, node.Collider);
+                }
+
+                for (int index = 0; index < nodes.Count; index++)
+                {
+                    Node node = nodes[index];
+                    node.Joint = FindOwnedAt(existing.Joints, node.Transform);
+                    if (!node.Joint)
+                    {
+                        node.Joint = factory.AddComponent<ConfigurableJoint>(
+                            node.Transform.gameObject);
+                        created.Add(node.Joint);
+                    }
+                    else rollback.Add(CaptureJointRollback(node.Joint));
+                    ConfigureJoint(node, nodes, options);
+                }
+
+                DistributeMass(nodes, references, options.totalMass,
+                    options.massDistribution);
+                Rigidbody[] bodies = Select(nodes, node => node.Body);
+                Collider[] colliders = Select(nodes, node => node.Collider);
+                ConfigurableJoint[] joints = Select(nodes, node => node.Joint);
+                existing.SetOwnedComponents(bodies, colliders, joints);
+                registryCommitted = true;
+                ITransactionBoundaryProbe probe =
+                    factory as ITransactionBoundaryProbe;
+                probe?.AfterRegistryCommit();
+
+                HashSet<UnityEngine.Object> retained = new HashSet<UnityEngine.Object>();
+                AddOwned(retained, bodies);
+                AddOwned(retained, colliders);
+                AddOwned(retained, joints);
+                foreach (UnityEngine.Object value in oldOwned)
+                {
+                    if (!value || retained.Contains(value)) continue;
+                    try { factory.Destroy(value); }
+                    catch (Exception cleanupException)
+                    {
+                        UnityEngine.Debug.LogException(cleanupException, existing);
+                    }
+                }
+                error = string.Empty;
+                return true;
+            }
+            catch (Exception exception)
+            {
+                if (registryCommitted)
+                {
+                    existing.SetOwnedComponents(
+                        originalBodies,
+                        originalColliders,
+                        originalJoints);
+                }
+                for (int index = rollback.Count - 1; index >= 0; index--)
+                {
+                    try { rollback[index](); }
+                    catch (Exception rollbackException)
+                    {
+                        UnityEngine.Debug.LogException(rollbackException, existing);
+                    }
+                }
+                for (int index = created.Count - 1; index >= 0; index--)
+                    if (created[index]) factory.Destroy(created[index]);
+                error = exception.Message;
+                return false;
+            }
         }
 
         internal static bool TryBuild(
@@ -142,6 +280,152 @@ namespace Hairibar.Ragdoll.Animation
             }
             error = string.Empty;
             return true;
+        }
+
+        static bool ValidateReplacementComponents(
+            List<Node> nodes,
+            HashSet<UnityEngine.Object> owned,
+            out string error)
+        {
+            for (int index = 0; index < nodes.Count; index++)
+            {
+                Component[] components = nodes[index].Transform
+                    .GetComponents<Component>();
+                for (int componentIndex = 0;
+                     componentIndex < components.Length;
+                     componentIndex++)
+                {
+                    Component component = components[componentIndex];
+                    if (!(component is Rigidbody)
+                        && !(component is Collider)
+                        && !(component is ConfigurableJoint)) continue;
+                    if (owned.Contains(component)) continue;
+                    error = nodes[index].Transform.name + " contains "
+                        + component.GetType().Name
+                        + " not owned by this author.";
+                    return false;
+                }
+            }
+            error = string.Empty;
+            return true;
+        }
+
+        static void AddOwned<T>(
+            HashSet<UnityEngine.Object> destination,
+            T[] values) where T : UnityEngine.Object
+        {
+            if (values == null) return;
+            for (int index = 0; index < values.Length; index++)
+                if (values[index]) destination.Add(values[index]);
+        }
+
+        static T FindOwnedAt<T>(T[] values, Transform owner)
+            where T : Component
+        {
+            if (values == null) return null;
+            for (int index = 0; index < values.Length; index++)
+                if (values[index] && values[index].transform == owner)
+                    return values[index];
+            return null;
+        }
+
+        static Collider FindCompatibleOwnedCollider(
+            Collider[] values,
+            Transform owner,
+            RagdollAuthoringColliderShape shape)
+        {
+            if (values == null) return null;
+            Type required = shape == RagdollAuthoringColliderShape.Box
+                ? typeof(BoxCollider)
+                : shape == RagdollAuthoringColliderShape.Sphere
+                    ? typeof(SphereCollider)
+                    : typeof(CapsuleCollider);
+            for (int index = 0; index < values.Length; index++)
+                if (values[index] && values[index].transform == owner
+                    && values[index].GetType() == required)
+                    return values[index];
+            return null;
+        }
+
+        static Action CaptureColliderRollback(Collider value)
+        {
+            BoxCollider box = value as BoxCollider;
+            if (box)
+            {
+                Vector3 center = box.center;
+                Vector3 size = box.size;
+                return () =>
+                {
+                    if (!box) return;
+                    box.center = center;
+                    box.size = size;
+                };
+            }
+            SphereCollider sphere = value as SphereCollider;
+            if (sphere)
+            {
+                Vector3 center = sphere.center;
+                float radius = sphere.radius;
+                return () =>
+                {
+                    if (!sphere) return;
+                    sphere.center = center;
+                    sphere.radius = radius;
+                };
+            }
+            CapsuleCollider capsule = (CapsuleCollider)value;
+            Vector3 capsuleCenter = capsule.center;
+            float capsuleRadius = capsule.radius;
+            float capsuleHeight = capsule.height;
+            int capsuleDirection = capsule.direction;
+            return () =>
+            {
+                if (!capsule) return;
+                capsule.center = capsuleCenter;
+                capsule.radius = capsuleRadius;
+                capsule.height = capsuleHeight;
+                capsule.direction = capsuleDirection;
+            };
+        }
+
+        static Action CaptureJointRollback(ConfigurableJoint joint)
+        {
+            Rigidbody connectedBody = joint.connectedBody;
+            bool preprocessing = joint.enablePreprocessing;
+            JointProjectionMode projection = joint.projectionMode;
+            Vector3 axis = joint.axis;
+            Vector3 secondary = joint.secondaryAxis;
+            ConfigurableJointMotion xMotion = joint.xMotion;
+            ConfigurableJointMotion yMotion = joint.yMotion;
+            ConfigurableJointMotion zMotion = joint.zMotion;
+            ConfigurableJointMotion angularX = joint.angularXMotion;
+            ConfigurableJointMotion angularY = joint.angularYMotion;
+            ConfigurableJointMotion angularZ = joint.angularZMotion;
+            SoftJointLimit lowX = joint.lowAngularXLimit;
+            SoftJointLimit highX = joint.highAngularXLimit;
+            SoftJointLimit yLimit = joint.angularYLimit;
+            SoftJointLimit zLimit = joint.angularZLimit;
+            RotationDriveMode driveMode = joint.rotationDriveMode;
+            return () =>
+            {
+                if (!joint) return;
+                joint.connectedBody = connectedBody;
+                joint.enablePreprocessing = preprocessing;
+                joint.projectionMode = projection;
+                joint.axis = axis;
+                joint.secondaryAxis = secondary;
+                joint.xMotion = xMotion;
+                joint.yMotion = yMotion;
+                joint.zMotion = zMotion;
+                joint.angularXMotion = angularX;
+                joint.angularYMotion = angularY;
+                joint.angularZMotion = angularZ;
+                joint.lowAngularXLimit = lowX;
+                joint.highAngularXLimit = highX;
+                joint.angularYLimit = yLimit;
+                joint.angularZLimit = zLimit;
+                joint.rotationDriveMode = driveMode;
+            };
         }
 
         public static void Clear(RagdollAuthoredRig authoredRig)
@@ -234,6 +518,25 @@ namespace Hairibar.Ragdoll.Animation
             RagdollAuthoringOptions options,
             IObjectFactory factory)
         {
+            Collider collider = AddCollider(node, factory);
+            ConfigureCollider(node, options, collider);
+            return collider;
+        }
+
+        static Collider AddCollider(Node node, IObjectFactory factory)
+        {
+            if (node.Shape == RagdollAuthoringColliderShape.Box)
+                return factory.AddComponent<BoxCollider>(node.Transform.gameObject);
+            if (node.Shape == RagdollAuthoringColliderShape.Sphere)
+                return factory.AddComponent<SphereCollider>(node.Transform.gameObject);
+            return factory.AddComponent<CapsuleCollider>(node.Transform.gameObject);
+        }
+
+        static void ConfigureCollider(
+            Node node,
+            RagdollAuthoringOptions options,
+            Collider value)
+        {
             Vector3 localVector = ResolveLocalSegment(node);
             float length = Mathf.Max(options.minimumColliderSize, localVector.magnitude);
             float overlapLength = Mathf.Max(
@@ -249,28 +552,25 @@ namespace Hairibar.Ragdoll.Animation
 
             if (node.Shape == RagdollAuthoringColliderShape.Box)
             {
-                BoxCollider collider = factory.AddComponent<BoxCollider>(
-                    node.Transform.gameObject);
+                BoxCollider collider = (BoxCollider)value;
                 collider.center = direction * overlapLength * 0.5f;
                 Vector3 size = Vector3.one * (radius * 2f);
                 size[axis] = overlapLength;
                 collider.size = size;
                 node.Volume = Mathf.Max(0.000001f, size.x * size.y * size.z);
-                return collider;
+                return;
             }
             if (node.Shape == RagdollAuthoringColliderShape.Sphere)
             {
-                SphereCollider collider = factory.AddComponent<SphereCollider>(
-                    node.Transform.gameObject);
+                SphereCollider collider = (SphereCollider)value;
                 collider.center = direction * length * 0.25f;
                 collider.radius = Mathf.Max(radius, overlapLength * 0.35f);
                 float r = collider.radius;
                 node.Volume = Mathf.Max(0.000001f, 4f / 3f * Mathf.PI * r * r * r);
-                return collider;
+                return;
             }
 
-            CapsuleCollider capsule = factory.AddComponent<CapsuleCollider>(
-                node.Transform.gameObject);
+            CapsuleCollider capsule = (CapsuleCollider)value;
             capsule.direction = axis;
             capsule.center = direction * overlapLength * 0.5f;
             capsule.radius = radius;
@@ -280,7 +580,6 @@ namespace Hairibar.Ragdoll.Animation
                 0.000001f,
                 Mathf.PI * radius * radius * cylinderHeight
                 + 4f / 3f * Mathf.PI * radius * radius * radius);
-            return capsule;
         }
 
         static void CreateJoint(
@@ -290,6 +589,14 @@ namespace Hairibar.Ragdoll.Animation
             IObjectFactory factory)
         {
             node.Joint = RequireAbsent<ConfigurableJoint>(node.Transform, factory);
+            ConfigureJoint(node, nodes, options);
+        }
+
+        static void ConfigureJoint(
+            Node node,
+            List<Node> nodes,
+            RagdollAuthoringOptions options)
+        {
             Node parent = FindNearestParent(node, nodes);
             node.Joint.connectedBody = parent != null ? parent.Body : null;
             node.Joint.enablePreprocessing = options.enablePreprocessing;

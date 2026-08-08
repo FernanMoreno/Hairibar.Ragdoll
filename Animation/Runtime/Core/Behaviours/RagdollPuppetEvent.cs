@@ -1,9 +1,34 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Events;
 
 namespace Hairibar.Ragdoll.Animation
 {
+    public readonly struct RagdollPuppetEventInvocationResult
+    {
+        readonly Exception[] failures;
+
+        internal RagdollPuppetEventInvocationResult(List<Exception> failures)
+        {
+            this.failures = failures == null || failures.Count == 0
+                ? Array.Empty<Exception>()
+                : failures.ToArray();
+        }
+
+        public bool Succeeded => failures == null || failures.Length == 0;
+        public IReadOnlyList<Exception> Failures =>
+            failures ?? Array.Empty<Exception>();
+
+        public void ThrowIfFailed()
+        {
+            if (!Succeeded)
+                throw new AggregateException(
+                    "One or more RagdollPuppetEvent actions failed.",
+                    failures);
+        }
+    }
+
     /// <summary>
     /// Serializable Animator action used by <see cref="RagdollPuppetEvent"/>.
     /// It mirrors PuppetMaster's documented AnimatorEvent contract without relying
@@ -97,27 +122,56 @@ namespace Hairibar.Ragdoll.Animation
         /// <summary>Executes every configured action in serialized order.</summary>
         public void Invoke(RagdollBehaviourBase source)
         {
+            InvokeWithDiagnostics(source).ThrowIfFailed();
+        }
+
+        /// <summary>
+        /// Executes all independently addressable actions and returns every failure.
+        /// Unity exposes a serialized UnityEvent only as one invocation unit, so a
+        /// listener that aborts that unit is reported explicitly instead of hidden.
+        /// </summary>
+        public RagdollPuppetEventInvocationResult InvokeWithDiagnostics(
+            RagdollBehaviourBase source)
+        {
+            List<Exception> failures = null;
             RagdollBehaviourController controller = source
                 ? source.Controller
                 : null;
 
             if (controller && !string.IsNullOrEmpty(switchToBehaviour))
             {
-                controller.ActivateByExactTypeName(switchToBehaviour);
+                string behaviourType = switchToBehaviour;
+                TryInvoke(
+                    () => controller.ActivateByExactTypeName(behaviourType),
+                    ref failures);
             }
 
             Animator animator = controller && controller.Context != null
-                ? controller.Context.Animator.GetComponent<Animator>()
+                ? controller.Context.Animator.TargetAnimator
                 : null;
             if (animations != null)
             {
                 for (int index = 0; index < animations.Length; index++)
                 {
-                    animations[index]?.Invoke(animator);
+                    RagdollAnimatorEvent animation = animations[index];
+                    if (animation == null) continue;
+                    TryInvoke(() => animation.Invoke(animator), ref failures);
                 }
             }
 
-            unityEvent?.Invoke();
+            if (unityEvent != null)
+                TryInvoke(unityEvent.Invoke, ref failures);
+            return new RagdollPuppetEventInvocationResult(failures);
+        }
+
+        static void TryInvoke(Action action, ref List<Exception> failures)
+        {
+            try { action(); }
+            catch (Exception exception)
+            {
+                if (failures == null) failures = new List<Exception>();
+                failures.Add(exception);
+            }
         }
     }
 }

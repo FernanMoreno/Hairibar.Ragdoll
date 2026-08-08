@@ -97,8 +97,15 @@ namespace Hairibar.Ragdoll.Animation
         public event Action<RagdollBaker, string, AnimationClip> SegmentStarted;
         public event Action<RagdollBaker, float> SampleRequested;
         public event Action<RagdollBaker, string, AnimationClip> SegmentFinished;
+        public event Action<RagdollBaker, string, AnimationClip> SegmentCanceled;
         public event Action<RagdollBaker> BakingFinished;
         public event Action<RagdollBaker, RagdollBakerResult> BakingCompleted;
+
+        // The recording backend must commit before the public completion result is
+        // published. Returning an error keeps runtime code independent from
+        // UnityEditor while allowing the Editor recorder to make an asset
+        // transaction part of the Baker's observable result.
+        internal event Func<RagdollBaker, string> RecordingCommitRequested;
 
         public bool StartBaking(out string error)
         {
@@ -149,6 +156,16 @@ namespace Hairibar.Ragdoll.Animation
         }
 
         public void StopBaking()
+        {
+            if (!IsBaking) return;
+            CompleteBaking(RagdollBakerCompletionStatus.Succeeded, string.Empty);
+        }
+
+        /// <summary>
+        /// Aborts the active bake. Use <see cref="StopBaking"/> to finish and
+        /// commit a recording normally.
+        /// </summary>
+        public void CancelBaking()
         {
             if (!IsBaking) return;
             CompleteBaking(RagdollBakerCompletionStatus.Canceled, string.Empty);
@@ -435,6 +452,18 @@ namespace Hairibar.Ragdoll.Animation
             activeSourceClip = null;
         }
 
+        void CancelSegment()
+        {
+            if (!segmentActive) return;
+            string name = activeSegmentName;
+            AnimationClip source = activeSourceClip;
+            segmentActive = false;
+            activeSegmentName = null;
+            activeSourceClip = null;
+            realtimeElapsedSinceSample = 0f;
+            SegmentCanceled?.Invoke(this, name, source);
+        }
+
         bool ValidateConfiguration(out string error)
         {
             if (!RecordingRoot)
@@ -600,7 +629,16 @@ namespace Hairibar.Ragdoll.Animation
             catch (Exception exception) { cleanupFailures.Add(exception); }
             try { DestroyActiveGraph(); }
             catch (Exception exception) { cleanupFailures.Add(exception); }
-            try { if (segmentActive) EndSegment(); }
+            try
+            {
+                if (segmentActive)
+                {
+                    if (status == RagdollBakerCompletionStatus.Succeeded)
+                        EndSegment();
+                    else
+                        CancelSegment();
+                }
+            }
             catch (Exception exception) { cleanupFailures.Add(exception); }
             IsBaking = false;
             if (cleanupFailures.Count > 0)
@@ -613,12 +651,46 @@ namespace Hairibar.Ragdoll.Animation
                     ? cleanupError
                     : error + " " + cleanupError;
             }
+            if (status == RagdollBakerCompletionStatus.Succeeded)
+            {
+                List<Exception> commitFailures = InvokeRecordingCommit();
+                if (commitFailures.Count > 0)
+                {
+                    status = RagdollBakerCompletionStatus.Failed;
+                    string commitError = new AggregateException(
+                        "Baker recording commit failed.",
+                        commitFailures).Message;
+                    error = string.IsNullOrEmpty(error)
+                        ? commitError
+                        : error + " " + commitError;
+                }
+            }
             LastResult = new RagdollBakerResult(
                 status,
                 error,
                 completedSegments);
             InvokeCompletionSafely(BakingCompleted, LastResult);
             InvokeFinishedSafely(BakingFinished);
+        }
+
+        List<Exception> InvokeRecordingCommit()
+        {
+            List<Exception> failures = new List<Exception>();
+            Delegate[] subscribers = RecordingCommitRequested
+                ?.GetInvocationList();
+            if (subscribers == null) return failures;
+            for (int index = 0; index < subscribers.Length; index++)
+            {
+                try
+                {
+                    string commitError =
+                        ((Func<RagdollBaker, string>)subscribers[index])(this);
+                    if (!string.IsNullOrWhiteSpace(commitError))
+                        failures.Add(new InvalidOperationException(commitError));
+                }
+                catch (Exception exception) { failures.Add(exception); }
+            }
+            return failures;
         }
 
         void InvokeCompletionSafely(
@@ -693,7 +765,12 @@ namespace Hairibar.Ragdoll.Animation
 
         void OnDisable()
         {
-            StopBaking();
+            CancelBaking();
+        }
+
+        void OnDestroy()
+        {
+            CancelBaking();
         }
     }
 }

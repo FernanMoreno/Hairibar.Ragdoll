@@ -8,7 +8,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
     public sealed class RagdollPropMeleePlayModeTests
     {
         [UnityTest]
-        public IEnumerator ActionCollider_ProducesPhysicsContactOnlyWhenEnabled()
+        public IEnumerator HeldCapsule_ProducesContactAndRemainsAfterAction()
         {
             GameObject propObject = new GameObject("Melee Physics Prop");
             GameObject wall = new GameObject("Melee Physics Wall");
@@ -37,7 +37,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 wall.transform.position = propObject.transform.position;
                 Physics.SyncTransforms();
                 yield return new WaitForFixedUpdate();
-                Assert.That(counter.EnterCount, Is.EqualTo(0));
+                Assert.That(counter.EnterCount, Is.GreaterThan(0));
 
                 Assert.That(melee.BeginActionForTesting(), Is.True);
                 body.WakeUp();
@@ -48,7 +48,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 Assert.That(counter.EnterCount, Is.GreaterThan(0));
                 Assert.That(melee.ActionCollider.enabled, Is.True);
                 melee.EndAction();
-                Assert.That(melee.ActionCollider.enabled, Is.False);
+                Assert.That(melee.ActionCollider.enabled, Is.True);
             }
             finally
             {

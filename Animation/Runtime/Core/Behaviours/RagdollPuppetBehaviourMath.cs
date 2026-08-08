@@ -81,8 +81,11 @@ namespace Hairibar.Ragdoll.Animation
                 return false;
             }
 
+            // BehaviourPuppet documents knockout only when pin weight is
+            // "less than" Pin Weight Threshold. Equality therefore remains
+            // balanced; this boundary is intentionally strict.
             return Mathf.Clamp01(effectivePinWeight)
-                <= Mathf.Clamp01(pinWeightThreshold);
+                < Mathf.Clamp01(pinWeightThreshold);
         }
 
         internal static float ResolveGetUpStateMultiplier(

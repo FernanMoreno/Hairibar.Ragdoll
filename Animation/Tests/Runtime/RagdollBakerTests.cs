@@ -35,6 +35,121 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 Assert.That(baker.IsBaking, Is.False);
                 Assert.That(
                     baker.LastResult.Status,
+                    Is.EqualTo(RagdollBakerCompletionStatus.Succeeded));
+                Assert.That(baker.LastResult.CompletedSegments, Is.EqualTo(1));
+            }
+            finally
+            {
+                Object.DestroyImmediate(root);
+            }
+        }
+
+        [Test]
+        public void Realtime_CancelReportsCanceledAndCleansActiveSegment()
+        {
+            GameObject root = new GameObject("Canceled Baker");
+            try
+            {
+                RagdollGenericBaker baker = root.AddComponent<RagdollGenericBaker>();
+                baker.mode = RagdollBakerMode.Realtime;
+                int finished = 0;
+                int canceled = 0;
+                baker.SegmentFinished += (source, name, clip) => finished++;
+                baker.SegmentCanceled += (source, name, clip) => canceled++;
+
+                string error;
+                Assert.That(baker.StartBaking(out error), Is.True, error);
+                baker.CancelBaking();
+
+                Assert.That(baker.IsBaking, Is.False);
+                Assert.That(baker.IsSegmentActive, Is.False);
+                Assert.That(
+                    baker.LastResult.Status,
+                    Is.EqualTo(RagdollBakerCompletionStatus.Canceled));
+                Assert.That(baker.LastResult.CompletedSegments, Is.Zero);
+                Assert.That(finished, Is.Zero);
+                Assert.That(canceled, Is.EqualTo(1));
+            }
+            finally
+            {
+                Object.DestroyImmediate(root);
+            }
+        }
+
+        [Test]
+        public void RecordingCommitFailure_IsPublishedAsFailedBeforeCompletion()
+        {
+            GameObject root = new GameObject("Failed commit Baker");
+            try
+            {
+                RagdollGenericBaker baker = root.AddComponent<RagdollGenericBaker>();
+                baker.mode = RagdollBakerMode.Realtime;
+                RagdollBakerResult observed = default;
+                int commitRequests = 0;
+                baker.RecordingCommitRequested += source =>
+                {
+                    commitRequests++;
+                    return "Synthetic destination commit failure.";
+                };
+                baker.BakingCompleted += (source, result) => observed = result;
+
+                string error;
+                Assert.That(baker.StartBaking(out error), Is.True, error);
+                baker.StopBaking();
+
+                Assert.That(commitRequests, Is.EqualTo(1));
+                Assert.That(baker.LastResult.Status,
+                    Is.EqualTo(RagdollBakerCompletionStatus.Failed));
+                Assert.That(observed.Status,
+                    Is.EqualTo(RagdollBakerCompletionStatus.Failed));
+                Assert.That(observed.Error, Does.Contain("Synthetic"));
+                Assert.That(observed.CompletedSegments, Is.EqualTo(1));
+            }
+            finally { Object.DestroyImmediate(root); }
+        }
+
+        [Test]
+        public void Cancellation_DoesNotRequestDestinationCommit()
+        {
+            GameObject root = new GameObject("Canceled commit Baker");
+            try
+            {
+                RagdollGenericBaker baker = root.AddComponent<RagdollGenericBaker>();
+                baker.mode = RagdollBakerMode.Realtime;
+                int commitRequests = 0;
+                baker.RecordingCommitRequested += source =>
+                {
+                    commitRequests++;
+                    return string.Empty;
+                };
+
+                string error;
+                Assert.That(baker.StartBaking(out error), Is.True, error);
+                baker.CancelBaking();
+
+                Assert.That(commitRequests, Is.Zero);
+                Assert.That(baker.LastResult.Status,
+                    Is.EqualTo(RagdollBakerCompletionStatus.Canceled));
+            }
+            finally { Object.DestroyImmediate(root); }
+        }
+
+        [Test]
+        public void Realtime_DisableCancelsInsteadOfCommittingRecording()
+        {
+            GameObject root = new GameObject("Disabled Baker");
+            try
+            {
+                RagdollGenericBaker baker = root.AddComponent<RagdollGenericBaker>();
+                baker.mode = RagdollBakerMode.Realtime;
+
+                string error;
+                Assert.That(baker.StartBaking(out error), Is.True, error);
+                baker.enabled = false;
+
+                Assert.That(baker.IsBaking, Is.False);
+                Assert.That(
+                    baker.LastResult.Status,
                     Is.EqualTo(RagdollBakerCompletionStatus.Canceled));
             }
             finally
@@ -75,6 +190,39 @@ namespace Hairibar.Ragdoll.Animation.Tests
             {
                 Object.DestroyImmediate(root);
             }
+        }
+
+        [Test]
+        public void RealtimeSamplingPath_DoesNotAllocateAfterWarmup()
+        {
+            GameObject root = new GameObject("Allocation-free realtime Baker");
+            try
+            {
+                RagdollGenericBaker baker = root.AddComponent<RagdollGenericBaker>();
+                baker.mode = RagdollBakerMode.Realtime;
+                baker.frameRate = 60;
+                baker.SampleRequested += IgnoreSample;
+                string error;
+                Assert.That(baker.StartBaking(out error), Is.True, error);
+
+                for (int index = 0; index < 32; index++)
+                    baker.AdvanceRealtimeSampling(1f / 60f);
+
+                long before = System.GC.GetAllocatedBytesForCurrentThread();
+                for (int index = 0; index < 4096; index++)
+                    baker.AdvanceRealtimeSampling(1f / 60f);
+                long allocated = System.GC.GetAllocatedBytesForCurrentThread()
+                    - before;
+
+                baker.StopBaking();
+                Assert.That(allocated, Is.Zero,
+                    "The Baker sampling/event path allocated after warm-up.");
+            }
+            finally { Object.DestroyImmediate(root); }
+        }
+
+        static void IgnoreSample(RagdollBaker source, float deltaTime)
+        {
         }
 
         [Test]
