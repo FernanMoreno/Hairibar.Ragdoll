@@ -1,0 +1,18 @@
+{
+    "name": "Hairibar.Ragdoll.RagdollLab.Tests",
+    "references": [
+        "Hairibar.Ragdoll.RagdollLab"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false,
+    "optionalUnityReferences": [
+        "TestAssemblies"
+    ]
+}

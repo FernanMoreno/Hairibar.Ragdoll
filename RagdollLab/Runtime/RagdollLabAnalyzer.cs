@@ -1,0 +1,112 @@
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+
+namespace Hairibar.Ragdoll.RagdollLab
+{
+    public static class RagdollLabAnalyzer
+    {
+        public static ScenarioReport Analyze(IReadOnlyList<PhysicsFrame> frames, float characterHeight, float totalMass, float gravity)
+        {
+            var report = new ScenarioReport { name = "Captured", frameCount = frames?.Count ?? 0 };
+            if (frames == null || frames.Count == 0) return report;
+            report.durationSeconds = (frames.Count - 1) * frames[0].fixedDeltaTime;
+            var energy = new List<float>(); var comSpeed = new List<float>(); var impulses = new List<float>(); var penetration = new List<float>();
+            int fallenFrames = 0; int firstFall = -1, recovered = -1;
+            int contactTransitions = 0, shortContacts = 0;
+            var footSlip = new List<float>();
+            for (int i = 0; i < frames.Count; i++)
+            {
+                PhysicsFrame frame = frames[i];
+                energy.Add(frame.character != null ? frame.character.kineticEnergy : 0f);
+                comSpeed.Add(frame.character != null ? frame.character.centerOfMassVelocity.ToVector3().magnitude : 0f);
+                bool fallen = frame.character != null && (frame.character.likelyFallen || RagdollLabMath.IsLikelyFallen(frame.character.centerOfMass.ToVector3(), Quaternion.identity, frame.character.supportContactCount));
+                if (fallen) { fallenFrames++; if (firstFall < 0) firstFall = i; }
+                else if (firstFall >= 0 && recovered < 0) recovered = i;
+                if (frame.feet != null) for (int f = 0; f < frame.feet.Length; f++) footSlip.Add(frame.feet[f].tangentialSlipSpeed);
+                if (frame.contacts != null) for (int j = 0; j < frame.contacts.Length; j++)
+                {
+                    ContactTelemetry contact = frame.contacts[j];
+                    impulses.Add(contact.impulseMagnitude); penetration.Add(contact.penetrationDepth);
+                    if (contact.contactStart || contact.contactEnd) contactTransitions++;
+                    if (contact.contactEnd && frame.simulationTime < 0.1f) shortContacts++;
+                }
+            }
+            report.kineticEnergy = Summary("KineticEnergy", "J", energy, 1f, "RigidBody velocities + principal-axis inertia", "system motion energy");
+            report.centerOfMassSpeed = Summary("CenterOfMassSpeed", "m/s", comSpeed, 1f, "mass-weighted body COM", "global balance motion");
+            report.contactImpulse = Summary("ContactImpulse", "N*s", impulses, 1f, "Collision ContactPoint.impulse", "impact/contact load");
+            report.penetration = Summary("PenetrationDepth", "m", penetration, Mathf.Max(characterHeight, 0.001f), "collision penetration telemetry", "constraint/collision integrity");
+            report.footSlipSpeed = Summary("FootSlipSpeed", "m/s", footSlip, 1f, "foot Rigidbody horizontal velocity while stance", "foot sliding");
+            report.dominantFrequencyHz = RagdollLabMath.DominantFrequencyDft(comSpeed, 1f / Mathf.Max(frames[0].fixedDeltaTime, 0.0001f));
+            report.fallenFrameCount = fallenFrames;
+            report.recoveryTimeSeconds = firstFall >= 0 && recovered >= 0 ? (recovered - firstFall) * frames[0].fixedDeltaTime : 0f;
+            report.contactTransitionsPerSecond = contactTransitions / Mathf.Max(report.durationSeconds, frames[0].fixedDeltaTime);
+            report.shortContactCount = shortContacts;
+
+            int jointCount = frames[0].joints?.Length ?? 0;
+            var joints = new JointReport[jointCount];
+            for (int j = 0; j < jointCount; j++)
+            {
+                JointTelemetry first = frames[0].joints[j];
+                var anchors = new List<float>(); var forces = new List<float>(); var torques = new List<float>(); var tracking = new List<float>(); var signal = new List<float>();
+                for (int i = 0; i < frames.Count; i++)
+                {
+                    JointTelemetry sample = frames[i].joints[j]; anchors.Add(sample.anchorError); forces.Add(sample.currentForce.ToVector3().magnitude); torques.Add(sample.currentTorque.ToVector3().magnitude); signal.Add(sample.relativeAngularSpeed);
+                    if (frames[i].targetPoses != null) for (int p = 0; p < frames[i].targetPoses.Length; p++) tracking.Add(frames[i].targetPoses[p].targetPhysicsAngularError);
+                }
+                float dt = frames[0].fixedDeltaTime, norm = Mathf.Max(totalMass * gravity, 0.001f);
+                joints[j] = new JointReport { id = first.id, name = first.name,
+                    anchorError = Summary("AnchorError", "m", anchors, Mathf.Max(characterHeight, 0.001f), "world anchor distance", "constraint drift"),
+                    force = Summary("JointForce", "N", forces, norm, "ConfigurableJoint.currentForce", "constraint effort"),
+                    torque = Summary("JointTorque", "N*m", torques, Mathf.Max(norm * characterHeight, 0.001f), "ConfigurableJoint.currentTorque", "constraint effort"),
+                    angularTrackingError = Summary("AngularTrackingError", "deg", tracking, 1f, "Quaternion.Angle(target, physics)", "pose tracking"),
+                    oscillationZeroCrossings = RagdollLabMath.ZeroCrossings(signal, 0.001f),
+                    dominantFrequencyHz = RagdollLabMath.DominantFrequencyByZeroCrossings(signal, 1f / Mathf.Max(dt, 0.0001f), 0.001f),
+                    settlingTimeSeconds = RagdollLabMath.SettlingTime(signal, dt, 0f, 0.05f) };
+            }
+            report.joints = joints;
+            var offenders = new List<JointReport>(joints);
+            offenders.Sort((a, b) => (b.torque?.p95 ?? 0f).CompareTo(a.torque?.p95 ?? 0f));
+            int offenderCount = Mathf.Min(5, offenders.Count); report.topOffenderIds = new string[offenderCount];
+            for (int i = 0; i < offenderCount; i++) report.topOffenderIds[i] = offenders[i].id;
+            return report;
+        }
+
+        public static DiagnosticsReport Diagnose(ScenarioReport report, RagdollLabThresholds thresholds = null)
+        {
+            thresholds ??= ScriptableObject.CreateInstance<RagdollLabThresholds>();
+            var result = new DiagnosticsReport();
+            if (report?.joints == null) return result;
+            for (int i = 0; i < report.joints.Length; i++)
+            {
+                JointReport joint = report.joints[i];
+                if (joint.anchorError.p95 > thresholds.anchorErrorWarningMeters)
+                    Add(result, "AnchorDrift", "high", "0.85", joint.name, "anchor p95 exceeds threshold", "constraint anchor or solver instability", joint.anchorError, joint.anchorError.p95, 0, 0);
+                if (joint.torque.p95 > thresholds.torqueSpikeWarning)
+                    Add(result, "HighJointTorque", "medium", "0.70", joint.name, "torque p95 exceeds threshold", "overcontrol, collision load, or effective inertia", joint.torque, joint.torque.p95, 0, 0);
+                if (joint.oscillationZeroCrossings >= thresholds.oscillationWarningCrossings && joint.dominantFrequencyHz >= thresholds.oscillationWarningHz)
+                    Add(result, "Oscillation", "medium", "0.72", joint.name, "repeated angular velocity zero crossings", "possibly underdamped response", null, joint.dominantFrequencyHz, 0, joint.oscillationZeroCrossings);
+                if (joint.angularTrackingError != null && joint.angularTrackingError.mean > thresholds.trackingWarningDegrees)
+                    Add(result, "TrackingError", "medium", "0.65", joint.name, "mean target-to-physics angular error high", "insufficient drive, collision, or mapping mismatch", joint.angularTrackingError, joint.angularTrackingError.mean, 0, 0);
+            }
+            return result;
+        }
+
+        static void Add(DiagnosticsReport report, string type, string severity, string confidence, string subject, string observation, string hypothesis, MetricSummary metric, float peak, int first, int count)
+        {
+            report.diagnostics.Add(new DiagnosticEvidence { type = type, severity = severity, confidence = confidence, subject = subject,
+                scenario = "Captured", observation = observation, hypothesis = hypothesis,
+                metrics = metric == null ? new[] { peak.ToString("R") } : new[] { metric.name + ".p95=" + metric.p95.ToString("R"), metric.unit }, firstFrame = first, peakFrame = count });
+        }
+
+        static MetricSummary Summary(string name, string unit, List<float> values, float divisor, string source, string interpretation)
+        {
+            if (values == null || values.Count == 0) return new MetricSummary { name = name, unit = unit, source = source, interpretation = interpretation };
+            float safe = Mathf.Max(divisor, 0.000001f);
+            return new MetricSummary { name = name, unit = unit, source = source, interpretation = interpretation, count = values.Count,
+                current = values[values.Count - 1], mean = Mean(values), rms = RagdollLabMath.Rms(values), p95 = RagdollLabMath.Percentile(values, 0.95f), max = Max(values), normalizedMean = Mean(values) / safe };
+        }
+        static float Mean(List<float> values) { double sum = 0; for (int i = 0; i < values.Count; i++) sum += values[i]; return (float)(sum / values.Count); }
+        static float Max(List<float> values) { float max = float.MinValue; for (int i = 0; i < values.Count; i++) max = Mathf.Max(max, values[i]); return max; }
+    }
+}
