@@ -126,8 +126,9 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 "Connected Body", joint.connectedBody, typeof(Rigidbody), true);
             if (connected != joint.connectedBody)
             {
-                Undo.RecordObject(joint, "Change connected body");
-                joint.connectedBody = connected;
+                string error;
+                if (!TrySetSelectedConnectedBody(connected, out error))
+                    UnityEngine.Debug.LogError(error, joint);
             }
 
             DrawJointLimitsAndProjection(joint);
@@ -305,11 +306,176 @@ namespace Hairibar.Ragdoll.Animation.Editor
             Quaternion changed = Handles.RotationHandle(world, selected.transform.position);
             if (!EditorGUI.EndChangeCheck()) return;
 
-            Undo.RecordObject(selected, "Rotate joint axes");
             Quaternion changedLocal = Quaternion.Inverse(selected.transform.rotation) * changed;
-            selected.axis = changedLocal * Vector3.right;
-            selected.secondaryAxis = changedLocal * Vector3.up;
-            if (symmetry) MirrorSelectedJoint();
+            string error;
+            if (!TrySetSelectedJointAxes(
+                changedLocal * Vector3.right,
+                changedLocal * Vector3.up,
+                out error))
+            {
+                UnityEngine.Debug.LogError(error, selected);
+            }
+        }
+
+        /// <summary>
+        /// Validates and applies the two local vectors that define a
+        /// ConfigurableJoint frame. Validation happens before Undo records or
+        /// authored components are changed, so rejected editor input cannot
+        /// partially mutate the rig.
+        /// </summary>
+        internal bool TrySetSelectedJointAxes(
+            Vector3 axis,
+            Vector3 secondaryAxis,
+            out string error)
+        {
+            ConfigurableJoint[] joints = Rig.Joints;
+            if (selectedJoint < 0 || selectedJoint >= joints.Length
+                || !joints[selectedJoint])
+            {
+                error = "No authored ConfigurableJoint is selected.";
+                return false;
+            }
+            Vector3 normalizedAxis;
+            Vector3 normalizedSecondary;
+            if (!TryNormalizeJointAxes(axis, secondaryAxis,
+                out normalizedAxis, out normalizedSecondary, out error))
+                return false;
+
+            ConfigurableJoint selected = joints[selectedJoint];
+            Undo.IncrementCurrentGroup();
+            int group = Undo.GetCurrentGroup();
+            Undo.SetCurrentGroupName("Rotate joint axes");
+            try
+            {
+                Undo.RecordObject(selected, "Rotate joint axes");
+                selected.axis = normalizedAxis;
+                selected.secondaryAxis = normalizedSecondary;
+                EditorUtility.SetDirty(selected);
+                if (symmetry) MirrorSelectedJoint();
+                Undo.CollapseUndoOperations(group);
+                error = string.Empty;
+                return true;
+            }
+            catch (System.Exception exception)
+            {
+                Undo.RevertAllDownToGroup(group);
+                error = "Joint axes were not changed: " + exception.Message;
+                return false;
+            }
+        }
+
+        internal bool TrySetSelectedConnectedBody(
+            Rigidbody connectedBody,
+            out string error)
+        {
+            ConfigurableJoint[] joints = Rig.Joints;
+            if (selectedJoint < 0 || selectedJoint >= joints.Length
+                || !joints[selectedJoint])
+            {
+                error = "No authored ConfigurableJoint is selected.";
+                return false;
+            }
+            ConfigurableJoint joint = joints[selectedJoint];
+            Rigidbody ownBody = joint.GetComponent<Rigidbody>();
+            if (connectedBody == ownBody)
+            {
+                error = "A ConfigurableJoint cannot connect to its own Rigidbody.";
+                return false;
+            }
+            if (connectedBody && !System.Array.Exists(
+                Rig.Rigidbodies, body => body == connectedBody))
+            {
+                error = "The connectedBody must belong to the authored ragdoll.";
+                return false;
+            }
+
+            Undo.RecordObject(joint, "Change connected body");
+            joint.connectedBody = connectedBody;
+            EditorUtility.SetDirty(joint);
+            error = string.Empty;
+            return true;
+        }
+
+        internal bool TryApplySymmetricEdit(
+            Vector3 center,
+            Vector3 size,
+            Vector3 axis,
+            Vector3 secondaryAxis,
+            float lowAngularX,
+            float highAngularX,
+            float angularY,
+            float angularZ,
+            out string error)
+        {
+            Collider[] colliders = Rig.Colliders;
+            ConfigurableJoint[] joints = Rig.Joints;
+            if (selectedCollider < 0 || selectedCollider >= colliders.Length
+                || !colliders[selectedCollider]
+                || selectedJoint < 0 || selectedJoint >= joints.Length
+                || !joints[selectedJoint])
+            {
+                error = "An authored collider and joint must be selected.";
+                return false;
+            }
+            Collider sourceCollider = colliders[selectedCollider];
+            ConfigurableJoint sourceJoint = joints[selectedJoint];
+            Collider mirrorCollider = FindMirror(sourceCollider, colliders);
+            ConfigurableJoint mirrorJoint = FindMirror(sourceJoint, joints);
+            if (!mirrorCollider || mirrorCollider.GetType() != sourceCollider.GetType()
+                || !mirrorJoint)
+            {
+                error = "A compatible symmetric collider and joint are required.";
+                return false;
+            }
+            if (!IsFinite(center) || !IsFinite(size)
+                || size.x <= 0f || size.y <= 0f || size.z <= 0f)
+            {
+                error = "Collider center and strictly positive size must be finite.";
+                return false;
+            }
+            Vector3 normalizedAxis;
+            Vector3 normalizedSecondary;
+            if (!TryNormalizeJointAxes(axis, secondaryAxis,
+                out normalizedAxis, out normalizedSecondary, out error))
+                return false;
+            if (!IsFinite(lowAngularX) || !IsFinite(highAngularX)
+                || !IsFinite(angularY) || !IsFinite(angularZ)
+                || lowAngularX > 0f || highAngularX < 0f
+                || angularY < 0f || angularZ < 0f)
+            {
+                error = "Joint limits are outside the supported angular ranges.";
+                return false;
+            }
+
+            Undo.IncrementCurrentGroup();
+            int group = Undo.GetCurrentGroup();
+            Undo.SetCurrentGroupName("Edit symmetric authored ragdoll");
+            try
+            {
+                Undo.RecordObjects(new UnityEngine.Object[]
+                {
+                    sourceCollider, mirrorCollider, sourceJoint, mirrorJoint
+                }, "Edit symmetric authored ragdoll");
+                SetCenter(sourceCollider, center);
+                SetColliderSize(sourceCollider, size);
+                sourceJoint.axis = normalizedAxis;
+                sourceJoint.secondaryAxis = normalizedSecondary;
+                SetJointLimits(sourceJoint, lowAngularX, highAngularX,
+                    angularY, angularZ);
+                MirrorCollider(sourceCollider);
+                MirrorSelectedJoint();
+                EditorUtility.SetDirty(sourceCollider);
+                EditorUtility.SetDirty(sourceJoint);
+                Undo.CollapseUndoOperations(group);
+                error = string.Empty;
+                return true;
+            }
+            catch (System.Exception exception)
+            {
+                Undo.RevertAllDownToGroup(group);
+                error = "Symmetric edit was not applied: " + exception.Message;
+                return false;
+            }
         }
 
         void SetKinematic(bool value)
@@ -574,6 +740,74 @@ namespace Hairibar.Ragdoll.Animation.Editor
         {
             if (value.x >= value.y && value.x >= value.z) return 0;
             return value.y >= value.z ? 1 : 2;
+        }
+
+        static bool IsFinite(Vector3 value)
+        {
+            return !float.IsNaN(value.x) && !float.IsInfinity(value.x)
+                && !float.IsNaN(value.y) && !float.IsInfinity(value.y)
+                && !float.IsNaN(value.z) && !float.IsInfinity(value.z);
+        }
+
+        static bool IsFinite(float value)
+        {
+            return !float.IsNaN(value) && !float.IsInfinity(value);
+        }
+
+        static bool TryNormalizeJointAxes(
+            Vector3 axis,
+            Vector3 secondaryAxis,
+            out Vector3 normalizedAxis,
+            out Vector3 normalizedSecondary,
+            out string error)
+        {
+            normalizedAxis = Vector3.right;
+            normalizedSecondary = Vector3.up;
+            if (!IsFinite(axis) || !IsFinite(secondaryAxis))
+            {
+                error = "Joint axes must contain finite values.";
+                return false;
+            }
+            const float minimumSqrMagnitude = 0.00000001f;
+            if (axis.sqrMagnitude <= minimumSqrMagnitude
+                || secondaryAxis.sqrMagnitude <= minimumSqrMagnitude)
+            {
+                error = "Joint axes must be non-zero vectors.";
+                return false;
+            }
+
+            normalizedAxis = axis.normalized;
+            Vector3 orthogonalSecondary = secondaryAxis
+                - Vector3.Project(secondaryAxis, normalizedAxis);
+            if (orthogonalSecondary.sqrMagnitude <= minimumSqrMagnitude)
+            {
+                error = "Joint axis and secondary axis must not be parallel.";
+                return false;
+            }
+            normalizedSecondary = orthogonalSecondary.normalized;
+            error = string.Empty;
+            return true;
+        }
+
+        static void SetJointLimits(
+            ConfigurableJoint joint,
+            float lowAngularX,
+            float highAngularX,
+            float angularY,
+            float angularZ)
+        {
+            SoftJointLimit limit = joint.lowAngularXLimit;
+            limit.limit = lowAngularX;
+            joint.lowAngularXLimit = limit;
+            limit = joint.highAngularXLimit;
+            limit.limit = highAngularX;
+            joint.highAngularXLimit = limit;
+            limit = joint.angularYLimit;
+            limit.limit = angularY;
+            joint.angularYLimit = limit;
+            limit = joint.angularZLimit;
+            limit.limit = angularZ;
+            joint.angularZLimit = limit;
         }
     }
 }

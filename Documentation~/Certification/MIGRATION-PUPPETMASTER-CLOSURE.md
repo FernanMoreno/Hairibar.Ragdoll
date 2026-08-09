@@ -5,12 +5,25 @@ documentation defines only the observable capability targets; Unity 6 documentat
 defines Animator, Humanoid, PhysX, build and profiling mechanics. Any behavior not
 specified by those sources is identified here as **diseño propio Hairibar**.
 
+Normative public references:
+
+- RootMotion PuppetMaster pages and class reference:
+  http://www.root-motion.com/puppetmasterdox/html/pages.html
+- Unity 6 scripting and engine contracts: https://docs.unity3d.com/6000.0/
+
 ## Master authority
 
 Use `MasterMappingWeight`, `MasterPinWeight`, `MasterMuscleWeight` and
 `MasterMuscleDamper` as independent controls. The obsolete `MasterAlpha` alias writes
 pin and muscle together so old serialized scenes retain their previous behavior.
 Invalid numeric values are resolved at the application boundary.
+`MasterMuscleDamper` is the absolute documented joint-drive damper;
+`MasterMuscleDamperMultiplier` is the Hairibar compatibility multiplier. Use
+`SetMuscleWeights` for the PuppetMaster-compatible argument order. The older
+`SetAuthorityWeights` remains a Hairibar compatibility API.
+Renamed serialized fields retain their previous scene and prefab data through
+Unity's `FormerlySerializedAs` migration metadata; split-semantics fields use an
+explicit serialized version before the compatibility value is applied.
 
 ## Lifecycle and animation
 
@@ -23,6 +36,13 @@ For scripted physics call `PrepareManualSimulation(deltaTime)`, then
 `Physics.Simulate(deltaTime)`, then `CompleteManualSimulation()`. Invalid or duplicate
 ordering throws. `Respawn(position, rotation)` restores lifecycle, physics, surfaces,
 props and temporary boosts transactionally.
+
+`RagdollPuppetBehaviour.State` can explicitly select Puppet, Unpinned or GetUp.
+`RagdollAnimator.Mode`, `IsActive`, `IsBlending`,
+`IsSwitchingMode` and `Initiated` are the compatibility facade over Hairibar's
+simulation controller. `SetColliderSurfaceState` applies the authored pinned or
+unpinned collider surface. `OnCollision` aliases observed muscle collisions and
+`OnCollisionImpulse` aliases effective pin-loss impulses.
 
 ## Runtime hierarchy
 

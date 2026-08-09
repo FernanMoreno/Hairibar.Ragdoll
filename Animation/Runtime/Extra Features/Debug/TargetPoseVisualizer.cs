@@ -19,6 +19,36 @@ namespace Hairibar.Ragdoll.Animation.Debug
 
         Dictionary<Transform, Bone> bones = null;
 
+        public bool IsInitialized => bones != null;
+        public int BindingCount => bones?.Count ?? 0;
+
+        /// <summary>
+        /// Returns the last pose observed for one physical binding. This is a
+        /// read-only diagnostic snapshot; the visualizer never writes Target,
+        /// Rigidbody, joint or simulation state.
+        /// </summary>
+        public bool TryGetSnapshot(
+            Transform ragdollBone,
+            out Transform targetBone,
+            out Vector3 worldPosition,
+            out Quaternion worldRotation,
+            out bool isLeaf)
+        {
+            targetBone = null;
+            worldPosition = Vector3.zero;
+            worldRotation = Quaternion.identity;
+            isLeaf = false;
+            Bone bone;
+            if (bones == null || !ragdollBone
+                || !bones.TryGetValue(ragdollBone, out bone))
+                return false;
+            targetBone = bone.target;
+            worldPosition = bone.lastReadPosition;
+            worldRotation = bone.lastReadRotation;
+            isLeaf = bone.isLeaf;
+            return true;
+        }
+
 
         public void ModifyPose(IEnumerable<RagdollAnimator.AnimatedPair> pairs)
         {
@@ -34,10 +64,12 @@ namespace Hairibar.Ragdoll.Animation.Debug
         {
             foreach (RagdollAnimator.AnimatedPair pair in pairs)
             {
-                bones.TryGetValue(pair.RagdollBone.Transform, out Bone bone);
-
+                Bone bone;
+                if (pair == null || !bones.TryGetValue(
+                    pair.RagdollBone.Transform, out bone))
+                    continue;
                 bone.lastReadPosition = pair.currentPose.worldPosition;
-                if (bone.isLeaf) bone.lastReadRotation = pair.currentPose.worldRotation;
+                bone.lastReadRotation = pair.currentPose.worldRotation;
             }
         }
 
@@ -45,7 +77,8 @@ namespace Hairibar.Ragdoll.Animation.Debug
         {
             if (bone.parent == null) return;
 
-            bones.TryGetValue(bone.parent, out Bone parent);
+            Bone parent;
+            if (!bones.TryGetValue(bone.parent, out parent)) return;
 
             UnityEngine.Debug.DrawLine(parent.lastReadPosition, bone.lastReadPosition, boneColor);
 
@@ -55,37 +88,43 @@ namespace Hairibar.Ragdoll.Animation.Debug
 
         public void Initialize(IEnumerable<RagdollAnimator.AnimatedPair> pairs)
         {
+            if (pairs == null)
+                throw new System.ArgumentNullException(nameof(pairs));
             bones = new Dictionary<Transform, Bone>();
 
             foreach (RagdollAnimator.AnimatedPair pair in pairs)
             {
-                Transform parent;
-                Bone bone;
-
-                bone = new Bone
+                if (pair == null || pair.RagdollBone == null
+                    || !pair.RagdollBone.Transform)
+                    continue;
+                Bone bone = new Bone
                 {
-                    transform = pair.RagdollBone.Transform
+                    transform = pair.RagdollBone.Transform,
+                    target = pair.TargetBone,
+                    lastReadRotation = Quaternion.identity
                 };
-
-                parent = bone.transform.parent;
-
-                if (parent.GetComponent<ConfigurableJoint>())
-                {
-                    bone.parent = parent;
-                }
-
-                bool isLeafBone = true;
-                for (int j = 0; j < bone.transform.childCount; j++)
-                {
-                    if (bone.transform.GetChild(j).GetComponent<ConfigurableJoint>())
-                    {
-                        isLeafBone = false;
-                        break;
-                    }
-                }
-
-                bone.isLeaf = isLeafBone;
                 bones.Add(bone.transform, bone);
+            }
+
+            // Physical topology is defined by ConfigurableJoint.connectedBody,
+            // not Transform parenting (the authored rig can be flat).
+            foreach (Bone bone in bones.Values)
+            {
+                ConfigurableJoint joint = bone.transform
+                    .GetComponent<ConfigurableJoint>();
+                Transform physicalParent = joint && joint.connectedBody
+                    ? joint.connectedBody.transform
+                    : null;
+                bone.parent = physicalParent && bones.ContainsKey(physicalParent)
+                    ? physicalParent
+                    : null;
+            }
+            foreach (Bone bone in bones.Values) bone.isLeaf = true;
+            foreach (Bone bone in bones.Values)
+            {
+                Bone parent;
+                if (bone.parent && bones.TryGetValue(bone.parent, out parent))
+                    parent.isLeaf = false;
             }
         }
 
@@ -93,6 +132,7 @@ namespace Hairibar.Ragdoll.Animation.Debug
         class Bone
         {
             public Transform transform;
+            public Transform target;
             public Transform parent;
             public bool isLeaf;
 

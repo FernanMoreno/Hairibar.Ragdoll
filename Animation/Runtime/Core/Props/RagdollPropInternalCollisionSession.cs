@@ -4,6 +4,62 @@ using UnityEngine;
 
 namespace Hairibar.Ragdoll.Animation
 {
+    /// <summary>
+    /// IgnoreCollision state captured while the prop is still standalone. Registering
+    /// and reconnecting the PropMuscle may temporarily apply the Puppet's own collision
+    /// policy before the held-prop overlay is created, so sampling at commit time is too
+    /// late to recover the authored standalone state.
+    /// </summary>
+    internal sealed class RagdollPropInternalCollisionBaseline
+    {
+        readonly Dictionary<ulong, bool> ignoredByPair;
+
+        RagdollPropInternalCollisionBaseline(Dictionary<ulong, bool> values)
+        {
+            ignoredByPair = values;
+        }
+
+        internal static RagdollPropInternalCollisionBaseline Capture(
+            Collider[] propColliders,
+            RagdollDefinitionBindings bindings)
+        {
+            var values = new Dictionary<ulong, bool>();
+            if (!bindings || !bindings.IsInitialized)
+                return new RagdollPropInternalCollisionBaseline(values);
+
+            Collider[] sources = propColliders ?? new Collider[0];
+            for (int boneIndex = 0; boneIndex < bindings.BoneCount; boneIndex++)
+            {
+                RagdollBone bone = bindings.GetBoneAt(boneIndex);
+                foreach (Collider target in bone.Colliders)
+                {
+                    if (!target || target.isTrigger) continue;
+                    for (int sourceIndex = 0;
+                        sourceIndex < sources.Length; sourceIndex++)
+                    {
+                        Collider source = sources[sourceIndex];
+                        if (!source || source.isTrigger || source == target) continue;
+                        ulong key = RagdollPropInternalCollisionSession.PairKey(
+                            source, target);
+                        if (!values.ContainsKey(key))
+                        {
+                            values.Add(key,
+                                Physics.GetIgnoreCollision(source, target));
+                        }
+                    }
+                }
+            }
+            return new RagdollPropInternalCollisionBaseline(values);
+        }
+
+        internal bool TryGet(Collider first, Collider second, out bool ignored)
+        {
+            return ignoredByPair.TryGetValue(
+                RagdollPropInternalCollisionSession.PairKey(first, second),
+                out ignored);
+        }
+    }
+
     internal struct RagdollPropCollisionMuscle
     {
         internal readonly RagdollBoneHandle Handle;
@@ -125,6 +181,7 @@ namespace Hairibar.Ragdoll.Animation
                     slotHandle,
                     settings,
                     transientBaselineSources,
+                    prop.InternalCollisionBaseline,
                     out session,
                     out error);
             }
@@ -151,6 +208,7 @@ namespace Hairibar.Ragdoll.Animation
                 slotHandle,
                 settings,
                 null,
+                null,
                 out session,
                 out error);
         }
@@ -161,6 +219,27 @@ namespace Hairibar.Ragdoll.Animation
             RagdollBoneHandle? slotHandle,
             RagdollPropInternalCollisionSettings settings,
             Collider[] transientNonIgnoredBaselineSources,
+            out RagdollPropInternalCollisionSession session,
+            out string error)
+        {
+            return TryCreate(
+                propColliders,
+                muscles,
+                slotHandle,
+                settings,
+                transientNonIgnoredBaselineSources,
+                null,
+                out session,
+                out error);
+        }
+
+        internal static bool TryCreate(
+            Collider[] propColliders,
+            RagdollPropCollisionMuscle[] muscles,
+            RagdollBoneHandle? slotHandle,
+            RagdollPropInternalCollisionSettings settings,
+            Collider[] transientNonIgnoredBaselineSources,
+            RagdollPropInternalCollisionBaseline capturedBaseline,
             out RagdollPropInternalCollisionSession session,
             out string error)
         {
@@ -214,12 +293,21 @@ namespace Hairibar.Ragdoll.Animation
 
                         ulong key = PairKey(source, other);
                         if (!unique.Add(key)) continue;
-                        resolved.Add(new Pair(
-                            source,
-                            other,
-                            transientSources.Contains(source)
+                        bool baselineIgnored;
+                        if (capturedBaseline != null
+                            && capturedBaseline.TryGet(
+                                source, other, out baselineIgnored))
+                        {
+                            // Use the state from before the physical root became a
+                            // compound collider of the PropMuscle.
+                        }
+                        else
+                        {
+                            baselineIgnored = transientSources.Contains(source)
                                 ? false
-                                : Physics.GetIgnoreCollision(source, other)));
+                                : Physics.GetIgnoreCollision(source, other);
+                        }
+                        resolved.Add(new Pair(source, other, baselineIgnored));
                     }
                 }
             }
@@ -319,6 +407,26 @@ namespace Hairibar.Ragdoll.Animation
             return complete;
         }
 
+        /// <summary>
+        /// Reasserts the standalone snapshot after the Puppet's global collision owner
+        /// has reconciled its table. The core reconciliation can still reference the
+        /// former compound collider for the closing registry generation, so it must run
+        /// before this final ownership write.
+        /// </summary>
+        internal void ReapplyReleasedBaselines()
+        {
+            if (!releaseRequested || !IsReleased) return;
+            for (int index = 0; index < pairs.Length; index++)
+            {
+                Pair pair = pairs[index];
+                if (!CanWrite(pair.PropCollider, pair.MuscleCollider)) continue;
+                Physics.IgnoreCollision(
+                    pair.PropCollider,
+                    pair.MuscleCollider,
+                    pair.BaselineIgnored);
+            }
+        }
+
         static RagdollPropCollisionMuscle[] BuildRuntimeMuscles(
             RagdollDefinitionBindings bindings,
             RagdollMuscleController muscles)
@@ -356,7 +464,7 @@ namespace Hairibar.Ragdoll.Animation
                 && second.gameObject.activeInHierarchy;
         }
 
-        static ulong PairKey(Collider first, Collider second)
+        internal static ulong PairKey(Collider first, Collider second)
         {
             uint a = unchecked((uint)RagdollUnityObjectId.Get(first));
             uint b = unchecked((uint)RagdollUnityObjectId.Get(second));

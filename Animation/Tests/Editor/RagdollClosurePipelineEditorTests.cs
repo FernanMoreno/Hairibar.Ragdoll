@@ -25,7 +25,7 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
         }
 
         [Test]
-        public void IndependentValidation_AuditsProvisionalWithoutRebuildingIt()
+        public void J06_IndependentValidationAuditsProvisionalWithoutRebuildingIt()
         {
             RagdollCoverageManifest.Manifest manifest = CreateClosableManifest();
             string provisional = PathIn("provisional.json");

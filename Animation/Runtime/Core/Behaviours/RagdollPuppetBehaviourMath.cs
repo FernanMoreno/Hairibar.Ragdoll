@@ -6,11 +6,11 @@ namespace Hairibar.Ragdoll.Animation
     internal static class RagdollPuppetBehaviourMath
     {
         internal static float ResolveConfiguredPinWeight(
-            float authoredPositionAlpha,
+            float authoredPinWeight,
             float masterAlpha,
             float persistentPositionAuthority)
         {
-            return Mathf.Clamp01(authoredPositionAlpha)
+            return Mathf.Clamp01(authoredPinWeight)
                 * Mathf.Clamp01(masterAlpha)
                 * Mathf.Clamp01(persistentPositionAuthority);
         }

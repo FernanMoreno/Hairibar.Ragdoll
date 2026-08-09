@@ -70,6 +70,29 @@ namespace Hairibar.Ragdoll.Animation.Editor
             }
         }
 
+        internal static bool RunBatchImmediately(
+            RagdollBaker baker,
+            out string error,
+            Action afterSessionAttached = null)
+        {
+            if (!baker) throw new ArgumentNullException(nameof(baker));
+            BakerSession session = new BakerSession(baker);
+            afterSessionAttached?.Invoke();
+            if (!baker.StartManualBatch(out error))
+            {
+                session.Dispose();
+                return false;
+            }
+            baker.ExecuteManualBatch();
+            if (!baker.LastResult.Succeeded)
+            {
+                error = baker.LastResult.Error;
+                return false;
+            }
+            error = string.Empty;
+            return true;
+        }
+
         static void DisposeAll()
         {
             foreach (BakerSession session in sessions.Values) session.Dispose();
@@ -413,6 +436,8 @@ namespace Hairibar.Ragdoll.Animation.Editor
         {
             readonly RagdollGenericBaker baker;
             readonly GameObjectRecorder recorder;
+            float recordedDuration;
+            bool hasSample;
 
             public GenericClipRecorder(RagdollGenericBaker baker)
             {
@@ -443,7 +468,13 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 }
             }
 
-            public void Sample(float deltaTime) => recorder.TakeSnapshot(deltaTime);
+            public void Sample(float deltaTime)
+            {
+                float elapsed = Mathf.Max(0f, deltaTime);
+                recorder.TakeSnapshot(elapsed);
+                if (hasSample) recordedDuration += elapsed;
+                hasSample = true;
+            }
 
             public void Save(AnimationClip clip)
             {
@@ -457,6 +488,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     floatError = baker.keyReductionError
                 };
                 recorder.SaveToClip(clip, baker.frameRate, filter);
+                PreserveExactEndpointTime(clip, recordedDuration);
                 clip.legacy = baker.markAsLegacy;
             }
 
@@ -492,6 +524,37 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 for (int index = 0; index < values.Length; index++)
                     if (values[index]) set.Add(values[index]);
                 return set;
+            }
+
+            static void PreserveExactEndpointTime(
+                AnimationClip clip,
+                float duration)
+            {
+                if (!clip || duration <= 0f) return;
+                EditorCurveBinding[] bindings =
+                    AnimationUtility.GetCurveBindings(clip);
+                for (int index = 0; index < bindings.Length; index++)
+                {
+                    EditorCurveBinding binding = bindings[index];
+                    AnimationCurve curve =
+                        AnimationUtility.GetEditorCurve(clip, binding);
+                    if (curve == null || curve.length == 0) continue;
+                    Keyframe[] keys = curve.keys;
+                    if (keys.Length == 1)
+                    {
+                        Keyframe endpoint = keys[0];
+                        endpoint.time = duration;
+                        curve.AddKey(endpoint);
+                    }
+                    else
+                    {
+                        Keyframe endpoint = keys[keys.Length - 1];
+                        endpoint.time = duration;
+                        keys[keys.Length - 1] = endpoint;
+                        curve.keys = keys;
+                    }
+                    AnimationUtility.SetEditorCurve(clip, binding, curve);
+                }
             }
         }
 
@@ -550,14 +613,8 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 clip.frameRate = baker.frameRate;
                 foreach (KeyValuePair<string, List<Keyframe>> pair in curves)
                 {
-                    bool ik = pair.Key.StartsWith("Root", StringComparison.Ordinal)
-                        || pair.Key.StartsWith("LeftFoot", StringComparison.Ordinal)
-                        || pair.Key.StartsWith("RightFoot", StringComparison.Ordinal)
-                        || pair.Key.StartsWith("LeftHand", StringComparison.Ordinal)
-                        || pair.Key.StartsWith("RightHand", StringComparison.Ordinal);
-                    float error = ik
-                        ? Mathf.Max(0f, baker.IKKeyReductionError)
-                        : Mathf.Max(0f, baker.keyReductionError);
+                    float error = RagdollHumanoidBakerReductionPolicy
+                        .ErrorForProperty(baker, pair.Key);
                     Keyframe[] reduced = RagdollBakerCurveReduction.Reduce(pair.Value, error);
                     if (baker.loop && reduced.Length > 1)
                         reduced[reduced.Length - 1].value = reduced[0].value;
@@ -606,6 +663,29 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 }
                 keys.Add(new Keyframe(keyTime, value));
             }
+        }
+    }
+
+    internal static class RagdollHumanoidBakerReductionPolicy
+    {
+        internal static bool IsIkProperty(string property)
+        {
+            return !string.IsNullOrEmpty(property)
+                && (property.StartsWith("Root", StringComparison.Ordinal)
+                    || property.StartsWith("LeftFoot", StringComparison.Ordinal)
+                    || property.StartsWith("RightFoot", StringComparison.Ordinal)
+                    || property.StartsWith("LeftHand", StringComparison.Ordinal)
+                    || property.StartsWith("RightHand", StringComparison.Ordinal));
+        }
+
+        internal static float ErrorForProperty(
+            RagdollHumanoidBaker baker,
+            string property)
+        {
+            if (!baker) throw new ArgumentNullException(nameof(baker));
+            return IsIkProperty(property)
+                ? Mathf.Max(0f, baker.IKKeyReductionError)
+                : Mathf.Max(0f, baker.keyReductionError);
         }
     }
 

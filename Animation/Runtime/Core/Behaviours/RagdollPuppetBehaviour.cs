@@ -623,15 +623,15 @@ namespace Hairibar.Ragdoll.Animation
         }
 
         /// <summary>
-        /// Raises immunity and outgoing impulse multiplier for every muscle. Values never
-        /// lower an existing boost and return automatically to their separate neutral values.
+        /// Sets immunity and outgoing impulse multiplier for every muscle. Both values
+        /// return automatically to their separate neutral values.
         /// </summary>
         public void Boost(float immunity, float impulseMlp)
         {
             RequireMuscleController().Boost(immunity, impulseMlp);
         }
 
-        /// <summary>Raises both boost channels for one muscle.</summary>
+        /// <summary>Sets both boost channels for one muscle.</summary>
         public void Boost(
             RagdollBoneHandle bone,
             float immunity,
@@ -640,8 +640,14 @@ namespace Hairibar.Ragdoll.Animation
             RequireMuscleController().Boost(bone, immunity, impulseMlp);
         }
 
+        /// <summary>Official BehaviourPuppet overload using the muscle registry index.</summary>
+        public void Boost(int muscleIndex, float immunity, float impulseMlp)
+        {
+            Boost(ResolveMuscleIndex(muscleIndex), immunity, impulseMlp);
+        }
+
         /// <summary>
-        /// Raises both channels for one muscle and its ancestors/descendants using independent
+        /// Sets both channels for one muscle and its ancestors/descendants using independent
         /// per-edge parent and child falloffs. Unrelated branches are not modified.
         /// </summary>
         public void Boost(
@@ -659,8 +665,24 @@ namespace Hairibar.Ragdoll.Animation
                 boostChildren);
         }
 
+        /// <summary>Official recursive boost overload using the muscle registry index.</summary>
+        public void Boost(
+            int muscleIndex,
+            float immunity,
+            float impulseMlp,
+            float boostParents,
+            float boostChildren)
+        {
+            Boost(
+                ResolveMuscleIndex(muscleIndex),
+                immunity,
+                impulseMlp,
+                boostParents,
+                boostChildren);
+        }
+
         /// <summary>
-        /// Raises both channels for a semantic group and returns the number of matching muscles.
+        /// Sets both channels for a semantic group and returns the number of matching muscles.
         /// Returns zero when no muscle profile supplies semantic group assignments.
         /// </summary>
         public int Boost(
@@ -674,13 +696,13 @@ namespace Hairibar.Ragdoll.Animation
                 impulseMlp);
         }
 
-        /// <summary>Raises incoming-damage immunity for every muscle.</summary>
+        /// <summary>Sets incoming-damage immunity for every muscle.</summary>
         public void BoostImmunity(float immunity)
         {
             RequireMuscleController().BoostImmunity(immunity);
         }
 
-        /// <summary>Raises incoming-damage immunity for one muscle.</summary>
+        /// <summary>Sets incoming-damage immunity for one muscle.</summary>
         public void BoostImmunity(
             RagdollBoneHandle bone,
             float immunity)
@@ -688,8 +710,14 @@ namespace Hairibar.Ragdoll.Animation
             RequireMuscleController().BoostImmunity(bone, immunity);
         }
 
+        /// <summary>Official immunity overload using the muscle registry index.</summary>
+        public void BoostImmunity(int muscleIndex, float immunity)
+        {
+            BoostImmunity(ResolveMuscleIndex(muscleIndex), immunity);
+        }
+
         /// <summary>
-        /// Raises immunity for one muscle and its ancestor/descendant chains.
+        /// Sets immunity for one muscle and its ancestor/descendant chains.
         /// </summary>
         public void BoostImmunity(
             RagdollBoneHandle bone,
@@ -704,7 +732,21 @@ namespace Hairibar.Ragdoll.Animation
                 boostChildren);
         }
 
-        /// <summary>Raises immunity for a semantic group and returns its match count.</summary>
+        /// <summary>Official recursive immunity overload using the muscle registry index.</summary>
+        public void BoostImmunity(
+            int muscleIndex,
+            float immunity,
+            float boostParents,
+            float boostChildren)
+        {
+            BoostImmunity(
+                ResolveMuscleIndex(muscleIndex),
+                immunity,
+                boostParents,
+                boostChildren);
+        }
+
+        /// <summary>Sets immunity for a semantic group and returns its match count.</summary>
         public int BoostImmunity(
             RagdollMuscleGroup group,
             float immunity)
@@ -712,13 +754,13 @@ namespace Hairibar.Ragdoll.Animation
             return RequireMuscleController().BoostImmunity(group, immunity);
         }
 
-        /// <summary>Raises outgoing cross-puppet impact damage for every muscle.</summary>
+        /// <summary>Sets outgoing cross-puppet impact damage for every muscle.</summary>
         public void BoostImpulseMlp(float impulseMlp)
         {
             RequireMuscleController().BoostImpulseMlp(impulseMlp);
         }
 
-        /// <summary>Raises outgoing cross-puppet impact damage for one muscle.</summary>
+        /// <summary>Sets outgoing cross-puppet impact damage for one muscle.</summary>
         public void BoostImpulseMlp(
             RagdollBoneHandle bone,
             float impulseMlp)
@@ -726,8 +768,14 @@ namespace Hairibar.Ragdoll.Animation
             RequireMuscleController().BoostImpulseMlp(bone, impulseMlp);
         }
 
+        /// <summary>Official impulse overload using the muscle registry index.</summary>
+        public void BoostImpulseMlp(int muscleIndex, float impulseMlp)
+        {
+            BoostImpulseMlp(ResolveMuscleIndex(muscleIndex), impulseMlp);
+        }
+
         /// <summary>
-        /// Raises outgoing damage for one muscle and its ancestor/descendant chains.
+        /// Sets outgoing damage for one muscle and its ancestor/descendant chains.
         /// </summary>
         public void BoostImpulseMlp(
             RagdollBoneHandle bone,
@@ -742,8 +790,22 @@ namespace Hairibar.Ragdoll.Animation
                 boostChildren);
         }
 
+        /// <summary>Official recursive impulse overload using the muscle registry index.</summary>
+        public void BoostImpulseMlp(
+            int muscleIndex,
+            float impulseMlp,
+            float boostParents,
+            float boostChildren)
+        {
+            BoostImpulseMlp(
+                ResolveMuscleIndex(muscleIndex),
+                impulseMlp,
+                boostParents,
+                boostChildren);
+        }
+
         /// <summary>
-        /// Raises outgoing damage for a semantic group and returns its match count.
+        /// Sets outgoing damage for a semantic group and returns its match count.
         /// </summary>
         public int BoostImpulseMlp(
             RagdollMuscleGroup group,
@@ -1104,6 +1166,35 @@ namespace Hairibar.Ragdoll.Animation
             if (centerOfMass != null) centerOfMass.Shutdown();
         }
 
+        // Direct component/GameObject toggles do not pass through
+        // RagdollBehaviourController.SetActiveInternal. Surface overrides are
+        // temporary ownership and must therefore follow Unity's enable lifecycle.
+        void OnDisable()
+        {
+            if (colliderSurfaceController != null)
+            {
+                colliderSurfaceController.Restore();
+            }
+            hasObservedSurfaceSimulationMode = false;
+        }
+
+        void OnEnable()
+        {
+            if (!IsInitialized
+                || !IsActive
+                || colliderSurfaceController == null)
+            {
+                return;
+            }
+
+            if (!colliderSurfaceController.BaselineCaptured)
+            {
+                colliderSurfaceController.CaptureBaseline();
+            }
+            ObserveSurfaceSimulationMode();
+            ApplySurfaceConfiguration(true);
+        }
+
         void InitializeCenterOfMassSubBehaviour()
         {
             if (centerOfMass == null)
@@ -1242,18 +1333,22 @@ namespace Hairibar.Ragdoll.Animation
         {
             lifecycleSuspended = !Context.Animator.IsAlive
                 || Context.Animator.IsKilling;
-            stateMachine.Reset(
-                lifecycleSuspended
-                    ? RagdollPuppetState.Unpinned
-                    : RagdollPuppetState.Puppet);
+            // Disabling the Animator is also required by Unity's manual simulation
+            // workflow. Reactivation must therefore preserve an in-progress
+            // Unpinned/GetUp state instead of treating enable as a respawn. Lifecycle
+            // suspension remains authoritative and may only reactivate as Unpinned.
+            if (lifecycleSuspended)
+            {
+                stateMachine.Reset(RagdollPuppetState.Unpinned);
+                getUpOrientation = RagdollGetUpOrientation.Unknown;
+                targetAlignmentPending = false;
+                getUpBlendCompletedByTeleport = false;
+            }
             ApplyPropDropPolicyForCurrentState();
             centerOfMass.SetActive(true);
             centerOfMass.Reset();
             lastKnockOutBone = RagdollBoneHandle.Invalid;
-            getUpOrientation = RagdollGetUpOrientation.Unknown;
             preparedGroundNormal = GetWorldUp();
-            targetAlignmentPending = false;
-            getUpBlendCompletedByTeleport = false;
             unmappedContactTracker.Reset();
             kinematicContactTracker.Reset();
             kinematicActivationQueue.Reset();
@@ -1263,7 +1358,7 @@ namespace Hairibar.Ragdoll.Animation
             normalModeMappingWeight =
                 RagdollPuppetNormalModeMath.ResolveMappingTarget(
                     normalMode,
-                    RagdollPuppetState.Puppet,
+                    State,
                     false);
             lastKinematicActivationSource =
                 RagdollPuppetKinematicActivationSource.None;
@@ -1274,10 +1369,6 @@ namespace Hairibar.Ragdoll.Animation
             if (!IsActive) return;
 
             Context.Muscles.SetCombatBoostsEnabled(!lifecycleSuspended);
-            if (!lifecycleSuspended)
-            {
-                Context.Muscles.ClearAllSuppressions();
-            }
             ApplyRecoveryConfiguration();
             hasObservedSurfaceSimulationMode = false;
             if (!colliderSurfaceController.BaselineCaptured)
@@ -2006,7 +2097,8 @@ namespace Hairibar.Ragdoll.Animation
         {
             RagdollAnimator.AnimatedPair pair =
                 Context.GetPair(collisionEvent.Bone);
-            float targetSpeed = pair.poseLinearVelocity.magnitude;
+            float targetSpeed = pair.GetTargetSpeedAtPhysicsBoundary(
+                Time.fixedDeltaTime);
             float globalResistance = collisionResistance.Evaluate(targetSpeed);
             float muscleResistance = Context.Muscles
                 .GetBehaviourSettings(collisionEvent.Bone)
@@ -2268,7 +2360,7 @@ namespace Hairibar.Ragdoll.Animation
                     Context.Animator.GetBoneProfile(pair.Name);
                 float configuredPinWeight =
                     RagdollPuppetBehaviourMath.ResolveConfiguredPinWeight(
-                        authoredProfile.positionAlpha,
+                        authoredProfile.PositionPinWeight,
                         Context.Animator.MasterPinWeight,
                         muscleState.PositionAuthority);
                 float effectivePinWeight =
@@ -2577,6 +2669,19 @@ namespace Hairibar.Ragdoll.Animation
             }
 
             return Context.Muscles;
+        }
+
+        RagdollBoneHandle ResolveMuscleIndex(int muscleIndex)
+        {
+            RequireMuscleController();
+            if (muscleIndex < 0 || muscleIndex >= Context.Bindings.BoneCount)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(muscleIndex),
+                    muscleIndex,
+                    "The muscle index is outside the active registry.");
+            }
+            return Context.Bindings.GetHandleAt(muscleIndex);
         }
 
         void ApplyRecoveryConfiguration()

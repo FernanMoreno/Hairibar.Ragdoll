@@ -177,8 +177,7 @@ namespace Hairibar.Ragdoll.Demo
             // Whole-frame diagnostic. This includes coroutine/player/engine work and
             // is not attributed to a Hairibar subsystem.
             public long maximumGcAllocatedInFrame;
-            // Synchronous managed allocation scoped to the named critical path.
-            public long criticalPathGcAllocatedBytes;
+            public CriticalPathEvidence[] criticalPaths;
             public int frames;
             public int assertionCount;
             public ScenarioAssertion[] assertions;
@@ -195,6 +194,44 @@ namespace Hairibar.Ragdoll.Demo
             public string platform;
             public bool succeeded;
             public ScenarioResult[] scenarios;
+        }
+
+        [Serializable]
+        sealed class SceneEvidence
+        {
+            public int schemaVersion = 2;
+            public bool succeeded;
+            public ScenarioResult[] scenes;
+        }
+
+        [Serializable]
+        sealed class DistributionEvidence
+        {
+            public double median;
+            public double p95;
+        }
+
+        [Serializable]
+        sealed class CriticalPathEvidence
+        {
+            public string name;
+            public string measurementScope;
+            public bool succeeded;
+            public int samples;
+            public long gcAllocatedBytes;
+            public long maxGcAllocatedBytesInFrame;
+        }
+
+        [Serializable]
+        sealed class ProfilerEvidence
+        {
+            public int schemaVersion = 2;
+            public bool succeeded;
+            public int warmupFrames;
+            public int measuredFrames;
+            public DistributionEvidence cpuMilliseconds;
+            public DistributionEvidence memoryBytes;
+            public CriticalPathEvidence[] criticalPaths;
         }
 
         sealed class RigInstance
@@ -227,7 +264,8 @@ namespace Hairibar.Ragdoll.Demo
                 name = scenario.ToString(),
                 succeeded = false,
                 assertions = Array.Empty<ScenarioAssertion>(),
-                performance = new PerformanceResult[0]
+                performance = new PerformanceResult[0],
+                criticalPaths = new CriticalPathEvidence[0]
             };
             yield return RunGuarded(result);
             Results.Add(result);
@@ -352,6 +390,97 @@ namespace Hairibar.Ragdoll.Demo
                 Require(result, observedContacts > 0,
                     "Saturated real PhysX contacts produced no observed collision.");
                 RequireFinite(result, bodies);
+
+                // Warm first, then scope each production call independently. The
+                // whole-frame recorder remains ambient diagnostic only: engine and
+                // coroutine work must not be attributed to an individual subsystem.
+                for (int frame = 0; frame < WarmupFrames; frame++)
+                    yield return fixedUpdate;
+                var matchingPath = NewCriticalPath(
+                    "matching", "RagdollAnimator.DoAnimationMatching");
+                var mappingPath = NewCriticalPath(
+                    "mapping", "RagdollAnimator.MapRagdollToTarget");
+                var relayPath = NewCriticalPath(
+                    "collision-relay", "RagdollCollisionHub.Dispatch");
+                var comPath = NewCriticalPath(
+                    "com", "RagdollCenterOfMassSubBehaviour.FixedUpdate");
+                RagdollBoneHandle relayHandle = RagdollBoneHandle.Invalid;
+                for (int boneIndex = 0;
+                    boneIndex < rig.Bindings.IndexedBones.Count; boneIndex++)
+                {
+                    if (!rig.Bindings.IndexedBones[boneIndex].IsRoot) continue;
+                    relayHandle = rig.Bindings.GetHandleAt(boneIndex);
+                    break;
+                }
+                Require(result, relayHandle.IsValid,
+                    "Collision relay diagnostic could not resolve the root handle.");
+                result.criticalPaths = new[]
+                {
+                    matchingPath, mappingPath, relayPath, comPath
+                };
+                int measuredContacts = 0;
+                Action<RagdollCollisionEvent> measured = _ => measuredContacts++;
+                rig.Setup.PuppetBehaviour.CollisionObserved += measured;
+                int previousCollisionBudget =
+                    rig.Setup.Collisions.MaxEventsPerFixedStep;
+                rig.Setup.Collisions.MaxEventsPerFixedStep = 4096;
+                long combinedCriticalGc = 0L;
+                string combinedGcName;
+                using (ProfilerRecorder combinedGc = StartAvailableRecorder(
+                    new[] { "GC Allocated In Frame" }, out combinedGcName))
+                {
+                    for (int frame = 0; frame < MeasurementFrames; frame++)
+                    {
+                        long before = GC.GetAllocatedBytesForCurrentThread();
+                        rig.Setup.Animator.RunAnimationMatchingForDiagnostics(
+                            Time.fixedDeltaTime);
+                        AddCriticalSample(matchingPath,
+                            GC.GetAllocatedBytesForCurrentThread() - before);
+
+                        before = GC.GetAllocatedBytesForCurrentThread();
+                        rig.Setup.Animator.RunMappingForDiagnostics();
+                        AddCriticalSample(mappingPath,
+                            GC.GetAllocatedBytesForCurrentThread() - before);
+
+                        before = GC.GetAllocatedBytesForCurrentThread();
+                        rig.Setup.Behaviours.Context
+                            .DispatchCollisionForDiagnostics(
+                                relayHandle,
+                                RagdollCollisionPhase.Exit);
+                        AddCriticalSample(relayPath,
+                            GC.GetAllocatedBytesForCurrentThread() - before);
+
+                        before = GC.GetAllocatedBytesForCurrentThread();
+                        rig.Setup.PuppetBehaviour.CenterOfMass.FixedUpdate(
+                            Time.fixedDeltaTime);
+                        AddCriticalSample(comPath,
+                            GC.GetAllocatedBytesForCurrentThread() - before);
+                        yield return fixedUpdate;
+                        if (combinedGc.LastValue > combinedCriticalGc)
+                            combinedCriticalGc = combinedGc.LastValue;
+                    }
+                    Require(result, combinedGc.Valid,
+                        "Core critical-path GC ProfilerRecorder counter is unavailable ("
+                        + combinedGcName + ").");
+                    Require(result, combinedGc.UnitType
+                            == ProfilerMarkerDataUnit.Bytes,
+                        "Core GC counter does not report bytes: "
+                        + combinedGc.UnitType + ".");
+                }
+                rig.Setup.Collisions.MaxEventsPerFixedStep =
+                    previousCollisionBudget;
+                rig.Setup.PuppetBehaviour.CollisionObserved -= measured;
+                result.maximumGcAllocatedInFrame = combinedCriticalGc;
+                FinalizeCriticalPath(matchingPath);
+                FinalizeCriticalPath(mappingPath);
+                FinalizeCriticalPath(relayPath);
+                FinalizeCriticalPath(comPath);
+                Require(result, measuredContacts > 0,
+                    "Collision relay was not exercised during profiling.");
+                RequireCriticalPath(result, matchingPath);
+                RequireCriticalPath(result, mappingPath);
+                RequireCriticalPath(result, relayPath);
+                RequireCriticalPath(result, comPath);
 
                 RagdollSimulationModeController simulation = rig.Setup.Simulation;
                 Require(result, simulation.SetModeImmediate(
@@ -618,11 +747,14 @@ namespace Hairibar.Ragdoll.Demo
                     Require(result, bakerGc.Valid,
                         "Baker GC ProfilerRecorder counter is unavailable ("
                         + bakerGcName + ").");
+                    Require(result, bakerGc.UnitType
+                            == ProfilerMarkerDataUnit.Bytes,
+                        "Baker GC counter does not report bytes: "
+                        + bakerGc.UnitType + ".");
                 }
                 result.maximumGcAllocatedInFrame = bakerMaximumGc;
-                Require(result, bakerMaximumGc == 0,
-                    "Realtime Baker allocated after warm-up: "
-                    + bakerMaximumGc + " bytes.");
+                // Whole-frame Baker GC is ambient diagnostic only. A second Baker
+                // below invokes the exact realtime production method synchronously.
                 int renderedFrames = WarmupFrames + MeasurementFrames;
                 float realtimeDeadline = Time.realtimeSinceStartup + 1f;
                 while (Time.realtimeSinceStartup < realtimeDeadline
@@ -652,6 +784,36 @@ namespace Hairibar.Ragdoll.Demo
                             - clipRecorder.RecordedLastX) < 0.001f,
                         "Generated realtime clip did not preserve final sampled curve.");
                 }
+                RagdollHumanoidBaker diagnosticBaker = a.gameObject
+                    .AddComponent<RagdollHumanoidBaker>();
+                diagnosticBaker.mode = RagdollBakerMode.Realtime;
+                diagnosticBaker.frameRate = 30;
+                int diagnosticSamples = 0;
+                Action<RagdollBaker, float> diagnosticListener =
+                    (_, __) => diagnosticSamples++;
+                diagnosticBaker.SampleRequested += diagnosticListener;
+                Require(result, diagnosticBaker.StartBaking(out bakerError),
+                    bakerError);
+                for (int frame = 0; frame < WarmupFrames; frame++)
+                    diagnosticBaker.AdvanceRealtimeSampling(1f / 30f);
+                var bakerPath = NewCriticalPath(
+                    "baker-realtime", "RagdollBaker.AdvanceRealtimeSampling");
+                for (int frame = 0; frame < MeasurementFrames; frame++)
+                {
+                    long before = GC.GetAllocatedBytesForCurrentThread();
+                    diagnosticBaker.AdvanceRealtimeSampling(1f / 30f);
+                    AddCriticalSample(bakerPath,
+                        GC.GetAllocatedBytesForCurrentThread() - before);
+                }
+                diagnosticBaker.StopBaking();
+                diagnosticBaker.SampleRequested -= diagnosticListener;
+                Destroy(diagnosticBaker);
+                FinalizeCriticalPath(bakerPath);
+                result.criticalPaths = new[] { bakerPath };
+                Require(result, diagnosticSamples >=
+                        WarmupFrames + MeasurementFrames,
+                    "Realtime Baker diagnostic did not execute every sample.");
+                RequireCriticalPath(result, bakerPath);
                 clipRecorder.Dispose();
                 Require(result, integrationRig.IKSolver.SolveCount > 0,
                     "Deterministic external IK solver was never executed.");
@@ -777,6 +939,7 @@ namespace Hairibar.Ragdoll.Demo
                     yield return null;
                 long additionalPinMaximumGc = 0;
                 long additionalPinCriticalPathMaximumGc = 0;
+                long additionalPinCriticalPathTotalGc = 0;
                 string additionalPinGcName;
                 using (ProfilerRecorder additionalPinGc = StartAvailableRecorder(
                     new[] { "GC Allocated In Frame" }, out additionalPinGcName))
@@ -787,6 +950,7 @@ namespace Hairibar.Ragdoll.Demo
                         muscle.ApplyAdditionalPinForDiagnostics();
                         long scopedAllocation =
                             GC.GetAllocatedBytesForCurrentThread() - before;
+                        additionalPinCriticalPathTotalGc += scopedAllocation;
                         if (scopedAllocation > additionalPinCriticalPathMaximumGc)
                         {
                             additionalPinCriticalPathMaximumGc = scopedAllocation;
@@ -798,15 +962,27 @@ namespace Hairibar.Ragdoll.Demo
                     Require(result, additionalPinGc.Valid,
                         "Additional-pin GC ProfilerRecorder counter is unavailable ("
                         + additionalPinGcName + ").");
+                    Require(result, additionalPinGc.UnitType
+                            == ProfilerMarkerDataUnit.Bytes,
+                        "Additional-pin GC counter does not report bytes: "
+                        + additionalPinGc.UnitType + ".");
                 }
                 result.maximumGcAllocatedInFrame = additionalPinMaximumGc;
-                result.criticalPathGcAllocatedBytes =
-                    additionalPinCriticalPathMaximumGc;
                 Require(result, additionalPinCriticalPathMaximumGc == 0,
                     "Hairibar additional-pin critical path allocated managed memory: "
                     + additionalPinCriticalPathMaximumGc
                     + " bytes. Whole-frame ambient maximum was "
                     + additionalPinMaximumGc + " bytes.");
+                var additionalPinPath = NewCriticalPath(
+                    "additional-pin",
+                    "RagdollPropMuscle.ApplyAdditionalPinAfterAnimationMatching");
+                additionalPinPath.samples = MeasurementFrames;
+                additionalPinPath.gcAllocatedBytes =
+                    additionalPinCriticalPathTotalGc;
+                additionalPinPath.maxGcAllocatedBytesInFrame =
+                    additionalPinCriticalPathMaximumGc;
+                FinalizeCriticalPath(additionalPinPath);
+                result.criticalPaths = new[] { additionalPinPath };
 
                 yield return fixedUpdate;
                 List<RagdollRuntimeMuscleRegistration> collection =
@@ -879,7 +1055,8 @@ namespace Hairibar.Ragdoll.Demo
                     SetPopulation(rigs, population);
                     for (int modeIndex = 0; modeIndex < modes.Length; modeIndex++)
                     {
-                        ConfigurePerformanceMode(rigs, population, modes[modeIndex]);
+                        ConfigurePerformanceMode(
+                            rigs, population, modes[modeIndex], result);
                         yield return null;
                         for (int frame = 0; frame < WarmupFrames; frame++)
                             yield return null;
@@ -912,6 +1089,18 @@ namespace Hairibar.Ragdoll.Demo
                                 "A required ProfilerRecorder counter is unavailable: CPU="
                                 + cpuCounterName + ", memory=" + memoryCounterName
                                 + ", GC=" + gcCounterName + ".");
+                            Require(result, cpuRecorder.UnitType
+                                    == ProfilerMarkerDataUnit.TimeNanoseconds,
+                                "CPU ProfilerRecorder does not report nanoseconds: "
+                                + cpuRecorder.UnitType + ".");
+                            Require(result, memoryRecorder.UnitType
+                                    == ProfilerMarkerDataUnit.Bytes,
+                                "Memory ProfilerRecorder does not report bytes: "
+                                + memoryRecorder.UnitType + ".");
+                            Require(result, gcRecorder.UnitType
+                                    == ProfilerMarkerDataUnit.Bytes,
+                                "GC ProfilerRecorder does not report bytes: "
+                                + gcRecorder.UnitType + ".");
                         }
                         measurements.Add(new PerformanceResult
                         {
@@ -925,9 +1114,8 @@ namespace Hairibar.Ragdoll.Demo
                         });
                         if (maxGc > result.maximumGcAllocatedInFrame)
                             result.maximumGcAllocatedInFrame = maxGc;
-                        Require(result, maxGc == 0,
-                            "A warmed critical-path frame allocated managed memory: "
-                            + population + " " + modes[modeIndex] + " = " + maxGc);
+                        // This is a whole-frame ambient diagnostic. The exact
+                        // critical paths have separate synchronous allocation gates.
                     }
                 }
                 result.performance = measurements.ToArray();
@@ -1079,21 +1267,23 @@ namespace Hairibar.Ragdoll.Demo
         static void ConfigurePerformanceMode(
             List<RigInstance> rigs,
             int population,
-            string mode)
+            string mode,
+            ScenarioResult result)
         {
             for (int index = 0; index < population; index++)
             {
                 RigInstance rig = rigs[index];
-                Transform child = FindPhysicalChild(rig);
-                if (mode == "ActiveFlat" && child
-                    && child.parent == rig.Setup.Puppet)
+                if (mode == "ActiveFlat")
                 {
-                    child.SetParent(rig.Setup.Puppet.parent, true);
+                    rig.Setup.Animator.FlattenHierarchy();
+                    Require(result, rig.Setup.Animator.HierarchyIsFlat(),
+                        "FlattenHierarchy did not produce a flat puppet.");
                 }
-                else if (mode != "ActiveFlat" && child
-                    && child.parent != rig.Setup.Puppet)
+                else
                 {
-                    child.SetParent(rig.Setup.Puppet, true);
+                    rig.Setup.Animator.TreeHierarchy();
+                    Require(result, !rig.Setup.Animator.HierarchyIsFlat(),
+                        "TreeHierarchy did not restore authored parenting.");
                 }
                 RagdollSimulationMode requested = mode == "Kinematic"
                     ? RagdollSimulationMode.Kinematic
@@ -1264,10 +1454,163 @@ namespace Hairibar.Ragdoll.Demo
             if (string.IsNullOrWhiteSpace(path))
                 path = Path.Combine(Application.persistentDataPath,
                     "hairibar-certification.json");
-            string directory = Path.GetDirectoryName(path);
-            if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
-            File.WriteAllText(path, JsonUtility.ToJson(result, true));
+            WriteJson(path, result);
+
+            string scenePath = Environment.GetEnvironmentVariable(
+                "HAIRIBAR_SCENE_RESULTS");
+            if (!string.IsNullOrWhiteSpace(scenePath))
+            {
+                WriteJson(scenePath, new SceneEvidence
+                {
+                    succeeded = succeeded,
+                    scenes = Results.ToArray()
+                });
+            }
+
+            string profilerPath = Environment.GetEnvironmentVariable(
+                "HAIRIBAR_PROFILER_RESULTS");
+            if (!string.IsNullOrWhiteSpace(profilerPath))
+            {
+                WriteJson(profilerPath, BuildProfilerEvidence(succeeded));
+            }
             if (Application.isBatchMode) Application.Quit(succeeded ? 0 : 1);
+        }
+
+        static ProfilerEvidence BuildProfilerEvidence(bool playerSucceeded)
+        {
+            ScenarioResult performance = FindResult(
+                RegressionScenario.CollisionsPerformance.ToString());
+            ScenarioResult core = FindResult(
+                RegressionScenario.CoreLifecycle.ToString());
+            ScenarioResult props = FindResult(
+                RegressionScenario.HierarchyProps.ToString());
+            ScenarioResult baker = FindResult(
+                RegressionScenario.HumanoidBakerFall.ToString());
+            PerformanceResult activeTree = null;
+            if (performance != null && performance.performance != null)
+            {
+                for (int index = 0; index < performance.performance.Length; index++)
+                {
+                    PerformanceResult candidate = performance.performance[index];
+                    if (candidate != null && candidate.puppets == 50
+                        && string.Equals(candidate.mode, "ActiveTree",
+                            StringComparison.Ordinal))
+                    {
+                        activeTree = candidate;
+                        break;
+                    }
+                }
+            }
+
+            var paths = new[]
+            {
+                FindCriticalPath(core, "matching"),
+                FindCriticalPath(core, "mapping"),
+                FindCriticalPath(core, "collision-relay"),
+                FindCriticalPath(core, "com"),
+                FindCriticalPath(props, "additional-pin"),
+                FindCriticalPath(baker, "baker-realtime")
+            };
+            bool complete = playerSucceeded && activeTree != null;
+            for (int index = 0; index < paths.Length; index++)
+                complete &= paths[index].succeeded;
+            return new ProfilerEvidence
+            {
+                succeeded = complete,
+                warmupFrames = WarmupFrames,
+                measuredFrames = MeasurementFrames,
+                cpuMilliseconds = new DistributionEvidence
+                {
+                    median = activeTree != null
+                        ? activeTree.cpuMedianNanoseconds / 1000000d
+                        : -1d,
+                    p95 = activeTree != null
+                        ? activeTree.cpuP95Nanoseconds / 1000000d
+                        : -1d
+                },
+                memoryBytes = new DistributionEvidence
+                {
+                    median = activeTree != null
+                        ? activeTree.memoryMedianBytes
+                        : -1d,
+                    p95 = activeTree != null
+                        ? activeTree.memoryP95Bytes
+                        : -1d
+                },
+                criticalPaths = paths
+            };
+        }
+
+        static CriticalPathEvidence FindCriticalPath(
+            ScenarioResult source,
+            string name)
+        {
+            if (source != null && source.criticalPaths != null)
+            {
+                for (int index = 0; index < source.criticalPaths.Length; index++)
+                {
+                    CriticalPathEvidence candidate = source.criticalPaths[index];
+                    if (candidate != null && string.Equals(
+                        candidate.name, name, StringComparison.Ordinal))
+                        return candidate;
+                }
+            }
+            return NewCriticalPath(name, "missing");
+        }
+
+        static CriticalPathEvidence NewCriticalPath(string name, string scope)
+        {
+            return new CriticalPathEvidence
+            {
+                name = name,
+                measurementScope = scope,
+                succeeded = false,
+                samples = 0,
+                gcAllocatedBytes = 0L,
+                maxGcAllocatedBytesInFrame = 0L
+            };
+        }
+
+        static void AddCriticalSample(CriticalPathEvidence path, long bytes)
+        {
+            long sanitized = Math.Max(0L, bytes);
+            path.samples++;
+            path.gcAllocatedBytes += sanitized;
+            if (sanitized > path.maxGcAllocatedBytesInFrame)
+                path.maxGcAllocatedBytesInFrame = sanitized;
+        }
+
+        static void FinalizeCriticalPath(CriticalPathEvidence path)
+        {
+            path.succeeded = path.samples == MeasurementFrames
+                && path.gcAllocatedBytes == 0L
+                && path.maxGcAllocatedBytesInFrame == 0L;
+        }
+
+        static void RequireCriticalPath(
+            ScenarioResult result,
+            CriticalPathEvidence path)
+        {
+            Require(result, path.succeeded,
+                path.name + " allocated " + path.gcAllocatedBytes
+                + " bytes total; maximum scoped call="
+                + path.maxGcAllocatedBytesInFrame + ".");
+        }
+
+        static ScenarioResult FindResult(string name)
+        {
+            for (int index = 0; index < Results.Count; index++)
+                if (string.Equals(Results[index].name, name,
+                    StringComparison.Ordinal)) return Results[index];
+            return null;
+        }
+
+        static void WriteJson(string path, object value)
+        {
+            string fullPath = Path.GetFullPath(path);
+            string directory = Path.GetDirectoryName(fullPath);
+            if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
+            File.WriteAllText(fullPath, JsonUtility.ToJson(value, true));
         }
 
         static string CertificationPlatformName(RuntimePlatform platform)

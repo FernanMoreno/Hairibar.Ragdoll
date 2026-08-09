@@ -24,10 +24,47 @@ if (-not (Test-Path -LiteralPath $ProjectPath -PathType Container)) {
 
 [System.IO.Directory]::CreateDirectory($OutputRoot) | Out-Null
 
+$lockPath = Join-Path $OutputRoot '.hairibar-closure.lock'
+try {
+    $lockStream = [System.IO.File]::Open(
+        $lockPath,
+        [System.IO.FileMode]::OpenOrCreate,
+        [System.IO.FileAccess]::ReadWrite,
+        [System.IO.FileShare]::None)
+}
+catch {
+    throw "Another Hairibar closure process owns output directory: $OutputRoot"
+}
+
+try {
+
+# A failed rerun must not leave a previous final manifest looking current.
+$runArtifacts = @(
+    'editmode-results.xml',
+    'playmode-results.xml',
+    'build-manifest.json',
+    'windows-player-result.json',
+    'profiler-results.json',
+    'scene-results.json',
+    'documentation-audit.json',
+    'coverage-manifest-provisional.json',
+    'coverage-manifest-validation.json',
+    'coverage-manifest-final.json'
+)
+foreach ($artifactName in $runArtifacts) {
+    $artifactPath = Join-Path $OutputRoot $artifactName
+    if (Test-Path -LiteralPath $artifactPath -PathType Leaf) {
+        Remove-Item -LiteralPath $artifactPath -Force
+    }
+}
+
 $env:HAIRIBAR_CERTIFICATION_OUTPUT = $OutputRoot
 $env:HAIRIBAR_CLOSURE_OUTPUT = $OutputRoot
 $env:HAIRIBAR_EDITMODE_RESULTS = Join-Path $OutputRoot 'editmode-results.xml'
 $env:HAIRIBAR_PLAYMODE_RESULTS = Join-Path $OutputRoot 'playmode-results.xml'
+$env:HAIRIBAR_PROFILER_RESULTS = Join-Path $OutputRoot 'profiler-results.json'
+$env:HAIRIBAR_SCENE_RESULTS = Join-Path $OutputRoot 'scene-results.json'
+$env:HAIRIBAR_DOCUMENTATION_AUDIT = Join-Path $OutputRoot 'documentation-audit.json'
 
 function Invoke-UnityStage {
     param(
@@ -103,3 +140,12 @@ if (-not (Test-Path -LiteralPath $finalManifest -PathType Leaf)) {
 }
 
 Write-Output "Hairibar closure completed: $finalManifest"
+}
+finally {
+    if ($null -ne $lockStream) {
+        $lockStream.Dispose()
+    }
+    if (Test-Path -LiteralPath $lockPath -PathType Leaf) {
+        Remove-Item -LiteralPath $lockPath -Force
+    }
+}

@@ -203,6 +203,42 @@ namespace Hairibar.Ragdoll.Animation
                 profile,
                 targetLayer,
                 puppetLayer,
+                null,
+                DefaultObjectFactory.Instance);
+        }
+
+        /// <summary>
+        /// Configures a separated Humanoid Target through semantic Avatar bindings.
+        /// Unlike the compatibility overload, this path never uses Transform names
+        /// or assumes matching local bone axes.
+        /// </summary>
+        public static RagdollSetupResult ConfigureSeparated(
+            Transform target,
+            RagdollDefinitionBindings puppet,
+            RagdollAnimationProfile profile,
+            RagdollHumanoidBindingProfile humanoidBindings,
+            int targetLayer,
+            int puppetLayer)
+        {
+            if (!humanoidBindings)
+            {
+                return new RagdollSetupResult
+                {
+                    Target = target,
+                    Puppet = puppet ? puppet.transform : null,
+                    Root = ResolveCommonRoot(
+                        target,
+                        puppet ? puppet.transform : null),
+                    Error = "A Humanoid binding profile is required."
+                };
+            }
+            return ConfigureSeparated(
+                target,
+                puppet,
+                profile,
+                targetLayer,
+                puppetLayer,
+                humanoidBindings,
                 DefaultObjectFactory.Instance);
         }
 
@@ -212,6 +248,25 @@ namespace Hairibar.Ragdoll.Animation
             RagdollAnimationProfile profile,
             int targetLayer,
             int puppetLayer,
+            IObjectFactory factory)
+        {
+            return ConfigureSeparated(
+                target,
+                puppet,
+                profile,
+                targetLayer,
+                puppetLayer,
+                null,
+                factory);
+        }
+
+        static RagdollSetupResult ConfigureSeparated(
+            Transform target,
+            RagdollDefinitionBindings puppet,
+            RagdollAnimationProfile profile,
+            int targetLayer,
+            int puppetLayer,
+            RagdollHumanoidBindingProfile humanoidBindings,
             IObjectFactory factory)
         {
             if (factory == null) throw new ArgumentNullException(nameof(factory));
@@ -268,7 +323,13 @@ namespace Hairibar.Ragdoll.Animation
                 created.Add(targetBindings);
                 targetBindings.SetRagdollBindings(puppet);
                 string bindingError;
-                if (!targetBindings.TryAutoBindByName(out bindingError)
+                bool assigned = humanoidBindings
+                    ? humanoidBindings.TryApply(
+                        target.GetComponentInChildren<Animator>(true),
+                        targetBindings,
+                        out bindingError)
+                    : targetBindings.TryAutoBindByName(out bindingError);
+                if (!assigned
                     || !targetBindings.TryCaptureOffsets(out bindingError))
                 {
                     throw new InvalidOperationException(bindingError);

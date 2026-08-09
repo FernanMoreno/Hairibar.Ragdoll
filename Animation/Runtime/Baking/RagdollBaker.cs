@@ -109,6 +109,21 @@ namespace Hairibar.Ragdoll.Animation
 
         public bool StartBaking(out string error)
         {
+            return StartBaking(out error, true);
+        }
+
+        internal bool StartManualBatch(out string error)
+        {
+            if (mode == RagdollBakerMode.Realtime)
+            {
+                error = "Manual batch execution does not support Realtime mode.";
+                return false;
+            }
+            return StartBaking(out error, false);
+        }
+
+        bool StartBaking(out string error, bool scheduleBatch)
+        {
             if (IsBaking)
             {
                 error = "The baker is already recording.";
@@ -149,10 +164,21 @@ namespace Hairibar.Ragdoll.Animation
             }
             else
             {
-                batch = StartCoroutine(RunBatch());
+                batch = scheduleBatch ? StartCoroutine(RunBatch()) : null;
             }
             error = string.Empty;
             return true;
+        }
+
+        internal void ExecuteManualBatch()
+        {
+            if (!IsBaking || mode == RagdollBakerMode.Realtime)
+            {
+                throw new InvalidOperationException(
+                    "A validated non-Realtime manual batch must be started first.");
+            }
+            IEnumerator operation = RunBatch();
+            while (operation.MoveNext()) { }
         }
 
         public void StopBaking()
@@ -569,6 +595,13 @@ namespace Hairibar.Ragdoll.Animation
 
         bool ValidateAnimationStates(out string error)
         {
+            UnityEngine.Animation legacy =
+                RecordingRoot.GetComponent<UnityEngine.Animation>();
+            if (legacy && legacy.enabled)
+            {
+                error = "AnimationStates mode is Mecanim-only; disable the Legacy Animation component.";
+                return false;
+            }
             Animator animator = RecordingRoot.GetComponent<Animator>();
             if (!animator || !animator.runtimeAnimatorController)
             {

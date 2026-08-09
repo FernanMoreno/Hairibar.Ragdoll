@@ -170,7 +170,67 @@ namespace Hairibar.Ragdoll.Animation.Editor
             string[] expected = HasItems(context?.ExpectedScenarios)
                 ? context.ExpectedScenarios
                 : RequiredPlayerScenarios;
-            return ValidateExecutedScenarios(evidence.scenarios, expected, "Player");
+            RagdollArtifactValidationResult scenarios =
+                ValidateExecutedScenarios(evidence.scenarios, expected, "Player");
+            if (!scenarios.IsValid) return scenarios;
+            if (string.Equals(context?.ExpectedCapabilityId, "H05",
+                    StringComparison.Ordinal)
+                || string.Equals(context?.ExpectedCapabilityId, "H08",
+                    StringComparison.Ordinal))
+                return ValidatePerformanceMatrix(evidence.scenarios);
+            return RagdollArtifactValidationResult.Valid();
+        }
+
+        static RagdollArtifactValidationResult ValidatePerformanceMatrix(
+            ExecutedScenario[] scenarios)
+        {
+            ExecutedScenario[] performanceScenarios = scenarios.Where(value =>
+                value != null && string.Equals(value.name,
+                    "CollisionsPerformance", StringComparison.Ordinal)).ToArray();
+            if (performanceScenarios.Length != 1)
+                return Invalid("PlayerPerformanceScenarioMissingOrDuplicate");
+            ExecutedScenario scenario = performanceScenarios[0];
+            if (scenario.performance == null)
+                return Invalid("PlayerPerformanceMatrixMissing");
+            int[] populations = { 1, 10, 25, 50 };
+            string[] modes =
+            {
+                "ActiveTree", "ActiveFlat", "Kinematic", "Disabled"
+            };
+            foreach (int population in populations)
+            foreach (string mode in modes)
+            {
+                PerformanceEvidence[] matches = scenario.performance.Where(value =>
+                    value != null && value.puppets == population
+                    && string.Equals(value.mode, mode,
+                        StringComparison.Ordinal)).ToArray();
+                if (matches.Length != 1)
+                    return Invalid("PlayerPerformanceCellMissingOrDuplicate:"
+                        + population + ":" + mode);
+                PerformanceEvidence cell = matches[0];
+                if (cell.cpuMedianNanoseconds < 0L
+                    || cell.cpuP95Nanoseconds < cell.cpuMedianNanoseconds
+                    || cell.memoryMedianBytes < 0L
+                    || cell.memoryP95Bytes < cell.memoryMedianBytes)
+                    return Invalid("PlayerPerformanceDistributionInvalid:"
+                        + population + ":" + mode);
+                if (cell.maximumGcAllocatedInFrame < 0L)
+                    return Invalid("PlayerPerformanceAmbientGcInvalid:"
+                        + population + ":" + mode);
+            }
+            bool flatAsserted = scenario.assertions.Any(assertion =>
+                assertion != null && assertion.succeeded
+                && assertion.name != null
+                && assertion.name.IndexOf("FlattenHierarchy",
+                    StringComparison.Ordinal) >= 0);
+            bool treeAsserted = scenario.assertions.Any(assertion =>
+                assertion != null && assertion.succeeded
+                && assertion.name != null
+                && assertion.name.IndexOf("TreeHierarchy",
+                    StringComparison.Ordinal) >= 0);
+            return flatAsserted && treeAsserted
+                ? RagdollArtifactValidationResult.Valid()
+                : Invalid("PlayerHierarchyModesNotAsserted");
         }
 
         public static RagdollArtifactValidationResult ValidateProfiler(string path)
@@ -191,6 +251,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
             if (!memory.IsValid) return memory;
             if (evidence.criticalPaths == null)
                 return Invalid("ProfilerCriticalPathsMissing");
+            var measurementScopes = new HashSet<string>(StringComparer.Ordinal);
             foreach (string required in RequiredCriticalPaths)
             {
                 CriticalPathEvidence[] matching = evidence.criticalPaths.Where(pathResult =>
@@ -202,6 +263,11 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 CriticalPathEvidence result = matching[0];
                 if (!result.succeeded || result.samples < 600)
                     return Invalid("ProfilerCriticalPathIncomplete:" + required);
+                if (string.IsNullOrWhiteSpace(result.measurementScope))
+                    return Invalid("ProfilerCriticalPathScopeMissing:" + required);
+                if (!measurementScopes.Add(result.measurementScope))
+                    return Invalid("ProfilerCriticalPathScopeReused:"
+                        + result.measurementScope);
                 if (result.gcAllocatedBytes != 0
                     || result.maxGcAllocatedBytesInFrame != 0)
                     return Invalid("ProfilerCriticalPathAllocated:" + required);
@@ -232,6 +298,10 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     return Invalid("BuildOptionsInvalid:" + target);
                 if (!build.outputExists)
                     return Invalid("BuildOutputMissing:" + target);
+                if (string.IsNullOrWhiteSpace(build.output)
+                    || (!File.Exists(build.output)
+                        && !Directory.Exists(build.output)))
+                    return Invalid("BuildOutputNotFound:" + target);
                 if (build.diagnostics == null) continue;
                 BuildDiagnostic ownProblem = build.diagnostics.FirstOrDefault(message =>
                     message != null && message.own
@@ -281,6 +351,97 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 return Invalid("DocumentationContractIncomplete");
             if (!IsOfficialDocumentation(candidate.sourceUrl))
                 return Invalid("DocumentationSourceNotOfficial");
+            if (string.IsNullOrWhiteSpace(evidence.documentPath)
+                || !File.Exists(evidence.documentPath))
+                return Invalid("DocumentationFileMissing");
+            if (string.IsNullOrWhiteSpace(evidence.documentSha256)
+                || !string.Equals(
+                    RagdollClosurePipeline.ComputeSha256(evidence.documentPath),
+                    evidence.documentSha256,
+                    StringComparison.OrdinalIgnoreCase))
+                return Invalid("DocumentationHashMismatch");
+            string documentation = File.ReadAllText(evidence.documentPath);
+            string packageRoot = Path.GetFullPath(Path.Combine(
+                Path.GetDirectoryName(evidence.documentPath), "..", ".."));
+            string animationRoot = Path.Combine(packageRoot, "Animation");
+            if (!Directory.Exists(animationRoot))
+                return Invalid("DocumentationPackageSourceMissing");
+            string[] sourceFiles = Directory.GetFiles(
+                animationRoot, "*.cs", SearchOption.AllDirectories);
+            string[] symbols = candidate.affectedApi.Split(new[] { ',' },
+                StringSplitOptions.RemoveEmptyEntries);
+            if (symbols.Length == 0)
+                return Invalid("DocumentationApiMappingMissing");
+            foreach (string raw in symbols)
+            {
+                string symbol = raw.Trim();
+                if (documentation.IndexOf(symbol, StringComparison.Ordinal) < 0)
+                    return Invalid("DocumentationSymbolMissing:" + symbol);
+                DocumentationMemberMapping[] memberMappings =
+                    candidate.members == null
+                        ? Array.Empty<DocumentationMemberMapping>()
+                        : candidate.members.Where(mapping => mapping != null
+                            && string.Equals(mapping.symbol, symbol,
+                                StringComparison.Ordinal)).ToArray();
+                if (memberMappings.Length != 1)
+                    return Invalid(
+                        "DocumentationMemberMappingMissingOrDuplicate:" + symbol);
+                DocumentationMemberMapping mapping = memberMappings[0];
+                if (!mapping.verified
+                    || string.IsNullOrWhiteSpace(mapping.declaringType)
+                    || string.IsNullOrWhiteSpace(mapping.memberName)
+                    || string.IsNullOrWhiteSpace(mapping.memberKind)
+                    || string.IsNullOrWhiteSpace(mapping.documentationSection)
+                    || string.IsNullOrWhiteSpace(mapping.sourcePath)
+                    || !File.Exists(mapping.sourcePath))
+                    return Invalid("DocumentationMemberMappingInvalid:" + symbol);
+                Type mappedType = ResolveLoadedType(mapping.declaringType);
+                if (mappedType == null)
+                    return Invalid("DocumentationMappedTypeMissing:" + symbol);
+                const System.Reflection.BindingFlags PublicFlags =
+                    System.Reflection.BindingFlags.Instance
+                    | System.Reflection.BindingFlags.Static
+                    | System.Reflection.BindingFlags.Public;
+                if (string.Equals(mapping.memberKind, "Type",
+                        StringComparison.Ordinal))
+                {
+                    if (!string.Equals(mappedType.Name, mapping.memberName,
+                            StringComparison.Ordinal))
+                        return Invalid("DocumentationMappedTypeMismatch:" + symbol);
+                }
+                else if (string.Equals(mapping.memberKind, "Attribute",
+                    StringComparison.Ordinal))
+                {
+                    System.Reflection.FieldInfo field = mappedType.GetField(
+                        mapping.memberName,
+                        System.Reflection.BindingFlags.Instance
+                        | System.Reflection.BindingFlags.Public
+                        | System.Reflection.BindingFlags.NonPublic);
+                    if (field == null || !field.GetCustomAttributes(true).Any(
+                        attribute => attribute != null
+                            && string.Equals(attribute.GetType().Name,
+                                symbol + "Attribute", StringComparison.Ordinal)))
+                        return Invalid("DocumentationMappedAttributeMissing:" + symbol);
+                }
+                else if (mappedType.GetMember(
+                    mapping.memberName, PublicFlags).Length == 0)
+                    return Invalid("DocumentationMappedMemberInfoMissing:" + symbol);
+                string memberSource = File.ReadAllText(mapping.sourcePath);
+                if (memberSource.IndexOf(mapping.memberName,
+                        StringComparison.Ordinal) < 0
+                    && memberSource.IndexOf(symbol,
+                        StringComparison.Ordinal) < 0)
+                    return Invalid("DocumentationMappedMemberMissing:" + symbol);
+                if (documentation.IndexOf(
+                        "## " + mapping.documentationSection,
+                        StringComparison.Ordinal) < 0)
+                    return Invalid("DocumentationSectionMissing:" + symbol);
+            }
+            string exactMethod = candidate.exactTest.Substring(
+                candidate.exactTest.LastIndexOf('.') + 1);
+            if (!sourceFiles.Any(file => File.ReadAllText(file).IndexOf(
+                    exactMethod, StringComparison.Ordinal) >= 0))
+                return Invalid("DocumentationExactTestHasNoSource");
             return RagdollArtifactValidationResult.Valid();
         }
 
@@ -331,6 +492,19 @@ namespace Hairibar.Ragdoll.Animation.Editor
                        StringComparison.OrdinalIgnoreCase)
                 || string.Equals(uri.Host, "docs.unity3d.com",
                        StringComparison.OrdinalIgnoreCase);
+        }
+
+        static Type ResolveLoadedType(string fullName)
+        {
+            if (string.IsNullOrWhiteSpace(fullName)) return null;
+            System.Reflection.Assembly[] assemblies =
+                AppDomain.CurrentDomain.GetAssemblies();
+            for (int index = 0; index < assemblies.Length; index++)
+            {
+                Type type = assemblies[index].GetType(fullName, false);
+                if (type != null) return type;
+            }
+            return null;
         }
 
         static bool IsPassed(XElement element)
@@ -397,6 +571,20 @@ namespace Hairibar.Ragdoll.Animation.Editor
             public bool succeeded = false;
             public int frames = 0;
             public ScenarioAssertion[] assertions = Array.Empty<ScenarioAssertion>();
+            public PerformanceEvidence[] performance =
+                Array.Empty<PerformanceEvidence>();
+        }
+
+        [Serializable]
+        sealed class PerformanceEvidence
+        {
+            public int puppets = 0;
+            public string mode = string.Empty;
+            public long cpuMedianNanoseconds = 0L;
+            public long cpuP95Nanoseconds = 0L;
+            public long memoryMedianBytes = 0L;
+            public long memoryP95Bytes = 0L;
+            public long maximumGcAllocatedInFrame = 0L;
         }
 
         [Serializable]
@@ -430,6 +618,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
         sealed class CriticalPathEvidence
         {
             public string name = string.Empty;
+            public string measurementScope = string.Empty;
             public bool succeeded = false;
             public int samples = 0;
             public long gcAllocatedBytes = 0L;
@@ -452,6 +641,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
             public bool development = false;
             public bool allowDebugging = false;
             public bool outputExists = false;
+            public string output = string.Empty;
             public BuildDiagnostic[] diagnostics = Array.Empty<BuildDiagnostic>();
         }
 
@@ -468,6 +658,8 @@ namespace Hairibar.Ragdoll.Animation.Editor
         {
             public int schemaVersion = 0;
             public bool succeeded = false;
+            public string documentPath = string.Empty;
+            public string documentSha256 = string.Empty;
             public DocumentationEntry[] entries =
                 Array.Empty<DocumentationEntry>();
         }
@@ -481,6 +673,20 @@ namespace Hairibar.Ragdoll.Animation.Editor
             public string exactTest = string.Empty;
             public string[] artifactKinds = Array.Empty<string>();
             public bool audited = false;
+            public DocumentationMemberMapping[] members =
+                Array.Empty<DocumentationMemberMapping>();
+        }
+
+        [Serializable]
+        sealed class DocumentationMemberMapping
+        {
+            public string symbol = string.Empty;
+            public string declaringType = string.Empty;
+            public string memberName = string.Empty;
+            public string memberKind = string.Empty;
+            public string documentationSection = string.Empty;
+            public string sourcePath = string.Empty;
+            public bool verified = false;
         }
     }
 }

@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
@@ -118,6 +119,285 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [UnityTest]
+        public IEnumerator C04_SerializedPuppetEventsHaveDeterministicPhases()
+        {
+            RuntimeRig rig = CreateRuntime();
+            yield return null;
+            RagdollPuppetBehaviour puppet = rig.Result.PuppetBehaviour;
+            List<string> phases = new List<string>();
+            puppet.OnLoseBalance = CreatePuppetEvent(
+                () => phases.Add("lose"));
+            puppet.OnLoseBalanceFromPuppet = CreatePuppetEvent(
+                () => phases.Add("lose-puppet"));
+            puppet.OnRegainBalance = CreatePuppetEvent(
+                () => phases.Add("regain"));
+            puppet.OnGetUpProne = CreatePuppetEvent(
+                () => phases.Add("prone"));
+            puppet.OnGetUpSupine = CreatePuppetEvent(
+                () => phases.Add("supine"));
+
+            InvokePrivate(
+                puppet,
+                "InvokeTransitionEvents",
+                RagdollPuppetState.Puppet,
+                RagdollPuppetState.Unpinned,
+                RagdollPuppetTransitionReason.TargetDrift);
+            InvokePrivate(
+                puppet,
+                "InvokeTransitionEvents",
+                RagdollPuppetState.GetUp,
+                RagdollPuppetState.Puppet,
+                RagdollPuppetTransitionReason.GetUpCompleted);
+            InvokePrivate(
+                puppet,
+                "InvokeTransitionEvents",
+                RagdollPuppetState.Puppet,
+                RagdollPuppetState.Unpinned,
+                RagdollPuppetTransitionReason.LifecycleDeath);
+            InvokePrivate(
+                puppet,
+                "InvokeGetUpEvent",
+                RagdollGetUpOrientation.Prone);
+            InvokePrivate(
+                puppet,
+                "InvokeGetUpEvent",
+                RagdollGetUpOrientation.Supine);
+
+            CollectionAssert.AreEqual(
+                new[] { "lose", "lose-puppet", "regain", "prone", "supine" },
+                phases);
+        }
+
+        [UnityTest]
+        public IEnumerator C07_ReactivationTeleportAndSubscriberExceptions()
+        {
+            RuntimeRig rig = CreateRuntime();
+            yield return null;
+            RagdollBehaviourController controller = rig.Result.Behaviours;
+            GameObject failingObject = new GameObject("Failing Behaviour Hook");
+            failingObject.transform.SetParent(controller.BehaviourRoot, false);
+            BehaviourHookProbe failing =
+                failingObject.AddComponent<BehaviourHookProbe>();
+            failing.Throw = true;
+            GameObject passingObject = new GameObject("Passing Behaviour Hook");
+            passingObject.transform.SetParent(controller.BehaviourRoot, false);
+            BehaviourHookProbe passing =
+                passingObject.AddComponent<BehaviourHookProbe>();
+            failing.InitializeInternal(controller.Context);
+            passing.InitializeInternal(controller.Context);
+
+            List<RagdollBehaviourBase> registered =
+                new List<RagdollBehaviourBase>(controller.Behaviours);
+            registered.Add(failing);
+            registered.Add(passing);
+            SetField(
+                controller,
+                "collection",
+                new RagdollBehaviourCollection(registered.ToArray()));
+
+            LogAssert.Expect(
+                LogType.Exception,
+                new Regex("expected reactivation hook failure"));
+            controller.ReactivateAfterAnimator();
+            Assert.That(failing.ReactivateCount, Is.EqualTo(1));
+            Assert.That(passing.ReactivateCount, Is.EqualTo(1));
+
+            Quaternion rotation = Quaternion.Euler(0f, 35f, 0f);
+            Vector3 translation = new Vector3(2f, 0.5f, -1f);
+            Vector3 pivot = new Vector3(0.25f, 0f, 0.75f);
+            LogAssert.Expect(
+                LogType.Exception,
+                new Regex("expected teleport hook failure"));
+            controller.NotifyTeleported(
+                rotation,
+                translation,
+                pivot,
+                true);
+            Assert.That(failing.TeleportCount, Is.EqualTo(1));
+            Assert.That(passing.TeleportCount, Is.EqualTo(1));
+            Assert.That(Quaternion.Angle(passing.LastRotation, rotation),
+                Is.LessThan(0.001f));
+            Assert.That(passing.LastTranslation, Is.EqualTo(translation));
+            Assert.That(passing.LastPivot, Is.EqualTo(pivot));
+            Assert.That(passing.LastMoveToTarget, Is.True);
+        }
+
+        [Test]
+        public void D18_MasterPinAndMuscleAreIndependent()
+        {
+            BoneProfile pinOnly = CreateAuthorityProfile();
+            RagdollMasterAuthority.Apply(
+                ref pinOnly,
+                1f,
+                0f,
+                1f,
+                1f);
+            Assert.That(pinOnly.PositionPinWeight, Is.EqualTo(1f));
+            Assert.That(pinOnly.rotationAlpha, Is.Zero);
+            Assert.That(pinOnly.positionAlpha, Is.EqualTo(4f));
+
+            BoneProfile muscleOnly = CreateAuthorityProfile();
+            RagdollMasterAuthority.Apply(
+                ref muscleOnly,
+                0f,
+                1f,
+                1f,
+                1f);
+            Assert.That(muscleOnly.PositionPinWeight, Is.Zero);
+            Assert.That(muscleOnly.rotationAlpha, Is.EqualTo(8f));
+            Assert.That(muscleOnly.positionAlpha, Is.EqualTo(4f));
+        }
+
+        [Test]
+        public void D26_UnpinnedVelocityLimitHandlesExtremeValues()
+        {
+            Vector3 original = new Vector3(3f, 4f, 0f);
+            Vector3 clamped =
+                RagdollPuppetBehaviourMath.LimitVelocity(original, 2f);
+            Assert.That(clamped.magnitude, Is.EqualTo(2f).Within(0.0001f));
+            Assert.That(Vector3.Dot(clamped.normalized, original.normalized),
+                Is.EqualTo(1f).Within(0.0001f));
+            Assert.That(
+                RagdollPuppetBehaviourMath.LimitVelocity(
+                    original,
+                    float.PositiveInfinity),
+                Is.EqualTo(original));
+            Assert.That(
+                RagdollPuppetBehaviourMath.LimitVelocity(original, 0f),
+                Is.EqualTo(Vector3.zero));
+        }
+
+        [Test]
+        public void D28_AuthoredZeroPinKnockoutIsConfigurable()
+        {
+            bool disabled = RagdollPuppetBehaviourMath.ShouldLoseBalance(
+                2f,
+                1f,
+                0f,
+                0f,
+                1f,
+                1f,
+                false);
+            bool enabled = RagdollPuppetBehaviourMath.ShouldLoseBalance(
+                2f,
+                1f,
+                0f,
+                0f,
+                1f,
+                1f,
+                true);
+            Assert.That(disabled, Is.False);
+            Assert.That(enabled, Is.True);
+        }
+
+        [UnityTest]
+        public IEnumerator G02_DeterministicExternalSolverRunsAfterMapping()
+        {
+            RuntimeRig rig = CreateRuntime();
+            yield return null;
+            GameObject schedulerObject = new GameObject("G02 IK Scheduler");
+            schedulerObject.SetActive(false);
+            ObservingIKSolver solver =
+                schedulerObject.AddComponent<ObservingIKSolver>();
+            solver.ObservedTarget = rig.TargetChild;
+            RagdollIKScheduler scheduler =
+                schedulerObject.AddComponent<RagdollIKScheduler>();
+            scheduler.Configure(
+                rig.Result.Animator,
+                RagdollIKSolvePhase.AfterPhysics,
+                new MonoBehaviour[] { solver });
+            RagdollBoneHandle child = rig.Bindings.GetHandleAt(1);
+            rig.Result.Animator.MasterMappingWeight = 1f;
+            rig.Result.Animator.SetBoneMappingWeights(
+                child,
+                new RagdollMappingWeights(0f, 1f));
+            rig.Result.Animator.FixTargetTransforms = false;
+            InvokePrivate(rig.Result.Animator, "ReadAnimatedPose", false, false);
+            Quaternion before = rig.TargetChild.rotation;
+            schedulerObject.SetActive(true);
+
+            rig.ChildBody.rotation = Quaternion.Euler(20f, 65f, -15f);
+            RagdollAnimator.AnimatedPair childPair = FindPair(rig, 1);
+            childPair.GetMappedTargetWorldPose(
+                out _,
+                out Quaternion expectedRotation);
+            InvokePrivate(rig.Result.Animator, "MapRagdollToTarget");
+            Quaternion mapped = rig.TargetChild.rotation;
+            Assert.That(Quaternion.Angle(mapped, before), Is.GreaterThan(10f));
+            Assert.That(Quaternion.Angle(mapped, expectedRotation),
+                Is.LessThan(0.001f));
+
+            Assert.That(solver.SolveCount, Is.EqualTo(1));
+            Assert.That(Quaternion.Angle(solver.ObservedRotation, mapped),
+                Is.LessThan(0.001f));
+            Assert.That(solver.AutomaticUpdates, Is.False);
+            schedulerObject.SetActive(false);
+            Assert.That(solver.AutomaticUpdates, Is.True);
+            UnityEngine.Object.DestroyImmediate(schedulerObject);
+        }
+
+        [UnityTest]
+        public IEnumerator G04_SolverAndPublicHooksPreserveOrderAndIsolation()
+        {
+            RuntimeRig rig = CreateRuntime();
+            yield return null;
+            List<string> trace = new List<string>();
+            rig.Result.Animator.OnRead += () =>
+                throw new InvalidOperationException("expected read hook failure");
+            rig.Result.Animator.OnRead += () => trace.Add("read-after");
+            rig.Result.Animator.OnWrite += () =>
+                throw new InvalidOperationException("expected write hook failure");
+            rig.Result.Animator.OnWrite += () => trace.Add("write-after");
+
+            GameObject schedulerObject = new GameObject("G04 IK Scheduler");
+            schedulerObject.SetActive(false);
+            OrderedIKSolver first = schedulerObject.AddComponent<OrderedIKSolver>();
+            first.Label = "solver-first";
+            first.Trace = trace;
+            ThrowingOrderedIKSolver failing =
+                schedulerObject.AddComponent<ThrowingOrderedIKSolver>();
+            failing.Trace = trace;
+            OrderedIKSolver last = schedulerObject.AddComponent<OrderedIKSolver>();
+            last.Label = "solver-last";
+            last.Trace = trace;
+            RagdollIKScheduler scheduler =
+                schedulerObject.AddComponent<RagdollIKScheduler>();
+            scheduler.Configure(
+                rig.Result.Animator,
+                RagdollIKSolvePhase.BeforePhysics,
+                new MonoBehaviour[] { first, failing, last });
+            schedulerObject.SetActive(true);
+
+            LogAssert.Expect(LogType.Exception,
+                new Regex("expected read hook failure"));
+            LogAssert.Expect(LogType.Exception,
+                new Regex("expected deterministic IK failure"));
+            InvokePrivate(rig.Result.Animator, "InvokeReadHooks");
+            LogAssert.Expect(LogType.Exception,
+                new Regex("expected write hook failure"));
+            InvokePrivate(rig.Result.Animator, "InvokeWriteHooks");
+
+            CollectionAssert.AreEqual(
+                new[]
+                {
+                    "read-after",
+                    "solver-first",
+                    "solver-failing",
+                    "solver-last",
+                    "write-after"
+                },
+                trace);
+            Assert.That(first.AutomaticUpdates, Is.False);
+            Assert.That(failing.AutomaticUpdates, Is.False);
+            Assert.That(last.AutomaticUpdates, Is.False);
+            schedulerObject.SetActive(false);
+            Assert.That(first.AutomaticUpdates, Is.True);
+            Assert.That(failing.AutomaticUpdates, Is.True);
+            Assert.That(last.AutomaticUpdates, Is.True);
+            UnityEngine.Object.DestroyImmediate(schedulerObject);
+        }
+
+        [UnityTest]
         public IEnumerator B04_ActiveKinematicDisabledApplyDistinctPhysicalModes()
         {
             RuntimeRig rig = CreateRuntime();
@@ -205,19 +485,19 @@ namespace Hairibar.Ragdoll.Animation.Tests
             RagdollLifecycleSettings settings = ImmediateLifecycleSettings();
 
             rig.Result.Animator.Kill(settings);
-            yield return null;
+            yield return new WaitForFixedUpdate();
             Assert.That(rig.Result.Animator.IsDead, Is.True);
             Assert.That(rig.RootJoint.slerpDrive.positionSpring, Is.EqualTo(0f));
 
             rig.RootBody.Sleep();
             rig.ChildBody.Sleep();
             rig.Result.Animator.Freeze(settings);
-            yield return null;
+            yield return new WaitForFixedUpdate();
             Assert.That(rig.Result.Animator.IsFrozen, Is.True);
             Assert.That(rig.Result.Simulation.IsLifecycleFreezeSuspended, Is.True);
 
             rig.Result.Animator.Resurrect();
-            yield return null;
+            yield return new WaitForFixedUpdate();
             Assert.That(rig.Result.Animator.IsAlive, Is.True);
             Assert.That(rig.Result.Simulation.IsLifecycleFreezeSuspended, Is.False);
             Assert.That(rig.Puppet.activeSelf, Is.True);
@@ -604,6 +884,25 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 true);
         }
 
+        static BoneProfile CreateAuthorityProfile()
+        {
+            return new BoneProfile
+            {
+                positionAlpha = 4f,
+                positionDampingRatio = 2f,
+                rotationAlpha = 8f,
+                rotationDampingRatio = 3f
+            };
+        }
+
+        static RagdollPuppetEvent CreatePuppetEvent(
+            UnityEngine.Events.UnityAction action)
+        {
+            RagdollPuppetEvent result = new RagdollPuppetEvent();
+            result.UnityEvent.AddListener(action);
+            return result;
+        }
+
         static object CreateBindings(
             BoneName root,
             ConfigurableJoint rootJoint,
@@ -688,6 +987,83 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 float deltaTime)
             {
                 if (!Trace.Contains("matching")) Trace.Add("matching");
+            }
+        }
+
+        sealed class BehaviourHookProbe : RagdollBehaviourBase
+        {
+            internal bool Throw;
+            internal int ReactivateCount;
+            internal int TeleportCount;
+            internal Quaternion LastRotation;
+            internal Vector3 LastTranslation;
+            internal Vector3 LastPivot;
+            internal bool LastMoveToTarget;
+
+            protected override void OnBehaviourReactivated()
+            {
+                ReactivateCount++;
+                if (Throw)
+                {
+                    throw new InvalidOperationException(
+                        "expected reactivation hook failure");
+                }
+            }
+
+            protected override void OnBehaviourTeleported(
+                Quaternion deltaRotation,
+                Vector3 deltaPosition,
+                Vector3 pivot,
+                bool moveToTarget)
+            {
+                TeleportCount++;
+                LastRotation = deltaRotation;
+                LastTranslation = deltaPosition;
+                LastPivot = pivot;
+                LastMoveToTarget = moveToTarget;
+                if (Throw)
+                {
+                    throw new InvalidOperationException(
+                        "expected teleport hook failure");
+                }
+            }
+        }
+
+        sealed class ObservingIKSolver : MonoBehaviour, IRagdollIKSolver
+        {
+            internal Transform ObservedTarget;
+            internal int SolveCount;
+            internal Quaternion ObservedRotation;
+            public bool IsSolverEnabled => enabled;
+            public bool AutomaticUpdates { get; set; } = true;
+
+            public void Solve()
+            {
+                SolveCount++;
+                ObservedRotation = ObservedTarget.rotation;
+            }
+        }
+
+        sealed class OrderedIKSolver : MonoBehaviour, IRagdollIKSolver
+        {
+            internal string Label;
+            internal List<string> Trace;
+            public bool IsSolverEnabled => enabled;
+            public bool AutomaticUpdates { get; set; } = true;
+            public void Solve() => Trace.Add(Label);
+        }
+
+        sealed class ThrowingOrderedIKSolver : MonoBehaviour, IRagdollIKSolver
+        {
+            internal List<string> Trace;
+            public bool IsSolverEnabled => enabled;
+            public bool AutomaticUpdates { get; set; } = true;
+
+            public void Solve()
+            {
+                Trace.Add("solver-failing");
+                throw new InvalidOperationException(
+                    "expected deterministic IK failure");
             }
         }
     }

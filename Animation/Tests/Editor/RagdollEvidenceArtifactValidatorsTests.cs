@@ -23,7 +23,7 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
         }
 
         [Test]
-        public void NUnit_RequiresExactCompletePassingParameterizedCases()
+        public void J02_NUnitEditModeArtifactRequiresCompletePassingRunAndExactCases()
         {
             string path = Write("nunit.xml",
                 "<test-run result='Passed' failed='0' skipped='0' inconclusive='0' warnings='0'>"
@@ -77,7 +77,27 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
         }
 
         [Test]
-        public void Profiler_RequiresWarmupSamplesStatisticsAndZeroCriticalGc()
+        public void Player_PerformanceGateRequiresCompleteMeasuredMatrix()
+        {
+            string path = Write("performance-player.json",
+                PerformancePlayerJson(true));
+            Assert.That(Validate(RagdollEvidenceKind.WindowsPlayerScenario,
+                path, new RagdollArtifactValidationContext
+                {
+                    ExpectedCapabilityId = "H08"
+                }).IsValid, Is.True);
+
+            path = Write("incomplete-performance-player.json",
+                PerformancePlayerJson(false));
+            Assert.That(Validate(RagdollEvidenceKind.WindowsPlayerScenario,
+                path, new RagdollArtifactValidationContext
+                {
+                    ExpectedCapabilityId = "H08"
+                }).IsValid, Is.False);
+        }
+
+        [Test]
+        public void J05_ProfilerArtifactRequiresWarmupStatisticsAndZeroCriticalGc()
         {
             string path = Write("profiler.json", ProfilerJson(0));
             Assert.That(Validate(RagdollEvidenceKind.ProfilerResult,
@@ -92,7 +112,7 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
         }
 
         [Test]
-        public void BuildReport_RequiresAllDevelopmentTargetsAndRejectsOwnWarnings()
+        public void J01_BuildReportRequiresAllDevelopmentTargetsAndRejectsOwnedWarnings()
         {
             string path = Write("builds.json", BuildJson(false));
             Assert.That(Validate(RagdollEvidenceKind.BuildReport,
@@ -104,7 +124,7 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
         }
 
         [Test]
-        public void SceneArtifact_RequiresFourExecutedScenes()
+        public void J04_SceneArtifactRequiresFourExecutedRegressionScenes()
         {
             string path = Write("scenes.json", "{\"schemaVersion\":2,\"succeeded\":true,\"scenes\":"
                 + ScenarioArray(true) + "}");
@@ -117,13 +137,36 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
         }
 
         [Test]
-        public void DocumentationAudit_RequiresOfficialSourceAndExecutableMapping()
+        public void J07_DocumentationAuditRequiresOfficialSourceAndExecutableMapping()
         {
+            string package = Path.Combine(directory, "Package");
+            string documentationDirectory = Path.Combine(
+                package, "Documentation~", "Certification");
+            string sourceDirectory = Path.Combine(package, "Animation", "Tests");
+            Directory.CreateDirectory(documentationDirectory);
+            Directory.CreateDirectory(sourceDirectory);
+            string document = Path.Combine(documentationDirectory, "migration.md");
+            File.WriteAllText(document,
+                "## Test\nMasterMappingWeight http://www.root-motion.com/puppetmasterdox/html/pages.html");
+            string sourcePath = Path.Combine(sourceDirectory, "Evidence.cs");
+            File.WriteAllText(sourcePath,
+                "class RagdollAnimator { float MasterMappingWeight; } // B01_Test "
+                + "J07_DocumentationAuditRequiresOfficialSourceAndExecutableMapping");
+            string escapedDocument = document.Replace("\\", "\\\\");
+            string escapedSource = sourcePath.Replace("\\", "\\\\");
+            string documentHash = RagdollClosurePipeline.ComputeSha256(document);
             string path = Write("docs.json",
-                "{\"schemaVersion\":2,\"succeeded\":true,\"entries\":[{"
+                "{\"schemaVersion\":2,\"succeeded\":true,\"documentPath\":\""
+                + escapedDocument + "\",\"documentSha256\":\"" + documentHash
+                + "\",\"entries\":[{"
                 + "\"id\":\"B01\",\"sourceUrl\":\"http://www.root-motion.com/puppetmasterdox/html/pages.html\","
-                + "\"affectedApi\":\"RagdollAnimator\",\"exactTest\":\"Fixture.B01_Test\","
-                + "\"artifactKinds\":[\"NUnitPlayMode\"],\"audited\":true}]}");
+                + "\"affectedApi\":\"MasterMappingWeight\",\"exactTest\":\"Fixture.B01_Test\","
+                + "\"artifactKinds\":[\"NUnitPlayMode\"],\"audited\":true,"
+                + "\"members\":[{\"symbol\":\"MasterMappingWeight\","
+                + "\"declaringType\":\"Hairibar.Ragdoll.Animation.RagdollAnimator\","
+                + "\"memberName\":\"MasterMappingWeight\",\"memberKind\":\"Property\","
+                + "\"documentationSection\":\"Test\",\"sourcePath\":\""
+                + escapedSource + "\",\"verified\":true}]}]}");
             Assert.That(Validate(RagdollEvidenceKind.DocumentationAudit, path,
                 new RagdollArtifactValidationContext { ExpectedCapabilityId = "B01" })
                 .IsValid, Is.True);
@@ -134,6 +177,19 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
             Assert.That(Validate(RagdollEvidenceKind.DocumentationAudit, path,
                 new RagdollArtifactValidationContext { ExpectedCapabilityId = "B01" })
                 .IsValid, Is.False);
+
+            File.AppendAllText(document, " changed-after-audit");
+            RagdollArtifactValidationResult stale = Validate(
+                RagdollEvidenceKind.DocumentationAudit,
+                Write("stale.json", File.ReadAllText(Write("original.json",
+                    File.ReadAllText(path).Replace("example.com",
+                        "www.root-motion.com")))),
+                new RagdollArtifactValidationContext
+                {
+                    ExpectedCapabilityId = "B01"
+                });
+            Assert.That(stale.IsValid, Is.False);
+            Assert.That(stale.Reason, Is.EqualTo("DocumentationHashMismatch"));
         }
 
         RagdollArtifactValidationResult Validate(
@@ -181,6 +237,42 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
             return "[" + string.Join(",", values) + "]";
         }
 
+        static string PerformancePlayerJson(bool complete)
+        {
+            int[] populations = { 1, 10, 25, 50 };
+            string[] modes =
+            {
+                "ActiveTree", "ActiveFlat", "Kinematic", "Disabled"
+            };
+            var cells = new System.Collections.Generic.List<string>();
+            foreach (int population in populations)
+            foreach (string mode in modes)
+            {
+                if (!complete && population == 50 && mode == "Disabled")
+                    continue;
+                cells.Add("{\"puppets\":" + population + ",\"mode\":\""
+                    + mode + "\",\"cpuMedianNanoseconds\":1,"
+                    + "\"cpuP95Nanoseconds\":2,\"memoryMedianBytes\":3,"
+                    + "\"memoryP95Bytes\":4,\"maximumGcAllocatedInFrame\":0}");
+            }
+            string standardAssertion =
+                "[{\"name\":\"completed\",\"succeeded\":true}]";
+            string performanceAssertions =
+                "[{\"name\":\"FlattenHierarchy completed\",\"succeeded\":true},"
+                + "{\"name\":\"TreeHierarchy completed\",\"succeeded\":true}]";
+            return "{\"schemaVersion\":2,\"succeeded\":true,"
+                + "\"platform\":\"Windows64\",\"scenarios\":["
+                + "{\"name\":\"CoreLifecycle\",\"succeeded\":true,"
+                + "\"frames\":1,\"assertions\":" + standardAssertion + "},"
+                + "{\"name\":\"HumanoidBakerFall\",\"succeeded\":true,"
+                + "\"frames\":1,\"assertions\":" + standardAssertion + "},"
+                + "{\"name\":\"HierarchyProps\",\"succeeded\":true,"
+                + "\"frames\":1,\"assertions\":" + standardAssertion + "},"
+                + "{\"name\":\"CollisionsPerformance\",\"succeeded\":true,"
+                + "\"frames\":600,\"assertions\":" + performanceAssertions
+                + ",\"performance\":[" + string.Join(",", cells) + "]}]}";
+        }
+
         static string ProfilerJson(long allocation)
         {
             string[] names =
@@ -191,7 +283,8 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
             string[] paths = new string[names.Length];
             for (int index = 0; index < names.Length; index++)
                 paths[index] = "{\"name\":\"" + names[index]
-                    + "\",\"succeeded\":true,\"samples\":600,"
+                    + "\",\"measurementScope\":\"exact-" + names[index] + "\","
+                    + "\"succeeded\":true,\"samples\":600,"
                     + "\"gcAllocatedBytes\":" + (index == 0 ? allocation : 0)
                     + ",\"maxGcAllocatedBytesInFrame\":0}";
             return "{\"schemaVersion\":2,\"succeeded\":true,\"warmupFrames\":120,"
@@ -200,18 +293,25 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
                 + string.Join(",", paths) + "]}";
         }
 
-        static string BuildJson(bool ownWarning)
+        string BuildJson(bool ownWarning)
         {
             string[] targets = { "Windows64", "Linux64", "macOS", "WebGL" };
             string[] builds = new string[targets.Length];
             for (int index = 0; index < targets.Length; index++)
             {
+                string output = Path.Combine(directory, "build-" + targets[index]);
+                if (targets[index] == "WebGL" || targets[index] == "macOS")
+                    Directory.CreateDirectory(output);
+                else
+                    File.WriteAllText(output, "player");
+                string escapedOutput = output.Replace("\\", "\\\\");
                 string diagnostics = index == 0 && ownWarning
                     ? "[{\"severity\":\"Warning\",\"own\":true,\"message\":\"Hairibar warning\"}]"
                     : "[{\"severity\":\"Warning\",\"own\":false,\"message\":\"external\"}]";
                 builds[index] = "{\"target\":\"" + targets[index]
                     + "\",\"result\":\"Succeeded\",\"succeeded\":true,"
                     + "\"development\":true,\"allowDebugging\":true,\"outputExists\":true,"
+                    + "\"output\":\"" + escapedOutput + "\","
                     + "\"diagnostics\":" + diagnostics + "}";
             }
             return "{\"schemaVersion\":2,\"builds\":["

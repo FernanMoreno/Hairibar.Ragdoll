@@ -341,6 +341,15 @@ namespace Hairibar.Ragdoll.Animation
             }
         }
 
+        /// <summary>
+        /// Executes the exact production matching pass for allocation diagnostics.
+        /// Internal visibility is restricted to package certification assemblies.
+        /// </summary>
+        internal void RunAnimationMatchingForDiagnostics(float deltaTime)
+        {
+            DoAnimationMatching(deltaTime);
+        }
+
         void EvaluateControlledAnimator(float deltaTime)
         {
             ReconcileFixedAnimatorOwnership();

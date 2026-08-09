@@ -27,6 +27,9 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Physics.gravity = new Vector3(0f, -9.81f, 0f);
             rig = new GetUpPhysicalRig();
             yield return null;
+            rig.Result.Animator.FixTargetTransforms = false;
+            rig.Result.Simulation.SetModeImmediate(RagdollSimulationMode.Active);
+            yield return new WaitForFixedUpdate();
             Assert.That(rig.Result.PuppetBehaviour.IsInitialized, Is.True);
             Assert.That(rig.Result.PuppetBehaviour.IsActive, Is.True);
         }
@@ -115,6 +118,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
             puppet.MaxGetUpVelocity = 2f;
             puppet.State = RagdollPuppetState.Unpinned;
 
+            rig.RootBody.constraints = RigidbodyConstraints.None;
             rig.RootBody.linearVelocity = Vector3.right * 2f;
             Assert.That(puppet.TryBeginGetUp(), Is.False,
                 "RootMotion documents velocity as less than maxGetUpVelocity.");
@@ -226,6 +230,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
         {
             Physics.gravity = new Vector3(0f, -6f, -8f);
             Vector3 effectiveUp = -Physics.gravity.normalized;
+            yield return new WaitForFixedUpdate();
             RagdollPuppetBehaviour puppet = rig.Puppet;
             puppet.CanGetUp = false;
             puppet.CanMoveTarget = true;
@@ -234,7 +239,8 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Assert.That(puppet.BeginGetUpImmediately(
                 RagdollGetUpOrientation.Prone), Is.True);
 
-            rig.Result.Behaviours.ModifyPose(
+            Assert.That(puppet.TargetAlignmentPending, Is.True);
+            puppet.ModifyTargetPoseInternal(
                 rig.Result.Behaviours.Context.Pairs);
 
             Vector3 expected = rig.RootBody.position
@@ -258,7 +264,9 @@ namespace Hairibar.Ragdoll.Animation.Tests
             puppet.OnGetUpProne = CreateEvent(() => prone++);
             puppet.OnGetUpSupine = CreateEvent(() => supine++);
 
-            rig.RootBody.rotation = Quaternion.AngleAxis(-90f, Vector3.forward);
+            rig.RootBody.transform.rotation =
+                Quaternion.AngleAxis(-90f, Vector3.forward);
+            Physics.SyncTransforms();
             puppet.State = RagdollPuppetState.Unpinned;
             Assert.That(puppet.BeginGetUpImmediately(), Is.True);
             Assert.That(puppet.GetUpOrientation,
@@ -267,7 +275,9 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Assert.That(supine, Is.Zero);
 
             Assert.That(puppet.InterruptGetUp(), Is.True);
-            rig.RootBody.rotation = Quaternion.AngleAxis(90f, Vector3.forward);
+            rig.RootBody.transform.rotation =
+                Quaternion.AngleAxis(90f, Vector3.forward);
+            Physics.SyncTransforms();
             Assert.That(puppet.BeginGetUpImmediately(), Is.True);
             Assert.That(puppet.GetUpOrientation,
                 Is.EqualTo(RagdollGetUpOrientation.Supine));
@@ -317,10 +327,12 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Assert.That(blockedRoot.RotationWeight, Is.Zero);
             Assert.That(mappedChild.PositionWeight, Is.GreaterThan(0f));
 
-            rig.RootBody.position = authoredRoot + Vector3.right * 3f;
+            rig.RootBody.transform.position = authoredRoot + Vector3.right * 3f;
+            Physics.SyncTransforms();
             Assert.That(puppet.BeginGetUpImmediately(
                 RagdollGetUpOrientation.Prone), Is.True);
-            rig.Result.Behaviours.ModifyPose(
+            Assert.That(puppet.TargetAlignmentPending, Is.True);
+            puppet.ModifyTargetPoseInternal(
                 rig.Result.Behaviours.Context.Pairs);
             Assert.That(rig.Target.position, Is.EqualTo(authoredRoot));
 
@@ -329,7 +341,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
             puppet.CanMoveTarget = true;
             Assert.That(puppet.BeginGetUpImmediately(
                 RagdollGetUpOrientation.Prone), Is.True);
-            rig.Result.Behaviours.ModifyPose(
+            puppet.ModifyTargetPoseInternal(
                 rig.Result.Behaviours.Context.Pairs);
             Assert.That(Vector3.Distance(rig.Target.position, authoredRoot),
                 Is.GreaterThan(2f));
@@ -387,6 +399,8 @@ namespace Hairibar.Ragdoll.Animation.Tests
             AssertValidTeleportedGetUp(puppet, manualDestination);
             Physics.Simulate(Time.fixedDeltaTime);
             rig.Result.Animator.CompleteManualSimulation();
+            Assert.That(puppet.State, Is.EqualTo(RagdollPuppetState.GetUp),
+                "CompleteManualSimulation changed the active GetUp state.");
             rig.Result.Animator.enabled = true;
             Physics.simulationMode = originalSimulationMode;
             Assert.That(puppet.State, Is.EqualTo(RagdollPuppetState.GetUp));
@@ -404,6 +418,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
                     yield break;
                 }
                 yield return null;
+                yield return new WaitForFixedUpdate();
             }
             Assert.Fail("Teleport did not commit from " + driver.Phase + ".");
         }
@@ -488,7 +503,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
             puppetRoot.SetActive(true);
             Assert.That(bindings.IsInitialized, Is.True);
 
-            GameObject target = new GameObject("GetUp Target");
+            GameObject target = new GameObject("GetUp Puppet");
             GameObject targetChild = new GameObject("Child");
             targetChild.transform.SetParent(target.transform, false);
             targetChild.transform.localPosition = Vector3.up;

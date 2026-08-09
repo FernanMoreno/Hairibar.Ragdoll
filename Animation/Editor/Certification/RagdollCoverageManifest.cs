@@ -625,22 +625,32 @@ namespace Hairibar.Ragdoll.Animation.Editor
         }
 
         static bool HasNUnitArtifactFor(
+            RagdollEvidenceKind requiredKind,
+            string exactTestName,
             TestEvidence evidence,
             RagdollEvidenceArtifact[] artifacts,
             NUnitResultIndex results)
         {
-            RagdollEvidenceKind expected = evidence.Kind == "EditMode"
+            RagdollEvidenceKind primaryKind = evidence.Kind == "EditMode"
                 ? RagdollEvidenceKind.NUnitEditMode
                 : RagdollEvidenceKind.NUnitPlayMode;
-            return artifacts.Any(artifact => artifact.kind == expected
-                && results.ContainsInArtifact(evidence.FullName, artifact.path)
+            string requiredTest = string.IsNullOrWhiteSpace(exactTestName)
+                ? requiredKind == primaryKind ? evidence.FullName : null
+                : exactTestName;
+            if (string.IsNullOrWhiteSpace(requiredTest)) return false;
+
+            int expectedCases = string.Equals(
+                requiredTest, evidence.FullName, StringComparison.Ordinal)
+                    ? evidence.ExpectedParameterizedCases
+                    : 0;
+            return artifacts.Any(artifact => artifact.kind == requiredKind
+                && results.ContainsInArtifact(requiredTest, artifact.path)
                 && RagdollEvidenceArtifactValidators.Validate(
                     artifact,
                     new RagdollArtifactValidationContext
                     {
-                        ExactTestName = evidence.FullName,
-                        ExpectedParameterizedCases =
-                            evidence.ExpectedParameterizedCases
+                        ExactTestName = requiredTest,
+                        ExpectedParameterizedCases = expectedCases
                     }).IsValid);
         }
 
@@ -655,10 +665,20 @@ namespace Hairibar.Ragdoll.Animation.Editor
             {
                 RagdollEvidenceKind kind;
                 if (!Enum.TryParse(requiredKinds[index], out kind)) return false;
+                // AND semantics require a distinct descriptor of every declared
+                // kind. Never let the aggregate NUnit result index substitute a
+                // passing case from a different artifact kind.
+                if (!artifacts.Any(artifact => artifact.kind == kind))
+                    return false;
                 if (kind == RagdollEvidenceKind.NUnitEditMode
                     || kind == RagdollEvidenceKind.NUnitPlayMode)
                 {
-                    if (!HasNUnitArtifactFor(evidence, artifacts, results))
+                    RagdollCapabilityContract contract =
+                        RagdollCapabilityCatalog.Get(id);
+                    contract.ExactNUnitEvidenceTests.TryGetValue(
+                        kind, out string exactTestName);
+                    if (!HasNUnitArtifactFor(
+                        kind, exactTestName, evidence, artifacts, results))
                         return false;
                     continue;
                 }

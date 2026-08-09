@@ -76,6 +76,16 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
                     RagdollEvidenceKind.ProfilerResult,
                     RagdollEvidenceKind.WindowsPlayerScenario,
                 }));
+
+            RagdollCapabilityContract realtime =
+                RagdollCapabilityCatalog.Get("I07");
+            Assert.That(
+                realtime.ExactNUnitEvidenceTests[
+                    RagdollEvidenceKind.NUnitPlayMode],
+                Is.EqualTo(
+                    "Hairibar.Ragdoll.Animation.Tests." +
+                    "RagdollBakerRealtimeFramePlayModeEvidence." +
+                    "RealtimeSamplesAtMostOncePerRenderedFrame"));
         }
 
         static string[] Range(string prefix, int count)

@@ -10,6 +10,9 @@ namespace Hairibar.Ragdoll.Animation.Editor
     /// </summary>
     public sealed class RagdollCapabilityContract
     {
+        readonly Dictionary<RagdollEvidenceKind, string> exactNUnitEvidenceTests =
+            new Dictionary<RagdollEvidenceKind, string>();
+
         internal RagdollCapabilityContract(
             string id,
             string officialSource,
@@ -39,6 +42,25 @@ namespace Hairibar.Ragdoll.Animation.Editor
         public bool IsApplicable { get; }
         public string ExclusionReason { get; }
         public IReadOnlyList<RagdollEvidenceKind> RequiredEvidence { get; }
+        public IReadOnlyDictionary<RagdollEvidenceKind, string>
+            ExactNUnitEvidenceTests => exactNUnitEvidenceTests;
+
+        internal void SetExactNUnitEvidenceTest(
+            RagdollEvidenceKind kind,
+            string fullName)
+        {
+            if (kind != RagdollEvidenceKind.NUnitEditMode
+                && kind != RagdollEvidenceKind.NUnitPlayMode)
+                throw new ArgumentOutOfRangeException(nameof(kind));
+            if (string.IsNullOrWhiteSpace(fullName))
+                throw new ArgumentException(
+                    "An exact NUnit evidence test name is required.",
+                    nameof(fullName));
+            if (!RequiredEvidence.Contains(kind))
+                throw new InvalidOperationException(
+                    $"{Id} does not require {kind} evidence.");
+            exactNUnitEvidenceTests.Add(kind, fullName);
+        }
     }
 
     /// <summary>
@@ -209,7 +231,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
             {
                 S("PropMuscle", "A physical prop slot registers against exactly one compatible hand muscle.", "RagdollPropMuscle; RagdollPropSlot"),
                 S("Pickup/Drop/Switch", "Pickup, owner switch and drop commit atomically and fully roll back an invalid transfer.", "RagdollProp.PickUp; Drop; SwitchOwner"),
-                S("propRoot", "The prop mesh root reparents between animated Target and physical prop without changing world pose or scale.", "RagdollProp.MeshRoot"),
+                S("propRoot", "Pickup parents the physical prop root to the PropMuscle and the visual Mesh Root to its animated Target while preserving the authored local mesh alignment; drop restores the original hierarchy.", "RagdollProp.MeshRoot"),
                 S("Rigidbody", "CurrentRigidbody reports the body with physical ownership throughout standalone, transition and held states and never returns a destroyed body.", "RagdollProp.CurrentRigidbody"),
                 S("mass/layer/material", "Pickup overrides and drop exactly restores Rigidbody mass, collider layer and PhysicMaterial.", "RagdollProp; RagdollPropMuscle"),
                 S("internal collision ignores", "Internal ignores are acquired once per ownership and all released on drop or rollback.", "RagdollProp; Physics.IgnoreCollision"),
@@ -219,7 +241,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 S("additionalPin offset/weight/mass", "Runtime additional-pin offset, absolute weight and mass changes commit together and roll back on invalid ownership.", "RagdollAdditionalPin"),
                 S("dropProps", "BehaviourPuppet drop completes prop restoration before any hierarchy disconnect.", "RagdollPuppetBehaviour.DropProps; RagdollProp.Drop"),
                 S("PropMelee collider", "A held melee prop uses Capsule for its entire held state and restores Box on drop.", "RagdollPropMelee"),
-                S("PropMelee action", "A timed melee action changes radius, mass, material and absolute additional pin once, supports restart, and restores on every cancellation path.", "RagdollPropMelee.StartAction; BeginAction; EndAction"),
+                S("PropMelee action", "A timed melee action temporarily multiplies Capsule radius and Rigidbody mass, sets the additional-pin weight, supports restart, and restores on every cancellation path. RootMotion documents no action-specific PhysicMaterial change.", "RagdollPropMelee.StartAction; BeginAction; EndAction"),
                 S("centerOfMass", "Authored prop center of mass applies during physical ownership and restores exactly after action and drop.", "RagdollProp.CenterOfMass"),
             });
 
@@ -242,8 +264,8 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 S("maxAngularVelocity/maxDepenetrationVelocity/inertiaTensor", "Finite velocity, depenetration and inertia limits apply under valid extremes without non-finite state.", "RagdollQualityProfile; Rigidbody"),
                 S("kinematic/disabled/LOD", "Kinematic, Disabled and LOD budget transitions leave no active orphan bodies and restore quality.", "RagdollQualityController; RagdollSimulationModeController"),
                 S("collisionThreshold/maxCollisions", "Threshold and per-step collision budget bound accepted work under saturated contacts.", "CollisionThreshold; MaxCollisions"),
-                S("flat hierarchy", "Player profiling compares root-inclusive flat and tree layouts made through public APIs using real Puppets.", "FlattenHierarchy; RestoreHierarchy"),
-                S("muscle reduction", "Configurable LOD muscle reduction preserves every required root-to-active topology path.", "RagdollQualityController"),
+                S("flat hierarchy", "Player profiling compares root-inclusive flat and tree layouts made through public APIs using real Puppets.", "FlattenHierarchy; TreeHierarchy; HierarchyIsFlat"),
+                S("muscle reduction", "An explicitly authored reduced Puppet uses fewer registered muscles while preserving every retained root-to-active topology path. RootMotion recommends reducing muscle count but does not define a dynamic LOD-removal algorithm; selection of the reduced rig is Hairibar design.", "RagdollDefinitionBindings; RagdollRuntimeSetupService"),
                 S("collision broadcasters", "Collision relays with no consumers remain disabled and dispatching an empty hub allocates no managed memory after warm-up.", "RagdollCollisionRelay; RagdollCollisionHub"),
                 S("benchmarks", "Development Player profiles 1/10/25/50 real Puppets in Active-tree, Active-flat, Kinematic and Disabled, recording 120 warm-up and 600 measured frames, median/p95 CPU and memory, and critical-path GC.", "HairibarCertification; ProfilerRecorder"),
             }, UnityProfiler);
@@ -264,6 +286,21 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 S("key reduction", "Muscle and IK key reduction use separate tolerances and preserve required first and final keys.", "RagdollBaker; MuscleKeyReduction; IkKeyReduction"),
             }, UnityAnimator);
             RequireAdditional(result, "I07", RagdollEvidenceKind.NUnitPlayMode, RagdollEvidenceKind.ProfilerResult);
+            RequireExactNUnitTest(
+                result,
+                "I07",
+                RagdollEvidenceKind.NUnitPlayMode,
+                "Hairibar.Ragdoll.Animation.Tests." +
+                "RagdollBakerRealtimeFramePlayModeEvidence." +
+                "RealtimeSamplesAtMostOncePerRenderedFrame");
+            RequireAdditional(result, "I09", RagdollEvidenceKind.NUnitPlayMode);
+            RequireExactNUnitTest(
+                result,
+                "I09",
+                RagdollEvidenceKind.NUnitPlayMode,
+                "Hairibar.Ragdoll.Animation.Tests." +
+                "RagdollHumanoidCapabilityDirectPlayModeTests." +
+                "MultilayerAnimatorModesEventsRootMotionAndRetargeting");
 
             AddQuality(result);
             Validate(result);
@@ -320,6 +357,17 @@ namespace Hairibar.Ragdoll.Animation.Editor
             contracts[index] = C(current.Id, current.OfficialSource,
                 current.SourceLocator, current.ObservableClaim,
                 current.AffectedApis, evidence);
+        }
+
+        static void RequireExactNUnitTest(
+            List<RagdollCapabilityContract> contracts,
+            string id,
+            RagdollEvidenceKind kind,
+            string fullName)
+        {
+            int index = contracts.FindIndex(contract => contract.Id == id);
+            if (index < 0) throw new InvalidOperationException("Unknown contract " + id + ".");
+            contracts[index].SetExactNUnitEvidenceTest(kind, fullName);
         }
 
         static void MarkNotApplicable(
@@ -400,6 +448,16 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     throw new InvalidOperationException(
                         "Capability " + contract.Id +
                         " must be applicable and have typed evidence requirements.");
+
+                foreach (KeyValuePair<RagdollEvidenceKind, string> exact
+                    in contract.ExactNUnitEvidenceTests)
+                {
+                    if (!contract.RequiredEvidence.Contains(exact.Key)
+                        || string.IsNullOrWhiteSpace(exact.Value))
+                        throw new InvalidOperationException(
+                            "Capability " + contract.Id +
+                            " has an invalid exact NUnit evidence requirement.");
+                }
             }
         }
 

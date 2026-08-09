@@ -19,7 +19,7 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
         }
 
         [Test]
-        public void A02_ImportedAvatar_ResolvesCompleteBipedReferences()
+        public void Legacy_ImportedAvatar_ResolvesSelectedBipedReferences()
         {
             Animator animator = InstantiateHumanoid();
             RagdollBipedReferences references;
@@ -35,7 +35,7 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
         }
 
         [Test]
-        public void A12_AlternateHumanoidInstances_ReuseSemanticAvatarContract()
+        public void Legacy_AlternateHumanoidInstances_AreBothHuman()
         {
             Animator first = InstantiateHumanoid();
             GameObject secondObject = UnityEngine.Object.Instantiate(
@@ -57,7 +57,7 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
         }
 
         [Test]
-        public void B22_SharedHumanoidProfile_UsesSemanticsInsteadOfTransformNames()
+        public void Legacy_HumanoidAvatar_ExposesSelectedSemanticBones()
         {
             Animator animator = InstantiateHumanoid();
             Assert.That(animator.avatar, Is.Not.Null);
@@ -78,7 +78,7 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
         }
 
         [Test]
-        public void E01_GeneratedController_ContainsFallStatesAndRuntimeParameter()
+        public void Legacy_GeneratedController_ContainsNamedFallAssets()
         {
             AnimatorController controller = LoadController();
             Assert.That(controller.parameters.Any(value =>
@@ -93,7 +93,7 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
         }
 
         [Test]
-        public void I02_HumanoidBaker_UsesRealAvatarAndAvatarRoot()
+        public void Legacy_HumanoidBaker_CreatesHumanPoseHandler()
         {
             Animator animator = InstantiateHumanoid();
             RagdollHumanoidBaker baker =
@@ -112,7 +112,7 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
         }
 
         [Test]
-        public void I08_HumanoidRecorder_WritesFeetAndHandIkCurves()
+        public void Legacy_PrivateHumanoidRecorder_WritesIkCurveNames()
         {
             Animator animator = InstantiateHumanoid();
             RagdollHumanoidBaker baker =
@@ -150,7 +150,7 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
         }
 
         [Test]
-        public void I09_GeneratedController_HasTwoIkPassLayersAndRealClips()
+        public void Legacy_GeneratedController_HasTwoIkPassLayers()
         {
             AnimatorController controller = LoadController();
             Assert.That(controller.layers.Length, Is.EqualTo(2));

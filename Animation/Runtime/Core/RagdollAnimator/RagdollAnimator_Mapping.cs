@@ -66,6 +66,15 @@ namespace Hairibar.Ragdoll.Animation
             MapDisconnectedMusclesToTarget();
         }
 
+        /// <summary>
+        /// Executes the exact production mapping pass for allocation diagnostics.
+        /// Internal visibility is restricted to package certification assemblies.
+        /// </summary>
+        internal void RunMappingForDiagnostics()
+        {
+            MapRagdollToTarget();
+        }
+
         void GatherMappingModifiers()
         {
             mappingModifiers = GetComponents<IRagdollMappingModifier>();

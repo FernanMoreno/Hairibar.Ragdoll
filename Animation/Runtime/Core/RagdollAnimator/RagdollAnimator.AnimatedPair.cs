@@ -29,6 +29,12 @@ namespace Hairibar.Ragdoll.Animation
 
             internal Vector3 poseLinearVelocity;
             internal Vector3 poseAngularVelocity;
+            Vector3 targetLinearVelocity;
+            Vector3 unclockedTargetDisplacement;
+            float targetSampleTime;
+            float lastTargetMovementSampleTime;
+            bool targetSampleInitialized;
+            bool hasTargetMovementSample;
 
             readonly RagdollBoneTargetBonePair bonePair;
             RagdollTargetDefaultPose defaultTargetPose;
@@ -40,6 +46,53 @@ namespace Hairibar.Ragdoll.Animation
                 AnimatedPose ragdollPose,
                 float sampleTime)
             {
+                if (targetSampleInitialized)
+                {
+                    float targetDeltaTime = sampleTime - targetSampleTime;
+                    Vector3 targetDisplacement = targetPose.worldPosition
+                        - SampledTargetPose.worldPosition;
+                    if (targetDeltaTime > 0.000001f)
+                    {
+                        if (targetDisplacement.sqrMagnitude > Mathf.Epsilon)
+                        {
+                            targetLinearVelocity = targetDisplacement
+                                / targetDeltaTime;
+                            lastTargetMovementSampleTime = sampleTime;
+                            hasTargetMovementSample = true;
+                        }
+                        else if (hasTargetMovementSample
+                            && sampleTime - lastTargetMovementSampleTime
+                                > Mathf.Max(Time.fixedDeltaTime, 0.000001f))
+                        {
+                            targetLinearVelocity = Vector3.zero;
+                            hasTargetMovementSample = false;
+                        }
+                        unclockedTargetDisplacement = Vector3.zero;
+                    }
+                    else if (targetDeltaTime < 0f)
+                    {
+                        targetLinearVelocity = Vector3.zero;
+                        unclockedTargetDisplacement = Vector3.zero;
+                        hasTargetMovementSample = false;
+                    }
+                    else
+                    {
+                        // Several physics boundaries may occur during one rendered
+                        // animation time stamp. Preserve that real Target displacement
+                        // so collision resistance can evaluate it using fixedDeltaTime.
+                        if (targetDisplacement.sqrMagnitude > Mathf.Epsilon)
+                        {
+                            unclockedTargetDisplacement = targetDisplacement;
+                        }
+                    }
+                }
+                else
+                {
+                    targetLinearVelocity = Vector3.zero;
+                    unclockedTargetDisplacement = Vector3.zero;
+                    targetSampleInitialized = true;
+                }
+                targetSampleTime = sampleTime;
                 SampledTargetPose = targetPose;
                 poseSampler.Push(ragdollPose, sampleTime);
                 RestoreAnimatedPose();
@@ -73,6 +126,36 @@ namespace Hairibar.Ragdoll.Animation
                 }
             }
 
+            /// <summary>
+            /// Returns the velocity represented by the latest animation sample, also
+            /// accounting for Target movement that happened after that sample and
+            /// before the current physics collision callback.
+            /// </summary>
+            internal float GetTargetSpeedAtPhysicsBoundary(float fixedDeltaTime)
+            {
+                float sampledSpeed = Mathf.Max(
+                    poseLinearVelocity.magnitude,
+                    targetLinearVelocity.magnitude);
+                if (!poseSampler.IsInitialized
+                    || float.IsNaN(fixedDeltaTime)
+                    || float.IsInfinity(fixedDeltaTime)
+                    || fixedDeltaTime <= Mathf.Epsilon)
+                {
+                    return sampledSpeed;
+                }
+
+                float pendingDistance = Vector3.Distance(
+                    TargetBone.position,
+                    SampledTargetPose.worldPosition);
+                float pendingSpeed = Mathf.Max(
+                    pendingDistance,
+                    unclockedTargetDisplacement.magnitude)
+                    / fixedDeltaTime;
+                return float.IsNaN(pendingSpeed) || float.IsInfinity(pendingSpeed)
+                    ? sampledSpeed
+                    : Mathf.Max(sampledSpeed, pendingSpeed);
+            }
+
             internal void RestoreSampledPoseToTarget()
             {
                 if (!poseSampler.IsInitialized) return;
@@ -95,6 +178,12 @@ namespace Hairibar.Ragdoll.Animation
                 poseSampler = source.poseSampler;
                 poseLinearVelocity = source.poseLinearVelocity;
                 poseAngularVelocity = source.poseAngularVelocity;
+                targetLinearVelocity = source.targetLinearVelocity;
+                unclockedTargetDisplacement = source.unclockedTargetDisplacement;
+                targetSampleTime = source.targetSampleTime;
+                lastTargetMovementSampleTime = source.lastTargetMovementSampleTime;
+                targetSampleInitialized = source.targetSampleInitialized;
+                hasTargetMovementSample = source.hasTargetMovementSample;
                 MappingWeights = source.MappingWeights;
                 defaultTargetPose = source.defaultTargetPose;
             }
@@ -107,7 +196,13 @@ namespace Hairibar.Ragdoll.Animation
                     currentPose = currentPose,
                     poseSampler = poseSampler,
                     poseLinearVelocity = poseLinearVelocity,
-                    poseAngularVelocity = poseAngularVelocity
+                    poseAngularVelocity = poseAngularVelocity,
+                    targetLinearVelocity = targetLinearVelocity,
+                    unclockedTargetDisplacement = unclockedTargetDisplacement,
+                    targetSampleTime = targetSampleTime,
+                    lastTargetMovementSampleTime = lastTargetMovementSampleTime,
+                    targetSampleInitialized = targetSampleInitialized,
+                    hasTargetMovementSample = hasTargetMovementSample
                 };
             }
 
@@ -118,6 +213,12 @@ namespace Hairibar.Ragdoll.Animation
                 poseSampler = state.poseSampler;
                 poseLinearVelocity = state.poseLinearVelocity;
                 poseAngularVelocity = state.poseAngularVelocity;
+                targetLinearVelocity = state.targetLinearVelocity;
+                unclockedTargetDisplacement = state.unclockedTargetDisplacement;
+                targetSampleTime = state.targetSampleTime;
+                lastTargetMovementSampleTime = state.lastTargetMovementSampleTime;
+                targetSampleInitialized = state.targetSampleInitialized;
+                hasTargetMovementSample = state.hasTargetMovementSample;
             }
 
             internal void ApplyTeleport(
@@ -145,6 +246,9 @@ namespace Hairibar.Ragdoll.Animation
 
                 poseLinearVelocity = Vector3.zero;
                 poseAngularVelocity = Vector3.zero;
+                targetLinearVelocity = Vector3.zero;
+                unclockedTargetDisplacement = Vector3.zero;
+                hasTargetMovementSample = false;
             }
 
             internal struct TeleportState
@@ -154,6 +258,12 @@ namespace Hairibar.Ragdoll.Animation
                 internal AnimatedPoseSampler poseSampler;
                 internal Vector3 poseLinearVelocity;
                 internal Vector3 poseAngularVelocity;
+                internal Vector3 targetLinearVelocity;
+                internal Vector3 unclockedTargetDisplacement;
+                internal float targetSampleTime;
+                internal float lastTargetMovementSampleTime;
+                internal bool targetSampleInitialized;
+                internal bool hasTargetMovementSample;
             }
 
 

@@ -11,28 +11,28 @@ namespace Hairibar.Ragdoll.Animation.Tests
     /// </summary>
     public sealed class RagdollClosureManifestPlayModeTests
     {
-        [Test] public void B08_KillBlendAndDeadDrive()
+        [Test] public void LegacyKillBlendAndDeadDrive()
         {
             var tests = new RagdollLifecycleMathTests();
             tests.KillWeight_BlendsLinearlyToDeadWeight();
             tests.DeadDrive_ReleasesPositionAndScalesRotation();
         }
 
-        [Test] public void B09_TemporaryAndPermanentFreeze()
+        [Test] public void LegacyTemporaryAndPermanentFreeze()
         {
             var tests = new RagdollLifecycleMathTests();
             tests.FreezeVelocity_UsesInclusiveSquaredThreshold(0f, 0f, true);
             tests.FreezeVelocity_NonFiniteValuesNeverFreeze();
         }
 
-        [Test] public void B10_LifecycleLimitsAndCollisionRollback()
+        [Test] public void LegacyLifecycleLimitsAndCollisionRollback()
         {
             RunFixture(
                 new RagdollLifecyclePhysicsPolicyTests(),
                 test => test.KillPolicy_AppliesAuthoredLimitsAndRestoresExactPreKillState());
         }
 
-        [Test] public void B19_SimulationModesRespectLifecycleOwnership()
+        [Test] public void LegacySimulationModesRespectLifecycleOwnership()
         {
             var tests = new RagdollSimulationModePolicyTests();
             tests.ActiveKeepsHierarchyAndAuthoredPower();
@@ -40,80 +40,56 @@ namespace Hairibar.Ragdoll.Animation.Tests
             tests.DisabledDeactivatesHierarchyAndHasNoDriveWeight();
         }
 
-        [Test] public void B20_InternalCollisionsRestoreAcrossLifecycle()
+        [Test] public void LegacyInternalCollisionsRestoreAcrossLifecycle()
         {
             RunFixture(
                 new RagdollInternalCollisionTests(),
                 test => test.LifecycleEnd_UsesGlobalValueChangedWhileOverrideWasActive());
         }
 
-        [UnityTest] public IEnumerator B21_BranchAuthoritySurvivesCollectionMutation()
+        [UnityTest] public IEnumerator LegacyBranchAuthoritySurvivesCollectionMutation()
         {
             return RunSetupServiceIntegration(test =>
                 test.OfficialStateWeightsAndModeFacadesAffectLiveRuntime());
         }
 
-        [UnityTest] public IEnumerator B23_ManualAndLegacyUpdateLifecycle()
+        [UnityTest] public IEnumerator LegacyManualAndLegacyUpdateLifecycle()
         {
             return new RagdollManualSimulationPlayModeTests()
                 .ManualStep_EnforcesOrderAndRestoresLegacyAnimation();
         }
 
-        [UnityTest] public IEnumerator B24_AllCoreHooksAreOrderedAndIsolated()
+        [UnityTest] public IEnumerator LegacyAllCoreHooksAreOrderedAndIsolated()
         {
             return RunSetupServiceIntegration(test =>
                 test.CoreHooksPreserveOrderAndIsolateEverySubscriber());
         }
 
-        [UnityTest] public IEnumerator B26_CompleteCollectionCommitsAndRollsBackAtomically()
+        [UnityTest] public IEnumerator LegacyCompleteCollectionCommitsAndRollsBackAtomically()
         {
             return RunSetupServiceIntegration(test =>
                 test.CollectionValidationFailuresLeaveRegistryAndPhysicsUntouched());
         }
 
-        [Test] public void B27_DisconnectReconnectPreservesMappingContract()
+        [Test] public void LegacyDisconnectReconnectPreservesMappingContract()
         {
             var tests = new RagdollMuscleConnectionPolicyTests();
             tests.Reconnect_UsesHighestContiguousDisconnectedAncestor();
             tests.DisconnectedMapping_SuppressesNormalPassAndHonoursToggle();
         }
 
-        [Test] public void B28_DisconnectedJointIsExcludedFromLifecycleWrites()
+        [Test] public void LegacyDisconnectedJointIsExcludedFromLifecycleWrites()
         {
             RunFixture(
                 new RagdollLifecyclePhysicsPolicyTests(),
                 test => test.DisconnectedJoint_IsExcludedFromGlobalAndLifecycleWrites());
         }
 
-        [Test] public void B29_FlatTreeConversionPreservesTopologyAndPose()
+        [Test] public void LegacyFlatTreeConversionPreservesTopologyAndPose()
         {
             var tests = new RagdollRuntimeAuthoringTests();
             try { tests.AuthoredRig_FlatAndTreePreserveJointTopologyAndWorldPose(); }
             finally { tests.TearDown(); }
-        }
-
-        [Test] public void C04_SerializedPuppetEventsHaveDeterministicPhases()
-        {
-            RunFixture(
-                new RagdollPuppetBehaviourEventIntegrationTests(),
-                test => test.CollisionObserved_PrecedesFiltersAndIncludesAllPhases());
-        }
-
-        [Test] public void C07_ReactivationTeleportAndSubscriberExceptions()
-        {
-            var collisions = new RagdollInternalCollisionTests();
-            collisions.SetUp();
-            try
-            {
-                collisions.ReapplyCurrentPolicy_RestoresAutomaticStateLostByReactivation();
-            }
-            finally { collisions.TearDown(); }
-
-            new AnimatedPoseSamplerTests()
-                .Teleport_TransformsWorldPoseAndClearsCachedVelocities();
-            RunFixture(
-                new RagdollPuppetBehaviourEventIntegrationTests(),
-                test => test.CollisionSubscribers_AreIsolatedAndOfficialAliasSharesStream());
         }
 
         [Test] public void LegacyActiveModeMathUsesFullPuppetMapping()
@@ -158,66 +134,11 @@ namespace Hairibar.Ragdoll.Animation.Tests
             tests.InvalidImpulseFailsClosed(float.NaN);
         }
 
-        [Test] public void D18_MasterPinAndMuscleAreIndependent()
-        {
-            var tests = new RagdollMasterAuthorityTests();
-            tests.PinAndMuscleWeightsAreIndependent(0f, 1f, 0f, 8f);
-            tests.PinAndMuscleWeightsAreIndependent(1f, 0f, 1f, 0f);
-        }
-
-        [Test] public void D26_UnpinnedVelocityLimitHandlesExtremeValues()
-        {
-            var tests = new RagdollPuppetBehaviourMathTests();
-            tests.VelocityLimit_ClampsMagnitudeAndPreservesDirection();
-            tests.VelocityLimit_InfinityLeavesVelocityUntouched();
-        }
-
-        [Test] public void D28_AuthoredZeroPinKnockoutIsConfigurable()
-        {
-            var tests = new RagdollPuppetBehaviourMathTests();
-            tests.ZeroConfiguredPin_IsIgnoredWhenUnpinnedMuscleKnockoutIsDisabled();
-            tests.ZeroConfiguredPin_CanKnockOutWhenOptionIsEnabled();
-        }
-
         [Test] public void TeleportPreservesGetUpPipeline_LegacyCoverage()
         {
             var tests = new RagdollPuppetBehaviourMathTests();
             tests.TeleportMoveToTarget_CompletesOnlyTheGetUpBlend();
             tests.TeleportRotation_TransformsAndNormalizesCachedGroundDirection();
-        }
-
-        [Test] public void F07_AnimatedTargetChildrenRemainExplicitAndNullSafe()
-        {
-            var tests = new RagdollTargetBindingTests();
-            try { tests.AnimatedTargetChildren_AreExplicitAndNullSafe(); }
-            finally { tests.TearDown(); }
-        }
-
-        [Test] public void F08_PropHandleRebindsAfterRegistryGenerationChange()
-        {
-            new RagdollPropMuscleStateMachineTests()
-                .HandleIsResolvedEveryTick_ForRegistryGenerationChanges();
-        }
-
-        [Test] public void F13_TimedMeleeActionRestoresAtSafeBoundary()
-        {
-            var tests = new RagdollPropMeleeTests();
-            tests.TimedAction_RestartsAndExpiresAtSafeBoundary();
-            tests.DropRequest_CancelsActionBeforeDisconnectCompletes();
-        }
-
-        [Test] public void G02_DeterministicExternalSolverImplementsGenericContract()
-        {
-            RunFixture(
-                new RagdollIKSchedulerTests(),
-                test => test.InterfaceSolver_ExposesIndependentAutomaticAndEnabledState());
-        }
-
-        [Test] public void G04_SolverHooksAreIsolatedAroundReadWrite()
-        {
-            RunFixture(
-                new RagdollIKSchedulerTests(),
-                test => test.ReadWriteHook_RunsMatchingSolversAndIsolatesFailures());
         }
 
         static IEnumerator RunSetupServiceIntegration(
@@ -254,22 +175,5 @@ namespace Hairibar.Ragdoll.Animation.Tests
             finally { fixture.TearDown(); }
         }
 
-        static void RunFixture(
-            RagdollPuppetBehaviourEventIntegrationTests fixture,
-            Action<RagdollPuppetBehaviourEventIntegrationTests> body)
-        {
-            fixture.SetUp();
-            try { body(fixture); }
-            finally { fixture.TearDown(); }
-        }
-
-        static void RunFixture(
-            RagdollIKSchedulerTests fixture,
-            Action<RagdollIKSchedulerTests> body)
-        {
-            fixture.SetUp();
-            try { body(fixture); }
-            finally { fixture.TearDown(); }
-        }
     }
 }

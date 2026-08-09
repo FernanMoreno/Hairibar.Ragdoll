@@ -169,17 +169,17 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [Test]
-        public void Boosts_CanOnlyRaiseCurrentValues()
+        public void Boosts_SetCurrentValuesAsDocumented()
         {
             MuscleRuntimeState state = MuscleRuntimeState.Default;
 
             Assert.That(state.BoostImmunity(0.75f), Is.True);
-            Assert.That(state.BoostImmunity(0.25f), Is.False);
+            Assert.That(state.BoostImmunity(0.25f), Is.True);
             Assert.That(state.BoostImpulseMultiplier(3f), Is.True);
-            Assert.That(state.BoostImpulseMultiplier(2f), Is.False);
+            Assert.That(state.BoostImpulseMultiplier(2f), Is.True);
 
-            Assert.That(state.Immunity, Is.EqualTo(0.75f));
-            Assert.That(state.ImpulseMultiplier, Is.EqualTo(3f));
+            Assert.That(state.Immunity, Is.EqualTo(0.25f));
+            Assert.That(state.ImpulseMultiplier, Is.EqualTo(2f));
         }
 
         [Test]

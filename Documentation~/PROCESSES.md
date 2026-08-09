@@ -231,3 +231,32 @@ autoridades debe modificar.
 9. Declara plataforma ejecutada solo si el Player se inició realmente en ella.
 10. Mantén Linux compilado pero no ejecutado como pendiente cuando no exista host
     Linux disponible.
+
+Para una ejecucion durable usa `Tools~/Run-HairibarClosure.ps1`. El coordinador
+lanza procesos Unity separados para preparacion, builds/Player, EditMode, PlayMode,
+manifiesto provisional, validacion independiente y manifiesto final. Al comenzar
+elimina exclusivamente los artefactos conocidos de una ejecucion anterior; por eso
+un fallo no puede dejar un `coverage-manifest-final.json` obsoleto como resultado
+aparentemente vigente.
+
+El Player Windows escribe observaciones separadas:
+
+- `windows-player-result.json`: las cuatro escenas y todas sus aserciones;
+- `scene-results.json`: contrato de ejecucion de escenas usado por J04;
+- `profiler-results.json`: schema 2, 120 frames de calentamiento, 600 muestras,
+  mediana/p95 y GC de los seis caminos criticos.
+
+`GC Allocated In Frame` se conserva como diagnostico ambiental de cada celda, no
+como atribucion a un subsistema. El gate de cero usa
+`GC.GetAllocatedBytesForCurrentThread` alrededor de cada llamada productiva exacta:
+matching, mapping, dispatch del relay, actualizacion COM, additional pin y muestreo
+Realtime del Baker. Cada camino conserva total, maximo por llamada, numero de
+muestras y el miembro productivo medido; una misma observacion no se copia entre
+caminos.
+
+El Editor acepta esos archivos solo despues de validarlos. `build-manifest.json`
+se deriva de `BuildReport.summary`, `BuildReport.steps/messages`, opciones
+Development/AllowDebugging y existencia real de cada salida. El audit documental
+incluye el hash de la guia, comprueba los simbolos publicos por reflexion y conserva
+la fuente oficial. Ningun productor escribe `succeeded=true` cuando falta una
+medicion, un contador, un output, una asercion o un simbolo.

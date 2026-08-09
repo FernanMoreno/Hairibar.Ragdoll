@@ -56,7 +56,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 RagdollEvidenceKind.WindowsPlayerScenario,
                 "Windows64",
                 "RegressionScenes",
-                new[] { "H08", "J04" },
+                new[] { "H05", "H08", "J04", "J05" },
                 revision,
                 sourceHash,
                 artifacts);
@@ -74,7 +74,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 RagdollEvidenceKind.ProfilerResult,
                 "Player",
                 "CriticalPaths",
-                new[] { "H08", "J05" },
+                new[] { "H05", "H08", "I07", "J05" },
                 revision,
                 sourceHash,
                 artifacts);

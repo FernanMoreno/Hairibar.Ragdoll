@@ -18,11 +18,17 @@ namespace Hairibar.Ragdoll.Animation.Tests
         readonly List<UnityEngine.Object> owned = new List<UnityEngine.Object>();
         RagdollDefinition definition;
         Vector3 originalGravity;
+        bool groundIgnoredBefore;
+        bool arbitraryGroundIgnoredBefore;
 
         [SetUp]
         public void SetUp()
         {
             originalGravity = Physics.gravity;
+            groundIgnoredBefore = Physics.GetIgnoreLayerCollision(31, 0);
+            arbitraryGroundIgnoredBefore = Physics.GetIgnoreLayerCollision(31, 8);
+            Physics.IgnoreLayerCollision(31, 0, false);
+            Physics.IgnoreLayerCollision(31, 8, false);
             Physics.gravity = new Vector3(0f, -9.81f, 0f);
         }
 
@@ -30,6 +36,8 @@ namespace Hairibar.Ragdoll.Animation.Tests
         public void TearDown()
         {
             Physics.gravity = originalGravity;
+            Physics.IgnoreLayerCollision(31, 0, groundIgnoredBefore);
+            Physics.IgnoreLayerCollision(31, 8, arbitraryGroundIgnoredBefore);
             for (int index = owned.Count - 1; index >= 0; index--)
             {
                 if (owned[index]) UnityEngine.Object.DestroyImmediate(owned[index]);
@@ -55,6 +63,8 @@ namespace Hairibar.Ragdoll.Animation.Tests
 
             RagdollSetupResult setup = CreatePhysicalPuppet();
             yield return null;
+            setup.Animator.FixTargetTransforms = false;
+            setup.Simulation.SetModeImmediate(RagdollSimulationMode.Active);
             setup.Animator.MasterPinWeight = 0f;
             setup.Animator.MasterMuscleWeight = 0f;
             setup.PuppetBehaviour.CenterOfMass.ProbeDistance = 3f;
@@ -89,6 +99,8 @@ namespace Hairibar.Ragdoll.Animation.Tests
             yield return null;
 
             Assert.That(setup.Succeeded, Is.True, setup.Error);
+            setup.Animator.FixTargetTransforms = false;
+            setup.Simulation.SetModeImmediate(RagdollSimulationMode.Active);
             setup.Animator.MasterPinWeight = 0f;
             setup.Animator.MasterMuscleWeight = 0f;
             setup.PuppetBehaviour.GroundLayers = 1 << 0;
@@ -118,6 +130,8 @@ namespace Hairibar.Ragdoll.Animation.Tests
             yield return null;
 
             Assert.That(setup.Succeeded, Is.True, setup.Error);
+            setup.Animator.FixTargetTransforms = false;
+            setup.Simulation.SetModeImmediate(RagdollSimulationMode.Active);
             setup.Animator.MasterPinWeight = 0f;
             setup.Animator.MasterMuscleWeight = 0f;
             setup.PuppetBehaviour.GroundLayers = 1 << 0;
@@ -184,7 +198,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
             puppet.SetActive(true);
             Assert.That(bindings.IsInitialized, Is.True);
 
-            GameObject target = Own(new GameObject("COM Target"));
+            GameObject target = Own(new GameObject("COM Puppet"));
             target.transform.position = puppet.transform.position;
             GameObject targetChild = Own(new GameObject("Child"));
             targetChild.transform.SetParent(target.transform, false);

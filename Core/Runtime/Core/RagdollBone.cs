@@ -44,6 +44,13 @@ namespace Hairibar.Ragdoll
             Joint = joint;
             IsRoot = isRoot;
 
+            // The Rigidbody is the authored source of truth when a runtime bone is
+            // materialized. A dynamic Rigidbody represents a powered muscle; only an
+            // authored kinematic body starts in the Kinematic power setting.
+            _powerSetting = rigidbody.isKinematic
+                ? PowerSetting.Kinematic
+                : PowerSetting.Powered;
+
             Colliders = GatherColliders();
             ConfigureJoint();
             StartingJointRotation = GetStartingJointRotation();

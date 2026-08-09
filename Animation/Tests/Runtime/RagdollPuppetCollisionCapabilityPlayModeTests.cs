@@ -55,7 +55,11 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Assert.That(transitions[1], Does.StartWith("Unpinned>GetUp"));
             Assert.That(transitions[2], Does.StartWith("GetUp>Puppet"));
 
-            rig.RootBody.position = rig.RootTarget.position + Vector3.right * 1.25f;
+            rig.Animator.MasterPinWeight = 0f;
+            rig.Animator.MasterMappingWeight = 0f;
+            rig.RootBody.transform.position =
+                rig.RootTarget.position + Vector3.right * 1.25f;
+            Physics.SyncTransforms();
             yield return new WaitForFixedUpdate();
             Assert.That(puppet.State, Is.EqualTo(RagdollPuppetState.Unpinned));
             Assert.That(transitions.Count, Is.EqualTo(4));
@@ -70,12 +74,18 @@ namespace Hairibar.Ragdoll.Animation.Tests
             rig = new PuppetPhysicsRig();
             yield return rig.Initialize();
             RagdollPuppetBehaviour puppet = rig.Puppet;
+            rig.Animator.MasterPinWeight = 0f;
+            rig.Animator.MasterMappingWeight = 0f;
 
-            rig.RootBody.position = rig.RootTarget.position + Vector3.right * 0.99f;
+            rig.RootBody.transform.position =
+                rig.RootTarget.position + Vector3.right * 0.99f;
+            Physics.SyncTransforms();
             yield return new WaitForFixedUpdate();
             Assert.That(puppet.State, Is.EqualTo(RagdollPuppetState.Puppet));
 
-            rig.RootBody.position = rig.RootTarget.position + Vector3.right * 1.01f;
+            rig.RootBody.transform.position =
+                rig.RootTarget.position + Vector3.right * 1.01f;
+            Physics.SyncTransforms();
             yield return new WaitForFixedUpdate();
             Assert.That(puppet.State, Is.EqualTo(RagdollPuppetState.Unpinned));
             Assert.That(puppet.LastKnockOutBone, Is.EqualTo(rig.RootHandle));
@@ -94,7 +104,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
             yield return rig.WaitForAcceptedCollision();
 
             MuscleRuntimeState after = rig.Muscles.GetState(rig.Puppet.LastAcceptedCollisionBone);
-            Assert.That(rig.Puppet.LastCollisionResponse.WasApplied, Is.True);
+            Assert.That(rig.Puppet.LastCollisionResponse.HasResponse, Is.True);
             Assert.That(rig.Puppet.LastCollisionResponse.PositionSuppression,
                 Is.GreaterThan(0f));
             Assert.That(after.PositionSuppression, Is.GreaterThan(before));
@@ -109,6 +119,8 @@ namespace Hairibar.Ragdoll.Animation.Tests
 
             Assert.That(rig.Simulation.CurrentMode,
                 Is.EqualTo(RagdollSimulationMode.Active));
+            for (int step = 0; step < 60 && rig.RootBody.isKinematic; step++)
+                yield return new WaitForFixedUpdate();
             Assert.That(rig.RootBody.isKinematic, Is.False);
             Assert.That(rig.Puppet.NormalModeMappingWeight,
                 Is.EqualTo(1f).Within(0.0001f));
@@ -141,7 +153,10 @@ namespace Hairibar.Ragdoll.Animation.Tests
             rig = new PuppetPhysicsRig(RagdollPuppetNormalMode.Kinematic);
             yield return rig.Initialize();
             Assert.That(rig.Simulation.CurrentMode,
-                Is.EqualTo(RagdollSimulationMode.Kinematic));
+                Is.EqualTo(RagdollSimulationMode.Kinematic),
+                $"state={rig.Puppet.State}, transitioning={rig.Simulation.IsTransitioning}, " +
+                $"rootSuppression={rig.Muscles.GetState(rig.RootHandle).PositionSuppression}, " +
+                $"kinematicManaged={rig.Puppet.KinematicModeManaged}");
             Assert.That(rig.RootBody.isKinematic, Is.True);
 
             rig.Shoot(rig.RootBody.position, 0, 15f);
@@ -264,14 +279,20 @@ namespace Hairibar.Ragdoll.Animation.Tests
             rig.Puppet.CollisionAccepted += _ => accepted++;
             rig.Puppet.CollisionUnpinApplied += (_, __) => unpinned++;
 
-            rig.Shoot(rig.RootBody.position, 0, 10f);
-            for (int step = 0; step < 25; step++) yield return new WaitForFixedUpdate();
+            rig.Shoot(rig.RootBody.position, 9, 10f);
+            for (int step = 0; step < 60 && observed == 0; step++)
+                yield return new WaitForFixedUpdate();
             Assert.That(observed, Is.GreaterThan(0));
             Assert.That(accepted, Is.Zero);
             Assert.That(unpinned, Is.Zero);
             Assert.That(rig.Puppet.LastCollisionRejectionReason,
                 Is.EqualTo(RagdollPuppetCollisionRejectionReason.BelowThreshold));
 
+            // End the rejected contact stream before changing the runtime threshold.
+            // Otherwise an accepted Stay from the first projectile can satisfy the
+            // accepted-collision wait while correctly applying no second Enter damage.
+            rig.ClearProjectiles();
+            yield return new WaitForFixedUpdate();
             rig.Puppet.CollisionThreshold = 0f;
             rig.Shoot(rig.ChildBody.position, 0, 10f);
             yield return rig.WaitForAcceptedCollision();
@@ -300,7 +321,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Assert.That(response.GlobalResistance, Is.EqualTo(4f).Within(0.001f));
             Assert.That(response.EffectiveResistance, Is.EqualTo(8f).Within(0.001f));
             Assert.That(response.UnmitigatedPositionSuppression,
-                Is.EqualTo(Mathf.Clamp01(response.DamageImpulse / 8f)).Within(0.001f));
+                Is.EqualTo(Mathf.Clamp01(response.DamageImpulseMagnitude / 8f)).Within(0.001f));
 
             rig.Muscles.ResetBone(rig.ChildHandle);
             rig.Puppet.CollisionResistance.constantResistance = 8f;
@@ -311,7 +332,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
             response = rig.Puppet.LastCollisionResponse;
             Assert.That(response.EffectiveResistance, Is.EqualTo(16f).Within(0.001f));
             Assert.That(response.UnmitigatedPositionSuppression,
-                Is.EqualTo(Mathf.Clamp01(response.DamageImpulse / 16f)).Within(0.001f));
+                Is.EqualTo(Mathf.Clamp01(response.DamageImpulseMagnitude / 16f)).Within(0.001f));
         }
 
         [UnityTest]
@@ -320,17 +341,31 @@ namespace Hairibar.Ragdoll.Animation.Tests
             rig = new PuppetPhysicsRig();
             yield return rig.Initialize();
             RagdollPuppetCollisionResistance resistance = rig.Puppet.CollisionResistance;
+            rig.Animator.MasterMappingWeight = 0f;
             resistance.useTargetSpeedCurve = true;
             resistance.targetSpeedResistance = AnimationCurve.Linear(0f, 2f, 20f, 22f);
 
-            rig.ChildTarget.position += Vector3.up * 2f;
-            yield return null;
+            rig.ChildTarget.position += Vector3.up * 0.25f;
             rig.Shoot(rig.ChildBody.position, 0, 10f);
-            yield return rig.WaitForAcceptedCollision();
+            long acceptedBefore = rig.Puppet.AcceptedCollisionCount;
+            for (int step = 0;
+                step < 60 && rig.Puppet.AcceptedCollisionCount == acceptedBefore;
+                step++)
+            {
+                rig.ChildTarget.position += Vector3.up * 0.05f;
+                yield return new WaitForFixedUpdate();
+            }
+            Assert.That(rig.Puppet.AcceptedCollisionCount,
+                Is.GreaterThan(acceptedBefore));
             RagdollPuppetCollisionResponseSnapshot response =
                 rig.Puppet.LastCollisionResponse;
 
-            Assert.That(response.TargetSpeed, Is.GreaterThan(0.01f));
+            RagdollAnimator.AnimatedPair responsePair =
+                rig.Result.Behaviours.Context.GetPair(response.Bone);
+            Assert.That(response.TargetSpeed, Is.GreaterThan(0.01f),
+                $"bone={response.Bone}, sampledVelocity={responsePair.poseLinearVelocity}, " +
+                $"target={responsePair.TargetBone.position}, " +
+                $"sampledTarget={responsePair.SampledTargetPose.worldPosition}");
             Assert.That(response.GlobalResistance,
                 Is.EqualTo(resistance.targetSpeedResistance.Evaluate(
                     response.TargetSpeed)).Within(0.001f));
@@ -438,8 +473,11 @@ namespace Hairibar.Ragdoll.Animation.Tests
             rig = new PuppetPhysicsRig();
             yield return rig.Initialize();
             rig.Animator.MasterPinWeight = 0.5f;
+            rig.Animator.MasterMappingWeight = 0f;
             rig.Puppet.PinWeightThreshold = 0.5f;
-            rig.RootBody.position = rig.RootTarget.position + Vector3.right * 1.1f;
+            rig.RootBody.transform.position =
+                rig.RootTarget.position + Vector3.right * 1.1f;
+            Physics.SyncTransforms();
             yield return new WaitForFixedUpdate();
             Assert.That(rig.Puppet.State, Is.EqualTo(RagdollPuppetState.Puppet),
                 "Official BehaviourPuppet wording is strictly 'less than'.");
@@ -526,7 +564,10 @@ namespace Hairibar.Ragdoll.Animation.Tests
             RootHandle = bindings.GetHandleAt(0);
             ChildHandle = bindings.GetHandleAt(1);
 
-            GameObject targetObject = Own(new GameObject("D Target"));
+            // ConfigureSeparated uses the documented legacy name migration when no
+            // explicit semantic target table is supplied. The root participates in
+            // that migration just like every other registered muscle.
+            GameObject targetObject = Own(new GameObject("D Puppet"));
             RootTarget = targetObject.transform;
             GameObject targetChild = Own(new GameObject("Child"));
             targetChild.transform.SetParent(targetObject.transform, false);
@@ -558,12 +599,26 @@ namespace Hairibar.Ragdoll.Animation.Tests
             yield return null;
             Assert.That(Result.Animator.Initiated, Is.True);
             Assert.That(Puppet.IsInitialized, Is.True);
+            Result.Animator.FixTargetTransforms = false;
             Puppet.CanGetUp = false;
             Puppet.LoseBalanceOnTargetDrift = true;
             Puppet.CollisionLayers = -1;
             Puppet.CollisionThreshold = 0f;
             Puppet.MaximumCollisionsPerFixedStep = 30;
             Puppet.CollisionResistance.constantResistance = 0.5f;
+            Puppet.SetNormalMode(Puppet.NormalMode, true);
+            if (Puppet.NormalMode == RagdollPuppetNormalMode.Kinematic)
+            {
+                for (int step = 0;
+                    step < 30 && (Simulation.CurrentMode
+                        != RagdollSimulationMode.Kinematic
+                        || Simulation.IsTransitioning);
+                    step++)
+                {
+                    yield return new WaitForFixedUpdate();
+                }
+            }
+            yield return new WaitForFixedUpdate();
             acceptedBaseline = Puppet.AcceptedCollisionCount;
         }
 

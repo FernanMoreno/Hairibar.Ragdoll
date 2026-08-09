@@ -294,8 +294,9 @@ namespace Hairibar.Ragdoll.Animation
             EnsureInitialized();
             for (int index = 0; index < states.Length; index++)
             {
-                hasActiveBoosts |= states[index].BoostImmunity(immunity);
+                states[index].BoostImmunity(immunity);
             }
+            RecalculateHasActiveBoosts();
         }
 
         public void BoostImmunity(
@@ -303,7 +304,8 @@ namespace Hairibar.Ragdoll.Animation
             float immunity)
         {
             int index = ValidateHandle(bone);
-            hasActiveBoosts |= states[index].BoostImmunity(immunity);
+            states[index].BoostImmunity(immunity);
+            RecalculateHasActiveBoosts();
         }
 
         public void BoostImmunity(
@@ -332,9 +334,9 @@ namespace Hairibar.Ragdoll.Animation
             EnsureInitialized();
             for (int index = 0; index < states.Length; index++)
             {
-                hasActiveBoosts |=
-                    states[index].BoostImpulseMultiplier(impulseMlp);
+                states[index].BoostImpulseMultiplier(impulseMlp);
             }
+            RecalculateHasActiveBoosts();
         }
 
         public void BoostImpulseMlp(
@@ -342,8 +344,8 @@ namespace Hairibar.Ragdoll.Animation
             float impulseMlp)
         {
             int index = ValidateHandle(bone);
-            hasActiveBoosts |=
-                states[index].BoostImpulseMultiplier(impulseMlp);
+            states[index].BoostImpulseMultiplier(impulseMlp);
+            RecalculateHasActiveBoosts();
         }
 
         public void BoostImpulseMlp(
@@ -852,11 +854,12 @@ namespace Hairibar.Ragdoll.Animation
                         boostChildren);
                 if (falloff <= 0f) continue;
 
-                bool changed = immunity
-                    ? states[index].BoostImmunity(value * falloff)
-                    : states[index].BoostImpulseMultiplier(value * falloff);
-                hasActiveBoosts |= changed;
+                if (immunity)
+                    states[index].BoostImmunity(value * falloff);
+                else
+                    states[index].BoostImpulseMultiplier(value * falloff);
             }
+            RecalculateHasActiveBoosts();
         }
 
         int ApplyGroupBoost(
@@ -873,12 +876,13 @@ namespace Hairibar.Ragdoll.Animation
                 if (runtimeProfile.GetGroup(index) != group) continue;
 
                 affectedCount++;
-                bool changed = immunity
-                    ? states[index].BoostImmunity(value)
-                    : states[index].BoostImpulseMultiplier(value);
-                hasActiveBoosts |= changed;
+                if (immunity)
+                    states[index].BoostImmunity(value);
+                else
+                    states[index].BoostImpulseMultiplier(value);
             }
 
+            RecalculateHasActiveBoosts();
             return affectedCount;
         }
 

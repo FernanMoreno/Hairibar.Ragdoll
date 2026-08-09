@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 #if UNITY_6000_0_OR_NEWER
 using PhysicMaterial = UnityEngine.PhysicsMaterial;
@@ -22,6 +23,10 @@ namespace Hairibar.Ragdoll.Animation
         [SerializeField]
         [Tooltip("Purely visual hierarchy moved to the animated Target slot while held. It must not contain Colliders, Joints or Rigidbodies.")]
         Transform meshRoot;
+
+        [SerializeField]
+        [Tooltip("Animated bones parented to this prop muscle's Target that must stop following animation while the muscle is disconnected.")]
+        Transform[] animatedTargetChildren = Array.Empty<Transform>();
 
         [SerializeField]
         [Tooltip("Standalone Rigidbody on this GameObject. If omitted it is resolved automatically.")]
@@ -78,8 +83,11 @@ namespace Hairibar.Ragdoll.Animation
         bool heldSlotMassCaptured;
         bool heldSlotCenterOfMassOverridden;
         RagdollPropInternalCollisionSession collisionSession;
+        RagdollPropInternalCollisionBaseline internalCollisionBaseline;
         int collisionSessionGeneration = -1;
         IRagdollPropMuscleRuntime heldRuntime;
+        RagdollTargetBinding heldTargetBinding;
+        Transform[] heldAnimatedTargetChildrenBaseline;
         bool coreCollisionPolicyReapplyPending;
         string coreCollisionPolicyReapplyError;
         bool pickupPrepared;
@@ -94,6 +102,20 @@ namespace Hairibar.Ragdoll.Animation
         bool emergencySlotCleanupPending;
 
         public Transform MeshRoot => meshRoot;
+        public IReadOnlyList<Transform> AnimatedTargetChildren =>
+            animatedTargetChildren ?? Array.Empty<Transform>();
+
+        public void SetAnimatedTargetChildren(Transform[] children)
+        {
+            animatedTargetChildren = children != null
+                ? (Transform[])children.Clone()
+                : Array.Empty<Transform>();
+            if (pickupCommitted && heldTargetBinding != null)
+            {
+                heldTargetBinding.SetAnimatedTargetChildren(
+                    animatedTargetChildren);
+            }
+        }
         public float PickedUpMass
         {
             get => pickedUpMass;
@@ -140,6 +162,8 @@ namespace Hairibar.Ragdoll.Animation
             coreCollisionPolicyReapplyPending;
         public string CoreCollisionPolicyReapplyError =>
             coreCollisionPolicyReapplyError;
+        internal RagdollPropInternalCollisionBaseline InternalCollisionBaseline =>
+            internalCollisionBaseline;
         public Rigidbody StandaloneRigidbody => standaloneRigidbody
             ? standaloneRigidbody
             : GetComponent<Rigidbody>();
@@ -461,6 +485,10 @@ namespace Hairibar.Ragdoll.Animation
 
             try
             {
+                internalCollisionBaseline =
+                    RagdollPropInternalCollisionBaseline.Capture(
+                        GetPhysicalColliders(),
+                        muscle.Animator ? muscle.Animator.Bindings : null);
                 RagdollPropMelee meleeOwner = Melee;
                 if (meleeOwner) meleeOwner.BeginHeldSession();
 
@@ -509,6 +537,7 @@ namespace Hairibar.Ragdoll.Animation
                     RagdollPropMelee meleeOwner = Melee;
                     if (meleeOwner) meleeOwner.EndHeldSession();
                     surfaceSnapshotCaptured = false;
+                    internalCollisionBaseline = null;
                     owner = null;
                     return false;
                 }
@@ -596,6 +625,16 @@ namespace Hairibar.Ragdoll.Animation
                     ? animator.Bindings.RegistryGeneration
                     : -1;
                 heldRuntime = muscle.RuntimeForCleanup;
+                if (!TryApplyHeldAnimatedTargetChildren(
+                    animator,
+                    slotHandle,
+                    true,
+                    out error))
+                {
+                    collisionSession.RequestRelease();
+                    collisionSession = null;
+                    return false;
+                }
                 pickupCommitted = true;
 
                 string overrideError;
@@ -613,6 +652,7 @@ namespace Hairibar.Ragdoll.Animation
             catch (Exception exception)
             {
                 pickupCommitted = false;
+                RestoreHeldAnimatedTargetChildren();
                 RestoreHeldSlotMass();
                 if (collisionSession != null) collisionSession.RequestRelease();
                 error = "Held prop overrides could not be committed: "
@@ -653,6 +693,15 @@ namespace Hairibar.Ragdoll.Animation
         {
             error = null;
             if (!pickupCommitted || collisionSession == null) return true;
+
+            if (!TryApplyHeldAnimatedTargetChildren(
+                animator,
+                slotHandle,
+                false,
+                out error))
+            {
+                return false;
+            }
 
             int generation = animator && animator.Bindings
                 ? animator.Bindings.RegistryGeneration
@@ -934,6 +983,75 @@ namespace Hairibar.Ragdoll.Animation
             emergencyCleanupJoint = null;
         }
 
+        bool TryApplyHeldAnimatedTargetChildren(
+            RagdollAnimator animator,
+            RagdollBoneHandle slotHandle,
+            bool captureBaseline,
+            out string error)
+        {
+            error = null;
+            if (!animator)
+            {
+                error = "Animated target children require a live RagdollAnimator.";
+                return false;
+            }
+            RagdollBehaviourController behaviours =
+                animator.GetComponent<RagdollBehaviourController>();
+            if (!behaviours || !behaviours.IsInitialized)
+            {
+                error = "Animated target children require initialized behaviours.";
+                return false;
+            }
+            RagdollAnimator.AnimatedPair pair;
+            if (!behaviours.Context.TryGetPair(slotHandle, out pair))
+            {
+                error = "The PropMuscle Target binding is unavailable.";
+                return false;
+            }
+
+            RagdollTargetBinding binding = pair.TargetBinding;
+            if (heldTargetBinding != null && heldTargetBinding != binding)
+            {
+                heldTargetBinding.SetAnimatedTargetChildren(
+                    heldAnimatedTargetChildrenBaseline
+                    ?? Array.Empty<Transform>());
+                heldAnimatedTargetChildrenBaseline = null;
+            }
+            if (captureBaseline
+                || heldTargetBinding == null
+                || heldTargetBinding != binding)
+            {
+                heldAnimatedTargetChildrenBaseline = CopyTransforms(
+                    binding.AnimatedTargetChildren);
+            }
+            heldTargetBinding = binding;
+            binding.SetAnimatedTargetChildren(
+                animatedTargetChildren ?? Array.Empty<Transform>());
+            return true;
+        }
+
+        void RestoreHeldAnimatedTargetChildren()
+        {
+            if (heldTargetBinding != null)
+            {
+                heldTargetBinding.SetAnimatedTargetChildren(
+                    heldAnimatedTargetChildrenBaseline
+                    ?? Array.Empty<Transform>());
+            }
+            heldTargetBinding = null;
+            heldAnimatedTargetChildrenBaseline = null;
+        }
+
+        static Transform[] CopyTransforms(IReadOnlyList<Transform> source)
+        {
+            if (source == null || source.Count == 0)
+                return Array.Empty<Transform>();
+            Transform[] copy = new Transform[source.Count];
+            for (int index = 0; index < source.Count; index++)
+                copy[index] = source[index];
+            return copy;
+        }
+
         bool TryRestoreStandaloneCore(
             RagdollPropMuscle muscle,
             RagdollPropReleaseState release,
@@ -994,6 +1112,7 @@ namespace Hairibar.Ragdoll.Animation
                 ClearHeldSlotBaseline();
                 meleeOwner = Melee;
                 if (meleeOwner) meleeOwner.EndHeldSession();
+                RestoreHeldAnimatedTargetChildren();
 
                 pickupPrepared = false;
                 pickupCommitted = false;
@@ -1002,6 +1121,7 @@ namespace Hairibar.Ragdoll.Animation
                 emergencyRestorePending = false;
                 emergencyRestoreError = null;
                 surfaceSnapshotCaptured = false;
+                internalCollisionBaseline = null;
                 heldForceLayers = false;
                 heldPickedUpMaterial = null;
                 heldPickedUpMass = 0f;
@@ -1236,11 +1356,14 @@ namespace Hairibar.Ragdoll.Animation
             if (collisionSession == null || !collisionSession.ReleaseRequested) return;
             if (collisionSession.TryRestoreBaselines())
             {
-                collisionSession = null;
-                collisionSessionGeneration = -1;
+                internalCollisionBaseline = null;
                 coreCollisionPolicyReapplyPending = heldRuntime != null;
                 coreCollisionPolicyReapplyError = null;
                 AdvanceCoreCollisionPolicyReapply();
+                if (!coreCollisionPolicyReapplyPending)
+                {
+                    CompleteReleasedCollisionSession();
+                }
             }
         }
 
@@ -1251,6 +1374,7 @@ namespace Hairibar.Ragdoll.Animation
             {
                 coreCollisionPolicyReapplyPending = false;
                 coreCollisionPolicyReapplyError = null;
+                CompleteReleasedCollisionSession();
                 return;
             }
 
@@ -1264,6 +1388,17 @@ namespace Hairibar.Ragdoll.Animation
             heldRuntime = null;
             coreCollisionPolicyReapplyPending = false;
             coreCollisionPolicyReapplyError = null;
+            CompleteReleasedCollisionSession();
+        }
+
+        void CompleteReleasedCollisionSession()
+        {
+            if (collisionSession != null)
+            {
+                collisionSession.ReapplyReleasedBaselines();
+                collisionSession = null;
+            }
+            collisionSessionGeneration = -1;
         }
 
         internal void AdvanceCoreCollisionPolicyForTesting()

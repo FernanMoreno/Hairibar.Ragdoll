@@ -21,6 +21,17 @@ namespace Hairibar.Ragdoll.Animation
         public RagdollBoneTopology Topology => Bindings.Topology;
         public IReadOnlyList<RagdollAnimator.AnimatedPair> Pairs => pairsView;
 
+        /// <summary>
+        /// Dispatches through the exact production collision channel for package
+        /// allocation diagnostics. No synthetic collision response is inferred.
+        /// </summary>
+        internal void DispatchCollisionForDiagnostics(
+            RagdollBoneHandle bone,
+            RagdollCollisionPhase phase)
+        {
+            CollisionHub.Dispatch(bone, phase, null);
+        }
+
         internal RagdollBehaviourContext(
             RagdollBehaviourController controller,
             RagdollAnimator animator,

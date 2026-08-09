@@ -95,7 +95,7 @@ namespace Hairibar.Ragdoll.Animation
             if (float.IsNaN(value) || value < 0f) return false;
 
             float boosted = Mathf.Clamp01(value);
-            if (boosted <= immunity) return false;
+            if (Mathf.Approximately(boosted, immunity)) return false;
 
             immunity = boosted;
             return true;
@@ -106,7 +106,7 @@ namespace Hairibar.Ragdoll.Animation
             if (float.IsNaN(value) || float.IsInfinity(value)) return false;
 
             float boosted = Mathf.Max(1f, value);
-            if (boosted <= impulseMultiplier) return false;
+            if (Mathf.Approximately(boosted, impulseMultiplier)) return false;
 
             impulseMultiplier = boosted;
             return true;
