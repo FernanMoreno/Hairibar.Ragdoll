@@ -136,36 +136,26 @@ namespace Hairibar.Ragdoll.Animation.Tests
             puppet.OnGetUpSupine = CreatePuppetEvent(
                 () => phases.Add("supine"));
 
-            InvokePrivate(
-                puppet,
-                "InvokeTransitionEvents",
-                RagdollPuppetState.Puppet,
-                RagdollPuppetState.Unpinned,
-                RagdollPuppetTransitionReason.TargetDrift);
-            InvokePrivate(
-                puppet,
-                "InvokeTransitionEvents",
-                RagdollPuppetState.GetUp,
-                RagdollPuppetState.Puppet,
-                RagdollPuppetTransitionReason.GetUpCompleted);
-            InvokePrivate(
-                puppet,
-                "InvokeTransitionEvents",
-                RagdollPuppetState.Puppet,
-                RagdollPuppetState.Unpinned,
-                RagdollPuppetTransitionReason.LifecycleDeath);
-            InvokePrivate(
-                puppet,
-                "InvokeGetUpEvent",
-                RagdollGetUpOrientation.Prone);
-            InvokePrivate(
-                puppet,
-                "InvokeGetUpEvent",
-                RagdollGetUpOrientation.Supine);
-
+            puppet.CanGetUp = false;
+            puppet.State = RagdollPuppetState.Unpinned;
             CollectionAssert.AreEqual(
-                new[] { "lose", "lose-puppet", "regain", "prone", "supine" },
-                phases);
+                new[] { "lose", "lose-puppet" }, phases);
+
+            puppet.State = RagdollPuppetState.GetUp;
+            Assert.That(phases.Count, Is.EqualTo(3));
+            Assert.That(phases[2], Is.EqualTo(puppet.GetUpOrientation
+                == RagdollGetUpOrientation.Prone ? "prone" : "supine"));
+
+            puppet.State = RagdollPuppetState.Puppet;
+            Assert.That(phases[3], Is.EqualTo("regain"));
+            puppet.State = RagdollPuppetState.Puppet;
+            Assert.That(phases.Count, Is.EqualTo(4),
+                "Assigning the active state again must not duplicate events.");
+
+            rig.Result.Animator.Kill(new RagdollLifecycleSettings(0f));
+            yield return null;
+            Assert.That(phases.Count, Is.EqualTo(4),
+                "Lifecycle death is not a gameplay balance-loss event.");
         }
 
         [UnityTest]
@@ -222,72 +212,138 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Assert.That(passing.LastMoveToTarget, Is.True);
         }
 
-        [Test]
-        public void D18_MasterPinAndMuscleAreIndependent()
+        [UnityTest]
+        public IEnumerator D18_MasterPinAndMuscleAreIndependent()
         {
-            BoneProfile pinOnly = CreateAuthorityProfile();
-            RagdollMasterAuthority.Apply(
-                ref pinOnly,
-                1f,
-                0f,
-                1f,
-                1f);
-            Assert.That(pinOnly.PositionPinWeight, Is.EqualTo(1f));
-            Assert.That(pinOnly.rotationAlpha, Is.Zero);
-            Assert.That(pinOnly.positionAlpha, Is.EqualTo(4f));
+            RuntimeRig rig = CreateRuntime();
+            yield return null;
+            rig.Result.Animator.MasterMappingWeight = 0f;
+            rig.Result.Animator.PinPow = 1f;
+            rig.Result.Animator.PinDistanceFalloff = 0f;
+            Vector3 authoredRootPosition = rig.RootBody.position;
+            Vector3 authoredChildPosition = rig.ChildBody.position;
+            Quaternion authoredRootRotation = rig.RootBody.rotation;
+            Quaternion authoredChildRotation = rig.ChildBody.rotation;
+            SimulationMode previousSimulationMode = Physics.simulationMode;
+            rig.Result.Animator.enabled = false;
+            float pinVelocity;
+            try
+            {
+                Physics.simulationMode = SimulationMode.Script;
+                rig.Result.Animator.MasterPinWeight = 1f;
+                rig.Result.Animator.MasterMuscleWeight = 0f;
+                rig.Target.transform.position = authoredRootPosition
+                    + Vector3.right;
+                rig.Result.Animator.PrepareManualSimulation(Time.fixedDeltaTime);
+                Assert.That(rig.RootJoint.slerpDrive.positionSpring, Is.Zero,
+                    "Pin-only authority must not write rotational muscle drive.");
+                Physics.Simulate(Time.fixedDeltaTime);
+                pinVelocity = rig.RootBody.linearVelocity.magnitude;
+                rig.Result.Animator.CompleteManualSimulation();
 
-            BoneProfile muscleOnly = CreateAuthorityProfile();
-            RagdollMasterAuthority.Apply(
-                ref muscleOnly,
-                0f,
-                1f,
-                1f,
-                1f);
-            Assert.That(muscleOnly.PositionPinWeight, Is.Zero);
-            Assert.That(muscleOnly.rotationAlpha, Is.EqualTo(8f));
-            Assert.That(muscleOnly.positionAlpha, Is.EqualTo(4f));
+                rig.RootBody.position = authoredRootPosition;
+                rig.RootBody.rotation = authoredRootRotation;
+                rig.ChildBody.position = authoredChildPosition;
+                rig.ChildBody.rotation = authoredChildRotation;
+                rig.RootBody.linearVelocity = Vector3.zero;
+                rig.ChildBody.linearVelocity = Vector3.zero;
+                rig.RootBody.angularVelocity = Vector3.zero;
+                rig.ChildBody.angularVelocity = Vector3.zero;
+                rig.Target.transform.SetPositionAndRotation(
+                    authoredRootPosition,
+                    Quaternion.Euler(0f, 45f, 0f));
+                rig.Result.Animator.MasterPinWeight = 0f;
+                rig.Result.Animator.MasterMuscleWeight = 1f;
+                rig.Result.Animator.PrepareManualSimulation(Time.fixedDeltaTime);
+                Assert.That(rig.RootJoint.slerpDrive.positionSpring,
+                    Is.GreaterThan(0f),
+                    "Muscle-only authority must retain the rotational drive.");
+                Physics.Simulate(Time.fixedDeltaTime);
+                Assert.That(rig.RootBody.linearVelocity.magnitude,
+                    Is.LessThan(pinVelocity * 0.1f + 0.0001f),
+                    "Muscle-only authority must not recreate linear pinning.");
+                rig.Result.Animator.CompleteManualSimulation();
+            }
+            finally
+            {
+                if (rig.Result.Animator.IsManualSimulationPrepared)
+                    rig.Result.Animator.CompleteManualSimulation();
+                Physics.simulationMode = previousSimulationMode;
+                rig.Result.Animator.enabled = true;
+            }
+            Assert.That(pinVelocity, Is.GreaterThan(0.001f),
+                "Pin-only authority must produce an observable physical correction.");
         }
 
-        [Test]
-        public void D26_UnpinnedVelocityLimitHandlesExtremeValues()
+        [UnityTest]
+        public IEnumerator D26_UnpinnedVelocityLimitHandlesExtremeValues()
         {
-            Vector3 original = new Vector3(3f, 4f, 0f);
-            Vector3 clamped =
-                RagdollPuppetBehaviourMath.LimitVelocity(original, 2f);
-            Assert.That(clamped.magnitude, Is.EqualTo(2f).Within(0.0001f));
-            Assert.That(Vector3.Dot(clamped.normalized, original.normalized),
-                Is.EqualTo(1f).Within(0.0001f));
-            Assert.That(
-                RagdollPuppetBehaviourMath.LimitVelocity(
-                    original,
-                    float.PositiveInfinity),
-                Is.EqualTo(original));
-            Assert.That(
-                RagdollPuppetBehaviourMath.LimitVelocity(original, 0f),
-                Is.EqualTo(Vector3.zero));
+            RuntimeRig rig = CreateRuntime();
+            yield return null;
+            RagdollPuppetBehaviour puppet = rig.Result.PuppetBehaviour;
+            puppet.CanGetUp = false;
+            puppet.MaxRigidbodyVelocity = 2f;
+            rig.RootBody.mass = 0.001f;
+            rig.ChildBody.mass = 10000f;
+            Vector3 rootVelocity = new Vector3(3f, 4f, 0f);
+            Vector3 childVelocity = new Vector3(-6f, 0f, 8f);
+            rig.RootBody.linearVelocity = rootVelocity;
+            rig.ChildBody.linearVelocity = childVelocity;
+
+            puppet.State = RagdollPuppetState.Unpinned;
+            Assert.That(rig.RootBody.linearVelocity.magnitude,
+                Is.EqualTo(2f).Within(0.0001f));
+            Assert.That(rig.ChildBody.linearVelocity.magnitude,
+                Is.EqualTo(2f).Within(0.0001f));
+            Assert.That(Vector3.Dot(
+                rig.RootBody.linearVelocity.normalized,
+                rootVelocity.normalized), Is.EqualTo(1f).Within(0.0001f));
+            Assert.That(Vector3.Dot(
+                rig.ChildBody.linearVelocity.normalized,
+                childVelocity.normalized), Is.EqualTo(1f).Within(0.0001f));
+            Assert.That(float.IsNaN(rig.RootBody.linearVelocity.x), Is.False);
+            Assert.That(float.IsInfinity(rig.ChildBody.linearVelocity.z), Is.False);
+
+            puppet.State = RagdollPuppetState.Puppet;
+            puppet.MaxRigidbodyVelocity = float.PositiveInfinity;
+            rig.RootBody.linearVelocity = rootVelocity;
+            puppet.State = RagdollPuppetState.Unpinned;
+            Assert.That(rig.RootBody.linearVelocity, Is.EqualTo(rootVelocity),
+                "An infinite documented maximum must leave valid velocity unchanged.");
         }
 
-        [Test]
-        public void D28_AuthoredZeroPinKnockoutIsConfigurable()
+        [UnityTest]
+        public IEnumerator D28_AuthoredZeroPinKnockoutIsConfigurable()
         {
-            bool disabled = RagdollPuppetBehaviourMath.ShouldLoseBalance(
-                2f,
-                1f,
-                0f,
-                0f,
-                1f,
-                1f,
-                false);
-            bool enabled = RagdollPuppetBehaviourMath.ShouldLoseBalance(
-                2f,
-                1f,
-                0f,
-                0f,
-                1f,
-                1f,
-                true);
-            Assert.That(disabled, Is.False);
-            Assert.That(enabled, Is.True);
+            RuntimeRig rig = CreateRuntime();
+            yield return null;
+            RagdollPuppetBehaviour puppet = rig.Result.PuppetBehaviour;
+            puppet.CanGetUp = false;
+            puppet.PinWeightThreshold = 1f;
+            puppet.UnpinnedMuscleKnockout = false;
+            rig.Result.Animator.SetMuscleWeights(0, 1f, 0f, 1f, 1f);
+            rig.Result.Animator.MasterPinWeight = 1f;
+            rig.Result.Animator.MasterMuscleWeight = 0f;
+            rig.RootBody.position = rig.Target.transform.position
+                + Vector3.right * 2f;
+
+            yield return new WaitForFixedUpdate();
+            yield return new WaitForFixedUpdate();
+            Assert.That(puppet.State, Is.EqualTo(RagdollPuppetState.Puppet),
+                "An authored zero pin must be exempt while the option is disabled.");
+
+            puppet.UnpinnedMuscleKnockout = true;
+            for (int step = 0;
+                step < 5 && puppet.State == RagdollPuppetState.Puppet;
+                step++)
+            {
+                rig.RootBody.position = rig.Target.transform.position
+                    + Vector3.right * 2f;
+                yield return new WaitForFixedUpdate();
+            }
+            Assert.That(puppet.State, Is.EqualTo(RagdollPuppetState.Unpinned));
+            Assert.That(puppet.LastKnockOutBone,
+                Is.EqualTo(rig.Bindings.GetHandleAt(0)));
         }
 
         [UnityTest]
@@ -312,16 +368,34 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 child,
                 new RagdollMappingWeights(0f, 1f));
             rig.Result.Animator.FixTargetTransforms = false;
-            InvokePrivate(rig.Result.Animator, "ReadAnimatedPose", false, false);
             Quaternion before = rig.TargetChild.rotation;
             schedulerObject.SetActive(true);
+            SimulationMode previousSimulationMode = Physics.simulationMode;
+            rig.Result.Animator.enabled = false;
+            Quaternion expectedRotation = Quaternion.identity;
+            try
+            {
+                Physics.simulationMode = SimulationMode.Script;
+                rig.Result.Animator.PrepareManualSimulation(Time.fixedDeltaTime);
+                rig.ChildBody.rotation = Quaternion.Euler(20f, 65f, -15f);
+                Physics.Simulate(Time.fixedDeltaTime);
 
-            rig.ChildBody.rotation = Quaternion.Euler(20f, 65f, -15f);
-            RagdollAnimator.AnimatedPair childPair = FindPair(rig, 1);
-            childPair.GetMappedTargetWorldPose(
-                out _,
-                out Quaternion expectedRotation);
-            InvokePrivate(rig.Result.Animator, "MapRagdollToTarget");
+                // CompleteManualSimulation is the public post-physics boundary. The
+                // authoritative Rigidbody pose synchronized by PhysX at that boundary
+                // must be mapped before OnWrite invokes an after-physics IK solver.
+                RagdollAnimator.AnimatedPair childPair = FindPair(rig, 1);
+                childPair.GetMappedTargetWorldPose(
+                    out _,
+                    out expectedRotation);
+                rig.Result.Animator.CompleteManualSimulation();
+            }
+            finally
+            {
+                if (rig.Result.Animator.IsManualSimulationPrepared)
+                    rig.Result.Animator.CompleteManualSimulation();
+                Physics.simulationMode = previousSimulationMode;
+                rig.Result.Animator.enabled = true;
+            }
             Quaternion mapped = rig.TargetChild.rotation;
             Assert.That(Quaternion.Angle(mapped, before), Is.GreaterThan(10f));
             Assert.That(Quaternion.Angle(mapped, expectedRotation),
@@ -589,19 +663,54 @@ namespace Hairibar.Ragdoll.Animation.Tests
         {
             RuntimeRig rig = CreateRuntime();
             yield return null;
-            rig.Result.Animator.PinDistanceFalloff = 5f;
-            Vector3 correction = new Vector3(10f, 0f, 0f);
-            Vector3 near = RagdollPinMath.ResolvePositionAcceleration(
-                correction, Vector3.right * 0.1f, 1f, 4f,
-                rig.Result.Animator.PinDistanceFalloff);
-            Vector3 far = RagdollPinMath.ResolvePositionAcceleration(
-                correction, Vector3.right * 2f, 1f, 4f,
-                rig.Result.Animator.PinDistanceFalloff);
+            rig.Result.Animator.MasterMappingWeight = 0f;
+            rig.Result.Animator.MasterPinWeight = 1f;
+            rig.Result.Animator.MasterMuscleWeight = 0f;
+            rig.Result.Animator.PinPow = 1f;
+            Vector3 rootPosition = rig.RootBody.position;
+            Vector3 childPosition = rig.ChildBody.position;
+            Quaternion rootRotation = rig.RootBody.rotation;
+            Quaternion childRotation = rig.ChildBody.rotation;
+            rig.Target.transform.position = rootPosition + Vector3.right * 2f;
+            SimulationMode previousSimulationMode = Physics.simulationMode;
+            rig.Result.Animator.enabled = false;
+            float noFalloffVelocity;
+            float falloffVelocity;
+            try
+            {
+                Physics.simulationMode = SimulationMode.Script;
+                rig.Result.Animator.PinDistanceFalloff = 0f;
+                rig.Result.Animator.PrepareManualSimulation(Time.fixedDeltaTime);
+                Physics.Simulate(Time.fixedDeltaTime);
+                noFalloffVelocity = rig.RootBody.linearVelocity.magnitude;
+                rig.Result.Animator.CompleteManualSimulation();
 
-            Assert.That(far.magnitude, Is.LessThan(near.magnitude));
-            Assert.That(rig.Result.Animator.PinSettings.PinDistanceFalloff,
-                Is.EqualTo(5f));
-            Assert.That(rig.Result.Behaviours.Context.Pairs.Count, Is.EqualTo(2));
+                rig.RootBody.position = rootPosition;
+                rig.RootBody.rotation = rootRotation;
+                rig.ChildBody.position = childPosition;
+                rig.ChildBody.rotation = childRotation;
+                rig.RootBody.linearVelocity = Vector3.zero;
+                rig.ChildBody.linearVelocity = Vector3.zero;
+                rig.RootBody.angularVelocity = Vector3.zero;
+                rig.ChildBody.angularVelocity = Vector3.zero;
+                rig.Result.Animator.PinDistanceFalloff = 5f;
+                rig.Result.Animator.PrepareManualSimulation(Time.fixedDeltaTime);
+                Physics.Simulate(Time.fixedDeltaTime);
+                falloffVelocity = rig.RootBody.linearVelocity.magnitude;
+                rig.Result.Animator.CompleteManualSimulation();
+            }
+            finally
+            {
+                if (rig.Result.Animator.IsManualSimulationPrepared)
+                    rig.Result.Animator.CompleteManualSimulation();
+                Physics.simulationMode = previousSimulationMode;
+                rig.Result.Animator.enabled = true;
+            }
+
+            Assert.That(noFalloffVelocity, Is.GreaterThan(0.001f));
+            Assert.That(falloffVelocity, Is.LessThan(noFalloffVelocity),
+                "The same physical correction must weaken when distance falloff is enabled.");
+            Assert.That(rig.Result.Animator.PinDistanceFalloff, Is.EqualTo(5f));
         }
 
         [UnityTest]

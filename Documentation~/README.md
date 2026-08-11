@@ -3,6 +3,10 @@
 La documentación de auditoría, migración y certificación está en
 [`Certification`](Certification/README.md).
 
+La certificación es autocontenida y exclusiva del paquete. Las notas históricas de
+integraciones concretas se guardan aparte en [`Integration`](Integration/) y nunca
+constituyen evidencia ni gates de certificación del paquete.
+
 Guías de uso:
 
 - [`USER-GUIDE.md`](USER-GUIDE.md): instalación, arquitectura, lifecycle, props,

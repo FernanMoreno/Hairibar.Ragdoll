@@ -11,6 +11,7 @@ namespace Hairibar.Ragdoll.Animation
         /// authored root. All validation occurs before the registry is changed. Call
         /// from FixedUpdate while the ragdoll is in a stable Alive state.
         /// </summary>
+        [RagdollCompatibilityApi("Runtime hierarchy", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public bool TrySetMuscles(
             IReadOnlyList<RagdollRuntimeMuscleRegistration> collection,
             out RagdollHierarchyTransactionResult result)
@@ -151,6 +152,7 @@ namespace Hairibar.Ragdoll.Animation
         /// Applies multiple replacements as one complete-registry transaction. Handles
         /// are checked against the current generation before any state is changed.
         /// </summary>
+        [RagdollCompatibilityApi("Runtime hierarchy", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public bool TryReplaceMuscles(
             IReadOnlyList<RagdollMuscleReplacement> replacements,
             out RagdollHierarchyTransactionResult result)

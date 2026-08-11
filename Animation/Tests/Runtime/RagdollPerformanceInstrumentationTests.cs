@@ -59,6 +59,37 @@ namespace Hairibar.Ragdoll.Animation.Tests
             CreateRig(0);
             yield return null;
             RagdollCollisionHub hub = setups[0].Collisions;
+            setups[0].Behaviours.enabled = false;
+            yield return null;
+            RagdollCollisionRelay[] relays = setups[0].Puppet
+                .GetComponentsInChildren<RagdollCollisionRelay>(true);
+            Assert.That(relays.Length, Is.EqualTo(2));
+            for (int index = 0; index < relays.Length; index++)
+            {
+                Assert.That(relays[index].enabled, Is.False,
+                    "Relays without consumers must not receive PhysX callbacks.");
+            }
+
+            int entered = 0;
+            System.Action<RagdollCollisionEvent> listener = _ => entered++;
+            hub.CollisionEntered += listener;
+            for (int index = 0; index < relays.Length; index++)
+                Assert.That(relays[index].enabled, Is.True);
+            GameObject obstacle = new GameObject("H07 Physical Collision");
+            created.Add(obstacle);
+            obstacle.transform.position = setups[0].Puppet.position
+                + Vector3.right * 1.2f;
+            obstacle.AddComponent<BoxCollider>();
+            Rigidbody rootBody = setups[0].Puppet.GetComponent<Rigidbody>();
+            rootBody.linearVelocity = Vector3.right * 5f;
+            for (int step = 0; step < 20 && entered == 0; step++)
+                yield return new WaitForFixedUpdate();
+            Assert.That(entered, Is.GreaterThan(0),
+                "An enabled relay must forward a real PhysX collision.");
+
+            hub.CollisionEntered -= listener;
+            for (int index = 0; index < relays.Length; index++)
+                Assert.That(relays[index].enabled, Is.False);
             RagdollBoneHandle handle = setups[0].Puppet
                 .GetComponent<RagdollDefinitionBindings>()
                 .GetHandleAt(0);

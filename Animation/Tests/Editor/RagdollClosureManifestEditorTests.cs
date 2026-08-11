@@ -14,6 +14,8 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
 {
     public sealed class RagdollClosureManifestEditorTests
     {
+        const string ClosureFixtureRunId =
+            "11111111-2222-4333-8444-555555555555";
         [Test]
         public void A05_GuidedSetupIsOneUndoableTransaction()
         {
@@ -38,6 +40,11 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
                 Assert.That(rig.Rigidbodies.All(value => value), Is.True);
                 Assert.That(rig.Colliders.All(value => value), Is.True);
                 Assert.That(rig.Joints.All(value => value), Is.True);
+                Assert.That(rig.Joints.All(value =>
+                    value.GetComponent<Rigidbody>()), Is.True);
+                Assert.That(rig.Joints.All(value =>
+                    !value.connectedBody
+                    || rig.Rigidbodies.Contains(value.connectedBody)), Is.True);
 
                 Undo.PerformUndo();
                 Assert.That(fixture.Root.GetComponentInChildren<RagdollAuthoredRig>(true),
@@ -55,6 +62,9 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
                 Assert.That(rig.Rigidbodies, Has.Length.EqualTo(16));
                 Assert.That(rig.Colliders, Has.Length.EqualTo(16));
                 Assert.That(rig.Joints, Has.Length.EqualTo(16));
+                Assert.That(rig.Rigidbodies.All(value => value), Is.True);
+                Assert.That(rig.Colliders.All(value => value), Is.True);
+                Assert.That(rig.Joints.All(value => value), Is.True);
             }
         }
 
@@ -105,11 +115,16 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
                 Assert.That(error, Does.Contain("parallel"));
                 Assert.That(joint.axis, Is.EqualTo(originalAxis));
                 Assert.That(joint.secondaryAxis, Is.EqualTo(originalSecondary));
+                Rigidbody ownBody = joint.GetComponent<Rigidbody>();
+                Rigidbody originalConnection = joint.connectedBody;
+                Assert.That(fixture.Inspector.TrySetSelectedConnectedBody(
+                    ownBody, out error), Is.False);
+                Assert.That(error, Does.Contain("own Rigidbody"));
+                Assert.That(joint.connectedBody, Is.SameAs(originalConnection));
                 GameObject external = new GameObject("External connected body");
                 try
                 {
                     Rigidbody externalBody = external.AddComponent<Rigidbody>();
-                    Rigidbody originalConnection = joint.connectedBody;
                     Assert.That(fixture.Inspector.TrySetSelectedConnectedBody(
                         externalBody, out error), Is.False);
                     Assert.That(error, Does.Contain("authored ragdoll"));
@@ -363,7 +378,8 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
                     artifacts = new[] { first.Artifact, second.Artifact },
                     sourceRevision = first.Request.sourceRevision,
                     sourceTreeSha256 = first.Request.sourceTreeSha256,
-                    sourceLatestWriteUtc = first.Request.sourceLatestWriteUtc
+                    sourceLatestWriteUtc = first.Request.sourceLatestWriteUtc,
+                    certificationRunId = first.Request.certificationRunId
                 };
 
                 RagdollCoverageManifest.Entry entry = Entry(
@@ -386,7 +402,8 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
                     artifacts = new[] { passed.Artifact, failed.Artifact },
                     sourceRevision = passed.Request.sourceRevision,
                     sourceTreeSha256 = passed.Request.sourceTreeSha256,
-                    sourceLatestWriteUtc = passed.Request.sourceLatestWriteUtc
+                    sourceLatestWriteUtc = passed.Request.sourceLatestWriteUtc,
+                    certificationRunId = passed.Request.certificationRunId
                 };
 
                 Exception exception = Assert.Throws<InvalidDataException>(
@@ -446,6 +463,7 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
                 string treeHash = RagdollCoverageManifest
                     .ComputeCurrentSourceTreeSha256();
                 const string revision = "0123456789abcdef";
+                const string runId = ClosureFixtureRunId;
                 string generatedUtc = DateTime.UtcNow.AddMinutes(1).ToString("O");
                 RagdollEvidenceArtifact edit = Artifact(
                     RagdollEvidenceKind.NUnitEditMode,
@@ -464,7 +482,8 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
                     sourceRevision = revision,
                     sourceTreeSha256 = treeHash,
                     sourceLatestWriteUtc = RagdollCoverageManifest
-                        .CurrentSourceLatestWriteUtc()
+                        .CurrentSourceLatestWriteUtc(),
+                    certificationRunId = runId
                 };
                 RagdollCoverageManifest.Entry incomplete = Entry(
                     RagdollCoverageManifest.Build(editOnly), "I07");
@@ -480,7 +499,8 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
                     artifacts = new[] { edit, play, profiler },
                     sourceRevision = revision,
                     sourceTreeSha256 = treeHash,
-                    sourceLatestWriteUtc = editOnly.sourceLatestWriteUtc
+                    sourceLatestWriteUtc = editOnly.sourceLatestWriteUtc,
+                    certificationRunId = runId
                 };
                 RagdollCoverageManifest.Entry verified = Entry(
                     RagdollCoverageManifest.Build(complete), "I07");
@@ -566,6 +586,7 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
                         ? "Editor" : "Player",
                 scenario = "I07",
                 generatedUtc = generatedUtc,
+                certificationRunId = ClosureFixtureRunId,
                 sourceRevision = revision,
                 sourceTreeSha256 = treeHash,
                 capabilityIds = capabilityIds
@@ -579,16 +600,36 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
                 "matching", "mapping", "collision-relay", "com",
                 "additional-pin", "baker-realtime"
             };
-            return "{\"schemaVersion\":2,\"succeeded\":true," +
+            string rawZero = string.Join(",", Enumerable.Repeat("0", 600));
+            string cpu = string.Join(",", Enumerable.Repeat("1", 300)
+                .Concat(Enumerable.Repeat("2", 300)));
+            string memory = string.Join(",", Enumerable.Repeat("100", 300)
+                .Concat(Enumerable.Repeat("150", 300)));
+            return "{\"schemaVersion\":3,\"succeeded\":true," +
                 "\"warmupFrames\":120,\"measuredFrames\":600," +
-                "\"cpuMilliseconds\":{\"median\":1,\"p95\":2}," +
-                "\"memoryBytes\":{\"median\":100,\"p95\":150}," +
+                "\"cpuMilliseconds\":{\"median\":1,\"p95\":2,\"sampleCount\":600,\"rawSamples\":[" + cpu + "]}," +
+                "\"memoryBytes\":{\"median\":100,\"p95\":150,\"sampleCount\":600,\"rawSamples\":[" + memory + "]}," +
                 "\"criticalPaths\":[" + string.Join(",", names.Select(name =>
                     "{\"name\":\"" + name +
                     "\",\"succeeded\":true,\"samples\":600," +
-                    "\"measurementScope\":\"scope-" + name + "\"," +
+                    "\"measurementScope\":\"" + CriticalScope(name) + "\"," +
                     "\"gcAllocatedBytes\":0," +
-                    "\"maxGcAllocatedBytesInFrame\":0}")) + "]}";
+                    "\"maxGcAllocatedBytesInFrame\":0,"
+                    + "\"rawAllocationSamples\":[" + rawZero + "]}")) + "]}";
+        }
+
+        static string CriticalScope(string name)
+        {
+            switch (name)
+            {
+                case "matching": return "RagdollAnimator.DoAnimationMatching";
+                case "mapping": return "RagdollAnimator.MapRagdollToTarget";
+                case "collision-relay": return "RagdollCollisionHub.Dispatch";
+                case "com": return "RagdollCenterOfMassSubBehaviour.FixedUpdate";
+                case "additional-pin":
+                    return "RagdollPropMuscle.ApplyAdditionalPinAfterAnimationMatching";
+                default: return "RagdollBaker.AdvanceRealtimeSampling";
+            }
         }
 
         sealed class DualRigClosureFixture : IDisposable
@@ -765,6 +806,238 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
             }
         }
 
+        sealed class GuidedAuthoringClosureFixture : IDisposable
+        {
+            GuidedAuthoringClosureFixture()
+            {
+                Root = new GameObject("A05 guided authoring root");
+                Transform hips = Bone("Hips", Root.transform, Vector3.zero);
+                Transform spine = Bone("Spine", hips, Vector3.up * 0.4f);
+                Transform chest = Bone("Chest", spine, Vector3.up * 0.4f);
+                Transform head = Bone("Head", chest, Vector3.up * 0.5f);
+                Transform leftUpperArm = Bone("LeftUpperArm", chest,
+                    new Vector3(-0.3f, 0.2f, 0f));
+                Transform leftLowerArm = Bone("LeftLowerArm", leftUpperArm,
+                    new Vector3(-0.4f, 0f, 0f));
+                Transform leftHand = Bone("LeftHand", leftLowerArm,
+                    new Vector3(-0.3f, 0f, 0f));
+                Transform rightUpperArm = Bone("RightUpperArm", chest,
+                    new Vector3(0.3f, 0.2f, 0f));
+                Transform rightLowerArm = Bone("RightLowerArm", rightUpperArm,
+                    new Vector3(0.4f, 0f, 0f));
+                Transform rightHand = Bone("RightHand", rightLowerArm,
+                    new Vector3(0.3f, 0f, 0f));
+                Transform leftUpperLeg = Bone("LeftUpperLeg", hips,
+                    new Vector3(-0.2f, -0.4f, 0f));
+                Transform leftLowerLeg = Bone("LeftLowerLeg", leftUpperLeg,
+                    new Vector3(0f, -0.5f, 0f));
+                Transform leftFoot = Bone("LeftFoot", leftLowerLeg,
+                    new Vector3(0f, -0.4f, 0.15f));
+                Transform rightUpperLeg = Bone("RightUpperLeg", hips,
+                    new Vector3(0.2f, -0.4f, 0f));
+                Transform rightLowerLeg = Bone("RightLowerLeg", rightUpperLeg,
+                    new Vector3(0f, -0.5f, 0f));
+                Transform rightFoot = Bone("RightFoot", rightLowerLeg,
+                    new Vector3(0f, -0.4f, 0.15f));
+
+                References = new RagdollBipedReferences
+                {
+                    hips = hips,
+                    spine = spine,
+                    chest = chest,
+                    head = head,
+                    leftUpperArm = leftUpperArm,
+                    leftLowerArm = leftLowerArm,
+                    leftHand = leftHand,
+                    rightUpperArm = rightUpperArm,
+                    rightLowerArm = rightLowerArm,
+                    rightHand = rightHand,
+                    leftUpperLeg = leftUpperLeg,
+                    leftLowerLeg = leftLowerLeg,
+                    leftFoot = leftFoot,
+                    rightUpperLeg = rightUpperLeg,
+                    rightLowerLeg = rightLowerLeg,
+                    rightFoot = rightFoot
+                };
+            }
+
+            public GameObject Root { get; }
+            public RagdollBipedReferences References { get; }
+
+            public static GuidedAuthoringClosureFixture Create()
+            {
+                return new GuidedAuthoringClosureFixture();
+            }
+
+            public void Dispose()
+            {
+                Undo.ClearAll();
+                Selection.activeObject = null;
+                if (Root) UnityEngine.Object.DestroyImmediate(Root);
+            }
+
+            static Transform Bone(string name, Transform parent, Vector3 localPosition)
+            {
+                Transform value = new GameObject(name).transform;
+                value.SetParent(parent, false);
+                value.localPosition = localPosition;
+                return value;
+            }
+        }
+
+        sealed class SymmetricAuthoredRigClosureFixture : IDisposable
+        {
+            readonly GameObject owner;
+            readonly GameObject left;
+            readonly GameObject right;
+
+            SymmetricAuthoredRigClosureFixture()
+            {
+                owner = new GameObject("A06 symmetric authored rig");
+                left = new GameObject("Left authored bone");
+                right = new GameObject("Right authored bone");
+                left.transform.SetParent(owner.transform, false);
+                right.transform.SetParent(owner.transform, false);
+                left.transform.localPosition = Vector3.left;
+                right.transform.localPosition = Vector3.right;
+
+                Rigidbody leftBody = left.AddComponent<Rigidbody>();
+                Rigidbody rightBody = right.AddComponent<Rigidbody>();
+                BoxCollider leftCollider = left.AddComponent<BoxCollider>();
+                BoxCollider rightCollider = right.AddComponent<BoxCollider>();
+                leftCollider.center = new Vector3(0.01f, 0.02f, 0.03f);
+                leftCollider.size = new Vector3(0.2f, 0.3f, 0.4f);
+                rightCollider.center = new Vector3(-0.01f, 0.02f, 0.03f);
+                rightCollider.size = leftCollider.size;
+                ConfigurableJoint leftJoint = left.AddComponent<ConfigurableJoint>();
+                ConfigurableJoint rightJoint = right.AddComponent<ConfigurableJoint>();
+                leftJoint.axis = Vector3.right;
+                leftJoint.secondaryAxis = Vector3.up;
+                rightJoint.axis = Vector3.left;
+                rightJoint.secondaryAxis = Vector3.up;
+
+                RagdollAuthoredRig rig = owner.AddComponent<RagdollAuthoredRig>();
+                rig.SetOwnedComponents(
+                    new[] { leftBody, rightBody },
+                    new Collider[] { leftCollider, rightCollider },
+                    new[] { leftJoint, rightJoint });
+                Inspector = (RagdollAuthoredRigEditor)UnityEditor.Editor.CreateEditor(
+                    rig, typeof(RagdollAuthoredRigEditor));
+                Inspector.SymmetryDistance = 0.05f;
+            }
+
+            public RagdollAuthoredRigEditor Inspector { get; }
+
+            public static SymmetricAuthoredRigClosureFixture Create()
+            {
+                return new SymmetricAuthoredRigClosureFixture();
+            }
+
+            public State Capture()
+            {
+                return new State(
+                    (BoxCollider)left.GetComponent<Collider>(),
+                    (BoxCollider)right.GetComponent<Collider>(),
+                    left.GetComponent<ConfigurableJoint>(),
+                    right.GetComponent<ConfigurableJoint>());
+            }
+
+            public void AssertSymmetricChanged(State state)
+            {
+                AssertVector(state.LeftCenter,
+                    new Vector3(0.1f, 0.2f, 0.3f));
+                AssertVector(state.RightCenter,
+                    new Vector3(-0.1f, 0.2f, 0.3f));
+                AssertVector(state.LeftSize,
+                    new Vector3(0.4f, 0.8f, 1.2f));
+                AssertVector(state.RightSize, state.LeftSize);
+                AssertVector(state.LeftAxis, Vector3.forward);
+                AssertVector(state.LeftSecondaryAxis, Vector3.up);
+                AssertVector(state.RightAxis, Vector3.forward);
+                AssertVector(state.RightSecondaryAxis, Vector3.up);
+                AssertVector(state.LeftLimits,
+                    new Vector4(-25f, 40f, 55f, 65f));
+                AssertVector(state.RightLimits, state.LeftLimits);
+            }
+
+            public void AssertState(State expected)
+            {
+                State actual = Capture();
+                AssertVector(actual.LeftCenter, expected.LeftCenter);
+                AssertVector(actual.RightCenter, expected.RightCenter);
+                AssertVector(actual.LeftSize, expected.LeftSize);
+                AssertVector(actual.RightSize, expected.RightSize);
+                AssertVector(actual.LeftAxis, expected.LeftAxis);
+                AssertVector(actual.RightAxis, expected.RightAxis);
+                AssertVector(actual.LeftSecondaryAxis,
+                    expected.LeftSecondaryAxis);
+                AssertVector(actual.RightSecondaryAxis,
+                    expected.RightSecondaryAxis);
+                AssertVector(actual.LeftLimits, expected.LeftLimits);
+                AssertVector(actual.RightLimits, expected.RightLimits);
+            }
+
+            static void AssertVector(Vector3 actual, Vector3 expected)
+            {
+                Assert.That(Vector3.Distance(actual, expected),
+                    Is.LessThan(0.00001f));
+            }
+
+            static void AssertVector(Vector4 actual, Vector4 expected)
+            {
+                Assert.That(Vector4.Distance(actual, expected),
+                    Is.LessThan(0.00001f));
+            }
+
+            public void Dispose()
+            {
+                Undo.ClearAll();
+                if (Inspector) UnityEngine.Object.DestroyImmediate(Inspector);
+                if (owner) UnityEngine.Object.DestroyImmediate(owner);
+            }
+
+            public readonly struct State
+            {
+                public State(
+                    BoxCollider leftCollider,
+                    BoxCollider rightCollider,
+                    ConfigurableJoint leftJoint,
+                    ConfigurableJoint rightJoint)
+                {
+                    LeftCenter = leftCollider.center;
+                    RightCenter = rightCollider.center;
+                    LeftSize = leftCollider.size;
+                    RightSize = rightCollider.size;
+                    LeftAxis = leftJoint.axis;
+                    RightAxis = rightJoint.axis;
+                    LeftSecondaryAxis = leftJoint.secondaryAxis;
+                    RightSecondaryAxis = rightJoint.secondaryAxis;
+                    LeftLimits = Limits(leftJoint);
+                    RightLimits = Limits(rightJoint);
+                }
+
+                public Vector3 LeftCenter { get; }
+                public Vector3 RightCenter { get; }
+                public Vector3 LeftSize { get; }
+                public Vector3 RightSize { get; }
+                public Vector3 LeftAxis { get; }
+                public Vector3 RightAxis { get; }
+                public Vector3 LeftSecondaryAxis { get; }
+                public Vector3 RightSecondaryAxis { get; }
+                public Vector4 LeftLimits { get; }
+                public Vector4 RightLimits { get; }
+
+                static Vector4 Limits(ConfigurableJoint joint)
+                {
+                    return new Vector4(
+                        joint.lowAngularXLimit.limit,
+                        joint.highAngularXLimit.limit,
+                        joint.angularYLimit.limit,
+                        joint.angularZLimit.limit);
+                }
+            }
+        }
+
         sealed class StrictEvidenceFixture : IDisposable
         {
             StrictEvidenceFixture()
@@ -802,6 +1075,7 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
                     platform = "Editor",
                     scenario = "B08",
                     generatedUtc = fixture.GeneratedUtc.ToString("O"),
+                    certificationRunId = ClosureFixtureRunId,
                     sourceRevision = revision,
                     sourceTreeSha256 = treeHash,
                     capabilityIds = new[] { "B08" }
@@ -813,7 +1087,8 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
                     sourceRevision = revision,
                     sourceTreeSha256 = treeHash,
                     sourceLatestWriteUtc = RagdollCoverageManifest
-                        .CurrentSourceLatestWriteUtc()
+                        .CurrentSourceLatestWriteUtc(),
+                    certificationRunId = ClosureFixtureRunId
                 };
                 return fixture;
             }

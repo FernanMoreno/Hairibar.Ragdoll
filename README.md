@@ -11,6 +11,15 @@ A Unity package for making ragdolls and animating them with keyframed animations
 > active-ragdoll feature surface follows the concepts documented in RootMotion's
 > official PuppetMaster manual; it does not contain or require PuppetMaster code.
 
+## Package and game boundary
+
+Hairibar.Ragdoll is a game-independent Unity package. Its runtime, tests, samples and
+certification do not depend on CODE RED or on any other consumer project's AI,
+NavMesh, pooling, visual rigs, weapons, scenes or project settings. A game integrates
+the public package API through its own adapter and validates that adapter in the game
+repository. Consumer integration status is never a gate or evidence source for the
+package's 140-capability certification matrix.
+
 ## Version 2.0 systems
 
 - Active/Kinematic/Disabled simulation plus Alive/Dead/Frozen lifecycle.

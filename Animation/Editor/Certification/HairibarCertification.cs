@@ -2,6 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEditor.Build;
@@ -26,6 +29,10 @@ namespace Hairibar.Ragdoll.Animation.Editor
             GeneratedRoot + "/HairibarCertification.controller";
         const string LocomotionClipPath =
             GeneratedRoot + "/HairibarCertificationLocomotion.anim";
+        const string UpperBodyClipPath =
+            GeneratedRoot + "/HairibarCertificationUpperBody.anim";
+        const string UpperBodyMaskPath =
+            GeneratedRoot + "/HairibarCertificationUpperBody.mask";
         const string RegressionRigPath =
             GeneratedRoot + "/HairibarRegressionRig.prefab";
         const string RegressionDefinitionPath =
@@ -71,6 +78,20 @@ namespace Hairibar.Ragdoll.Animation.Editor
         }
 
         [Serializable]
+        sealed class BuildTraversalMessage
+        {
+            public string severity;
+            public string message;
+        }
+
+        [Serializable]
+        sealed class BuildTraversalStep
+        {
+            public string name;
+            public BuildTraversalMessage[] messages;
+        }
+
+        [Serializable]
         sealed class BuildEntry
         {
             public string target;
@@ -85,12 +106,19 @@ namespace Hairibar.Ragdoll.Animation.Editor
             public string[] ownDiagnostics;
             public string[] externalWarnings;
             public BuildDiagnosticEntry[] diagnostics;
+            public int stepsScanned;
+            public int messagesScanned;
+            public string reportTraversalSha256;
+            public BuildTraversalStep[] reportSteps;
         }
 
         [Serializable]
         sealed class BuildManifest
         {
-            public int schemaVersion = 2;
+            public int schemaVersion = 3;
+            public string certificationRunId;
+            public string sourceRevision;
+            public string sourceTreeSha256;
             public string unityVersion;
             public string generatedUtc;
             public BuildEntry[] builds;
@@ -105,26 +133,38 @@ namespace Hairibar.Ragdoll.Animation.Editor
             public string exactTest;
             public string[] artifactKinds;
             public bool audited;
+            public int compatibilityApiCount;
+            public int serializationMigrationCount;
+            public string inventorySha256;
             public DocumentationMemberMapping[] members;
         }
 
         [Serializable]
         sealed class DocumentationMemberMapping
         {
+            public string inventoryKind;
+            public string memberId;
             public string symbol;
             public string declaringType;
             public string memberName;
             public string memberKind;
             public string documentationSection;
+            public string officialSourceUrl;
+            public string oldSerializedName;
             public string sourcePath;
+            public string sourceSha256;
             public bool verified;
         }
 
         [Serializable]
         sealed class DocumentationAuditManifest
         {
-            public int schemaVersion = 2;
+            public int schemaVersion = 3;
+            public string certificationRunId;
+            public string sourceRevision;
+            public string sourceTreeSha256;
             public bool succeeded;
+            public string failureReason;
             public string documentPath;
             public string documentSha256;
             public DocumentationAuditEntry[] entries;
@@ -430,8 +470,14 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 "HAIRIBAR_CLOSURE_PHASE");
             switch (phase)
             {
-                case "Prepare": PrepareAssets(); break;
-                case "Build": RunAll(); break;
+                case "Prepare":
+                    RagdollClosureCoordinator.EnsureRunContext();
+                    PrepareAssets();
+                    break;
+                case "Build":
+                    RagdollClosureCoordinator.ReadRunContext();
+                    RunAll();
+                    break;
                 case "Provisional": GenerateClosureProvisional(); break;
                 case "Validate": ValidateClosureProvisional(); break;
                 case "Finalize": FinalizeClosure(); break;
@@ -476,6 +522,8 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     "HairibarRagdollCertification");
             }
             Directory.CreateDirectory(outputRoot);
+            RagdollClosureCoordinator.RunContext runContext =
+                EnsureCertificationRunContext(outputRoot);
 
             string[] scenes = FindRegressionScenes(
                 NormalizeAssetPath(importedSample.importPath));
@@ -509,6 +557,9 @@ namespace Hairibar.Ragdoll.Animation.Editor
 
             BuildManifest manifest = new BuildManifest
             {
+                certificationRunId = runContext.certificationRunId,
+                sourceRevision = runContext.sourceRevision,
+                sourceTreeSha256 = runContext.sourceTreeSha256,
                 unityVersion = Application.unityVersion,
                 generatedUtc = DateTime.UtcNow.ToString("O"),
                 builds = entries.ToArray()
@@ -668,6 +719,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 outputRoot = Path.Combine(Path.GetTempPath(),
                     "HairibarRagdollCertification-Windows");
             Directory.CreateDirectory(outputRoot);
+            EnsureCertificationRunContext(outputRoot);
             BuildEntry entry = Build(
                 BuildTarget.StandaloneWindows64,
                 FindRegressionScenes(NormalizeAssetPath(importedSample.importPath)),
@@ -992,6 +1044,8 @@ namespace Hairibar.Ragdoll.Animation.Editor
         {
             AssetDatabase.DeleteAsset(ControllerPath);
             AssetDatabase.DeleteAsset(LocomotionClipPath);
+            AssetDatabase.DeleteAsset(UpperBodyClipPath);
+            AssetDatabase.DeleteAsset(UpperBodyMaskPath);
             AnimatorController controller =
                 AnimatorController.CreateAnimatorControllerAtPath(ControllerPath);
             controller.AddParameter("FallBlend", AnimatorControllerParameterType.Float);
@@ -1024,7 +1078,47 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     "The generated certification clip must remain Humanoid and contain root-motion curves.");
             }
             AssetDatabase.CreateAsset(locomotion, LocomotionClipPath);
-            AnimationClip waving = FindAnimationClip(samplePath, "Waving");
+            AnimationClip wavingSource = FindAnimationClip(samplePath, "Waving");
+            AnimationClip waving = UnityEngine.Object.Instantiate(wavingSource);
+            waving.name = "Hairibar Certification Upper Body";
+            float wavingLength = Mathf.Max(0.2f, waving.length);
+            string armMuscle = FindHumanoidMuscle("Left Arm");
+            AnimationUtility.SetEditorCurve(
+                waving,
+                EditorCurveBinding.FloatCurve(
+                    string.Empty, typeof(Animator), armMuscle),
+                new AnimationCurve(
+                    new Keyframe(0f, -0.35f),
+                    new Keyframe(wavingLength * 0.5f, 0.65f),
+                    new Keyframe(wavingLength, -0.35f)));
+            if (!waving.humanMotion)
+            {
+                UnityEngine.Object.DestroyImmediate(waving);
+                throw new InvalidOperationException(
+                    "The generated upper-body fixture must remain Humanoid.");
+            }
+            AssetDatabase.CreateAsset(waving, UpperBodyClipPath);
+
+            AvatarMask upperBodyMask = new AvatarMask
+            {
+                name = "Hairibar Certification Upper Body"
+            };
+            for (int partIndex = 0;
+                partIndex < (int)AvatarMaskBodyPart.LastBodyPart;
+                partIndex++)
+            {
+                upperBodyMask.SetHumanoidBodyPartActive(
+                    (AvatarMaskBodyPart)partIndex, false);
+            }
+            upperBodyMask.SetHumanoidBodyPartActive(
+                AvatarMaskBodyPart.LeftArm, true);
+            upperBodyMask.SetHumanoidBodyPartActive(
+                AvatarMaskBodyPart.RightArm, true);
+            upperBodyMask.SetHumanoidBodyPartActive(
+                AvatarMaskBodyPart.LeftFingers, true);
+            upperBodyMask.SetHumanoidBodyPartActive(
+                AvatarMaskBodyPart.RightFingers, true);
+            AssetDatabase.CreateAsset(upperBodyMask, UpperBodyMaskPath);
             AnimatorControllerLayer baseLayer = controller.layers[0];
             baseLayer.iKPass = true;
             AnimatorState idleState = baseLayer.stateMachine.AddState("Locomotion");
@@ -1044,7 +1138,13 @@ namespace Hairibar.Ragdoll.Animation.Editor
             {
                 name = "Upper Body",
                 defaultWeight = 1f,
-                blendingMode = AnimatorLayerBlendingMode.Additive,
+                // The source is a regular Humanoid clip
+                // (hasAdditiveReferencePose == false). Unity's Override mode plus
+                // the Humanoid AvatarMask is the valid deterministic composition;
+                // treating a non-additive clip as an additive delta erased the arm
+                // signal that this fixture is intended to certify.
+                blendingMode = AnimatorLayerBlendingMode.Override,
+                avatarMask = upperBodyMask,
                 iKPass = true,
                 stateMachine = new AnimatorStateMachine
                 {
@@ -1057,6 +1157,22 @@ namespace Hairibar.Ragdoll.Animation.Editor
             upper.stateMachine.defaultState = wavingState;
             controller.AddLayer(upper);
             EditorUtility.SetDirty(controller);
+        }
+
+        static string FindHumanoidMuscle(string token)
+        {
+            string[] muscles = HumanTrait.MuscleName;
+            for (int index = 0; index < muscles.Length; index++)
+            {
+                if (muscles[index].IndexOf(
+                    token,
+                    StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return muscles[index];
+                }
+            }
+            throw new InvalidOperationException(
+                "Unity Humanoid exposes no muscle containing '" + token + "'.");
         }
 
         static void ConfigureHorizontalRootMotionImport(
@@ -1235,13 +1351,31 @@ namespace Hairibar.Ragdoll.Animation.Editor
             List<string> external = new List<string>();
             List<BuildDiagnosticEntry> diagnostics =
                 new List<BuildDiagnosticEntry>();
-            BuildStep[] steps = report.steps;
+            BuildStep[] steps = report.steps ?? Array.Empty<BuildStep>();
+            entry.stepsScanned = steps?.Length ?? 0;
+            int messagesScanned = 0;
+            var traversal = new StringBuilder();
+            var traversedSteps = new List<BuildTraversalStep>(steps.Length);
             for (int stepIndex = 0; stepIndex < steps.Length; stepIndex++)
             {
-                BuildStepMessage[] messages = steps[stepIndex].messages;
+                BuildStepMessage[] messages = steps[stepIndex].messages
+                    ?? Array.Empty<BuildStepMessage>();
+                var traversedMessages = new BuildTraversalMessage[messages.Length];
+                traversal.Append(stepIndex).Append('|')
+                    .Append(steps[stepIndex].name ?? string.Empty).Append('|')
+                    .Append(messages?.Length ?? 0).Append('\n');
                 for (int messageIndex = 0; messageIndex < messages.Length; messageIndex++)
                 {
                     BuildStepMessage message = messages[messageIndex];
+                    messagesScanned++;
+                    traversal.Append(messageIndex).Append('|')
+                        .Append(message.type).Append('|')
+                        .Append(message.content ?? string.Empty).Append('\n');
+                    traversedMessages[messageIndex] = new BuildTraversalMessage
+                    {
+                        severity = message.type.ToString(),
+                        message = message.content ?? string.Empty
+                    };
                     if (message.type != LogType.Warning
                         && message.type != LogType.Error
                         && message.type != LogType.Exception
@@ -1257,10 +1391,23 @@ namespace Hairibar.Ragdoll.Animation.Editor
                         message = content
                     });
                 }
+                traversedSteps.Add(new BuildTraversalStep
+                {
+                    name = steps[stepIndex].name ?? string.Empty,
+                    messages = traversedMessages
+                });
             }
             entry.ownDiagnostics = own.ToArray();
             entry.externalWarnings = external.ToArray();
             entry.diagnostics = diagnostics.ToArray();
+            entry.messagesScanned = messagesScanned;
+            entry.reportSteps = traversedSteps.ToArray();
+            using (SHA256 sha = SHA256.Create())
+            {
+                entry.reportTraversalSha256 = string.Concat(sha.ComputeHash(
+                    Encoding.UTF8.GetBytes(traversal.ToString()))
+                    .Select(value => value.ToString("x2")));
+            }
         }
 
         static string CertificationTargetName(BuildTarget target)
@@ -1283,11 +1430,19 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     StringComparison.OrdinalIgnoreCase) >= 0
                 || content.IndexOf(
                     "com.hairibar.ragdoll",
+                    StringComparison.OrdinalIgnoreCase) >= 0
+                || content.IndexOf(
+                    "Hairibar-Ragdoll",
+                    StringComparison.OrdinalIgnoreCase) >= 0
+                || content.IndexOf(
+                    "Hairibar_Ragdoll",
                     StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         static void ExecuteWindowsPlayer(string executable, string outputRoot)
         {
+            RagdollClosureCoordinator.RunContext runContext =
+                RagdollClosureCoordinator.ReadRunContext();
             string playerDirectory = Path.GetDirectoryName(executable);
             string resultPath = Path.Combine(
                 outputRoot,
@@ -1315,6 +1470,12 @@ namespace Hairibar.Ragdoll.Animation.Editor
             start.EnvironmentVariables["HAIRIBAR_PROFILER_RESULTS"] =
                 profilerPath;
             start.EnvironmentVariables["HAIRIBAR_SCENE_RESULTS"] = scenePath;
+            start.EnvironmentVariables["HAIRIBAR_CLOSURE_RUN_ID"] =
+                runContext.certificationRunId;
+            start.EnvironmentVariables["HAIRIBAR_CLOSURE_SOURCE_REVISION"] =
+                runContext.sourceRevision;
+            start.EnvironmentVariables["HAIRIBAR_CLOSURE_SOURCE_TREE_SHA256"] =
+                runContext.sourceTreeSha256;
             using (Process process = Process.Start(start))
             {
                 if (process == null)
@@ -1365,6 +1526,22 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 : configured);
         }
 
+        static RagdollClosureCoordinator.RunContext
+            EnsureCertificationRunContext(string outputRoot)
+        {
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(
+                RagdollClosureCoordinator.OutputEnvironmentVariable)))
+                Environment.SetEnvironmentVariable(
+                    RagdollClosureCoordinator.OutputEnvironmentVariable,
+                    Path.GetFullPath(outputRoot));
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(
+                RagdollClosureCoordinator.RunIdEnvironmentVariable)))
+                Environment.SetEnvironmentVariable(
+                    RagdollClosureCoordinator.RunIdEnvironmentVariable,
+                    Guid.NewGuid().ToString("D"));
+            return RagdollClosureCoordinator.EnsureRunContext();
+        }
+
         static void RequireValidArtifact(RagdollEvidenceKind kind, string path)
         {
             RagdollArtifactValidationResult validation =
@@ -1378,6 +1555,8 @@ namespace Hairibar.Ragdoll.Animation.Editor
 
         static void WriteDocumentationAudit(string outputRoot)
         {
+            RagdollClosureCoordinator.RunContext runContext =
+                EnsureCertificationRunContext(outputRoot);
             UnityEditor.PackageManager.PackageInfo package =
                 UnityEditor.PackageManager.PackageInfo.FindForAssembly(
                     typeof(RagdollAnimator).Assembly);
@@ -1387,47 +1566,37 @@ namespace Hairibar.Ragdoll.Animation.Editor
             string root = Path.GetFullPath(package.resolvedPath);
             string documentPath = Path.Combine(root, "Documentation~",
                 "Certification", "MIGRATION-PUPPETMASTER-CLOSURE.md");
-            string[] requiredSymbols =
-            {
-                "MasterMappingWeight", "MasterPinWeight",
-                "MasterMuscleWeight", "MasterMuscleDamper",
-                "MasterMuscleDamperMultiplier", "MasterAlpha",
-                "SetMuscleWeights", "OnPostInitialized", "OnRead", "OnWrite",
-                "OnFixTransforms", "OnPostLateUpdate", "TargetAnimator",
-                "TargetAnimation", "EffectiveUpdateMode",
-                "PrepareManualSimulation", "CompleteManualSimulation",
-                "Respawn", "TrySetMuscles", "TryReplaceMuscles",
-                "StartAction", "CurrentRigidbody", "AddAdditionalPin",
-                "RemoveAdditionalPin", "IRagdollIKSolver", "OnCollision",
-                "OnCollisionImpulse", "SetColliderSurfaceState",
-                "FormerlySerializedAs", "State", "Mode", "IsActive",
-                "IsBlending", "IsSwitchingMode", "Initiated"
-            };
             bool audited = File.Exists(documentPath);
             string documentation = audited
                 ? File.ReadAllText(documentPath)
                 : string.Empty;
-            if (audited)
-            {
-                for (int index = 0; index < requiredSymbols.Length; index++)
-                {
-                    string symbol = requiredSymbols[index];
-                    audited &= documentation.IndexOf(symbol,
-                        StringComparison.Ordinal) >= 0;
-                }
-                audited &= documentation.IndexOf(
-                    "root-motion.com/puppetmasterdox",
-                    StringComparison.OrdinalIgnoreCase) >= 0;
-                audited &= documentation.IndexOf(
-                    "docs.unity3d.com",
-                    StringComparison.OrdinalIgnoreCase) >= 0;
-            }
             DocumentationMemberMapping[] memberMappings;
+            string inventoryError;
             audited &= BuildDocumentationMemberMappings(
-                root, documentation, out memberMappings);
+                root, documentation, out memberMappings, out inventoryError);
+            string[] affectedApi = memberMappings
+                .Where(mapping => mapping.inventoryKind == "CompatibilityApi")
+                .Select(mapping => mapping.symbol)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(symbol => symbol, StringComparer.Ordinal).ToArray();
+            string inventorySha256 = RagdollDocumentationContractInventory
+                .ComputeInventorySha256(memberMappings.Select(mapping =>
+                    new RagdollDocumentationContractItem
+                    {
+                        InventoryKind = mapping.inventoryKind,
+                        MemberId = mapping.memberId,
+                        DocumentationSection = mapping.documentationSection,
+                        OfficialSourceUrl = mapping.officialSourceUrl,
+                        OldSerializedName = mapping.oldSerializedName,
+                        SourceSha256 = mapping.sourceSha256
+                    }));
             var manifest = new DocumentationAuditManifest
             {
+                certificationRunId = runContext.certificationRunId,
+                sourceRevision = runContext.sourceRevision,
+                sourceTreeSha256 = runContext.sourceTreeSha256,
                 succeeded = audited,
+                failureReason = audited ? string.Empty : inventoryError,
                 documentPath = documentPath,
                 documentSha256 = audited
                     ? RagdollClosurePipeline.ComputeSha256(documentPath)
@@ -1439,7 +1608,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                         id = "J07",
                         sourceUrl =
                             "http://www.root-motion.com/puppetmasterdox/html/pages.html",
-                        affectedApi = string.Join(", ", requiredSymbols),
+                        affectedApi = string.Join(", ", affectedApi),
                         exactTest =
                             "Hairibar.Ragdoll.Animation.Editor.Tests."
                             + "RagdollEvidenceArtifactValidatorsTests."
@@ -1450,6 +1619,11 @@ namespace Hairibar.Ragdoll.Animation.Editor
                             nameof(RagdollEvidenceKind.NUnitEditMode)
                         },
                         audited = audited,
+                        compatibilityApiCount = memberMappings.Count(mapping =>
+                            mapping.inventoryKind == "CompatibilityApi"),
+                        serializationMigrationCount = memberMappings.Count(mapping =>
+                            mapping.inventoryKind == "SerializationMigration"),
+                        inventorySha256 = inventorySha256,
                         members = memberMappings
                     }
                 }
@@ -1467,142 +1641,48 @@ namespace Hairibar.Ragdoll.Animation.Editor
         static bool BuildDocumentationMemberMappings(
             string packageRoot,
             string documentation,
-            out DocumentationMemberMapping[] mappings)
+            out DocumentationMemberMapping[] mappings,
+            out string error)
         {
-            var result = new List<DocumentationMemberMapping>();
-            AddMemberMappings(result, packageRoot, documentation,
-                typeof(RagdollAnimator), "Master authority", new[]
+            RagdollDocumentationContractItem[] inventory;
+            if (!RagdollDocumentationContractInventory.TryBuild(
+                packageRoot, out inventory, out error))
             {
-                "MasterMappingWeight", "MasterPinWeight",
-                "MasterMuscleWeight", "MasterMuscleDamper",
-                "MasterMuscleDamperMultiplier", "MasterAlpha",
-                "SetMuscleWeights"
-            });
-            AddMemberMappings(result, packageRoot, documentation,
-                typeof(RagdollAnimator), "Lifecycle and animation", new[]
-            {
-                "OnPostInitialized", "OnRead", "OnWrite",
-                "OnFixTransforms", "OnPostLateUpdate", "TargetAnimator",
-                "TargetAnimation", "EffectiveUpdateMode",
-                "PrepareManualSimulation", "CompleteManualSimulation",
-                "Mode", "IsActive",
-                "IsBlending", "IsSwitchingMode", "Initiated"
-            });
-            AddMemberMappings(result, packageRoot, documentation,
-                typeof(RagdollPuppetBehaviour), "Lifecycle and animation", new[]
-            {
-                "State", "Respawn", "SetColliderSurfaceState",
-                "OnCollision", "OnCollisionImpulse"
-            });
-            AddMemberMappings(result, packageRoot, documentation,
-                typeof(RagdollAnimator), "Runtime hierarchy", new[]
-            {
-                "TrySetMuscles", "TryReplaceMuscles"
-            });
-            AddMemberMappings(result, packageRoot, documentation,
-                typeof(RagdollProp), "Props and IK", new[]
-            {
-                "CurrentRigidbody", "AddAdditionalPin", "RemoveAdditionalPin"
-            });
-            AddMemberMappings(result, packageRoot, documentation,
-                typeof(RagdollPropMelee), "Props and IK",
-                new[] { "StartAction" });
-            AddTypeMapping(result, packageRoot, documentation,
-                typeof(IRagdollIKSolver), "Props and IK");
-
-            System.Reflection.FieldInfo[] fields =
-                typeof(RagdollPuppetBehaviour).GetFields(
-                    System.Reflection.BindingFlags.Instance
-                    | System.Reflection.BindingFlags.Public
-                    | System.Reflection.BindingFlags.NonPublic);
-            System.Reflection.FieldInfo migrationField = null;
-            for (int index = 0; index < fields.Length; index++)
-                if (fields[index].IsDefined(
-                    typeof(UnityEngine.Serialization.FormerlySerializedAsAttribute),
-                    true))
-                {
-                    migrationField = fields[index];
-                    break;
-                }
-            string migrationSource = migrationField != null
-                ? FindMemberSource(packageRoot,
-                    typeof(RagdollPuppetBehaviour), "FormerlySerializedAs")
-                : string.Empty;
-            result.Add(new DocumentationMemberMapping
-            {
-                symbol = "FormerlySerializedAs",
-                declaringType = typeof(RagdollPuppetBehaviour).FullName,
-                memberName = migrationField?.Name ?? string.Empty,
-                memberKind = "Attribute",
-                documentationSection = "Master authority",
-                sourcePath = migrationSource,
-                verified = migrationField != null
-                    && File.Exists(migrationSource)
-                    && HasDocumentationMapping(
-                        documentation, "Master authority",
-                        "FormerlySerializedAs")
-            });
-            mappings = result.ToArray();
-            for (int index = 0; index < mappings.Length; index++)
-                if (!mappings[index].verified) return false;
-            return true;
-        }
-
-        static void AddMemberMappings(
-            List<DocumentationMemberMapping> result,
-            string packageRoot,
-            string documentation,
-            Type type,
-            string section,
-            string[] names)
-        {
-            const System.Reflection.BindingFlags Flags =
-                System.Reflection.BindingFlags.Instance
-                | System.Reflection.BindingFlags.Static
-                | System.Reflection.BindingFlags.Public;
-            for (int index = 0; index < names.Length; index++)
-            {
-                System.Reflection.MemberInfo[] members =
-                    type.GetMember(names[index], Flags);
-                string source = members.Length != 0
-                    ? FindMemberSource(packageRoot, type, names[index])
-                    : string.Empty;
-                result.Add(new DocumentationMemberMapping
-                {
-                    symbol = names[index],
-                    declaringType = type.FullName,
-                    memberName = names[index],
-                    memberKind = members.Length != 0
-                        ? members[0].MemberType.ToString()
-                        : string.Empty,
-                    documentationSection = section,
-                    sourcePath = source,
-                    verified = members.Length != 0 && File.Exists(source)
-                        && HasDocumentationMapping(
-                            documentation, section, names[index])
-                });
+                mappings = Array.Empty<DocumentationMemberMapping>();
+                return false;
             }
-        }
-
-        static void AddTypeMapping(
-            List<DocumentationMemberMapping> result,
-            string packageRoot,
-            string documentation,
-            Type type,
-            string section)
-        {
-            string source = FindMemberSource(packageRoot, type, type.Name);
-            result.Add(new DocumentationMemberMapping
+            mappings = inventory.Select(item => new DocumentationMemberMapping
             {
-                symbol = type.Name,
-                declaringType = type.FullName,
-                memberName = type.Name,
-                memberKind = "Type",
-                documentationSection = section,
-                sourcePath = source,
-                verified = type.IsInterface && File.Exists(source)
-                    && HasDocumentationMapping(documentation, section, type.Name)
-            });
+                inventoryKind = item.InventoryKind,
+                memberId = item.MemberId,
+                symbol = item.Symbol,
+                declaringType = item.DeclaringType,
+                memberName = item.MemberName,
+                memberKind = item.MemberKind,
+                documentationSection = item.DocumentationSection,
+                officialSourceUrl = item.OfficialSourceUrl,
+                oldSerializedName = item.OldSerializedName,
+                sourcePath = item.SourcePath,
+                sourceSha256 = item.SourceSha256,
+                verified = File.Exists(item.SourcePath)
+                    && !string.IsNullOrWhiteSpace(item.SourceSha256)
+                    && HasDocumentationMapping(documentation,
+                        item.DocumentationSection, item.Symbol)
+                    && (string.IsNullOrEmpty(item.OldSerializedName)
+                        || documentation.IndexOf(item.OldSerializedName,
+                            StringComparison.Ordinal) >= 0)
+            }).ToArray();
+            for (int index = 0; index < mappings.Length; index++)
+            {
+                if (mappings[index].verified) continue;
+                error = "Documentation mapping is missing or invalid for "
+                    + mappings[index].memberId + " (section '"
+                    + mappings[index].documentationSection + "', symbol '"
+                    + mappings[index].symbol + "').";
+                return false;
+            }
+            error = string.Empty;
+            return true;
         }
 
         static bool HasDocumentationMapping(
@@ -1613,30 +1693,6 @@ namespace Hairibar.Ragdoll.Animation.Editor
             return documentation.IndexOf(
                     "## " + section, StringComparison.Ordinal) >= 0
                 && documentation.IndexOf(symbol, StringComparison.Ordinal) >= 0;
-        }
-
-        static string FindMemberSource(
-            string packageRoot,
-            Type declaringType,
-            string symbol)
-        {
-            string runtime = Path.Combine(packageRoot, "Animation", "Runtime");
-            if (!Directory.Exists(runtime)) return string.Empty;
-            string[] files = Directory.GetFiles(
-                runtime, "*.cs", SearchOption.AllDirectories);
-            Array.Sort(files, StringComparer.Ordinal);
-            for (int index = 0; index < files.Length; index++)
-            {
-                string content = File.ReadAllText(files[index]);
-                string declaration = declaringType.IsInterface
-                    ? "interface " + declaringType.Name
-                    : "class " + declaringType.Name;
-                if (content.IndexOf(declaration,
-                        StringComparison.Ordinal) < 0) continue;
-                if (content.IndexOf(symbol, StringComparison.Ordinal) >= 0)
-                    return files[index];
-            }
-            return string.Empty;
         }
 
         [Serializable]

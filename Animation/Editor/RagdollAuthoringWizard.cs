@@ -71,7 +71,12 @@ namespace Hairibar.Ragdoll.Animation.Editor
             EditorGUIUtility.PingObject(rig);
         }
 
-        internal static bool TryCreateFromSelection(
+        /// <summary>
+        /// Validates the selected hierarchy and creates every authored
+        /// Rigidbody, Collider and ConfigurableJoint as one Unity Undo group.
+        /// A failed validation or build leaves the selected hierarchy unchanged.
+        /// </summary>
+        public static bool TryCreateFromSelection(
             GameObject selected,
             ReferenceMode mode,
             Animator humanoid,
@@ -103,7 +108,12 @@ namespace Hairibar.Ragdoll.Animation.Editor
             else
             {
                 references = generic;
-                if (references == null || !references.Validate(out error))
+                if (references == null)
+                {
+                    error = "Explicit generic biped references are required.";
+                    return false;
+                }
+                if (!references.Validate(out error))
                     return false;
                 if (references.hips != selected.transform
                     && !references.hips.IsChildOf(selected.transform))
@@ -121,18 +131,13 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 if (!RagdollRuntimeAuthoring.TryBuild(
                     references,
                     authoringOptions,
+                    UndoObjectFactory.Instance,
                     out rig,
                     out error))
                 {
                     Undo.RevertAllDownToGroup(undoGroup);
                     return false;
                 }
-
-                RegisterCreated(rig.Rigidbodies);
-                RegisterCreated(rig.Colliders);
-                RegisterCreated(rig.Joints);
-                Undo.RegisterCreatedObjectUndo(
-                    rig, "Create authored rig ownership");
                 Undo.CollapseUndoOperations(undoGroup);
                 error = string.Empty;
                 return true;
@@ -167,14 +172,19 @@ namespace Hairibar.Ragdoll.Animation.Editor
             return references.Validate(out error);
         }
 
-        static void RegisterCreated<T>(T[] values) where T : Object
+        sealed class UndoObjectFactory : RagdollRuntimeAuthoring.IObjectFactory
         {
-            for (int index = 0; index < values.Length; index++)
+            internal static readonly UndoObjectFactory Instance =
+                new UndoObjectFactory();
+
+            public T AddComponent<T>(GameObject owner) where T : Component
             {
-                if (values[index])
-                {
-                    Undo.RegisterCreatedObjectUndo(values[index], "Create ragdoll component");
-                }
+                return Undo.AddComponent<T>(owner);
+            }
+
+            public void Destroy(Object value)
+            {
+                if (value) Undo.DestroyObjectImmediate(value);
             }
         }
     }

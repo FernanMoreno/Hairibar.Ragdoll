@@ -238,20 +238,31 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 replacement.AddComponent<ConfigurableJoint>();
             replacementJoint.connectedBody = rig.RootBody;
             replacement.AddComponent<BoxCollider>();
-            string error;
-            yield return new WaitForFixedUpdate();
-            Assert.That(rig.Animator.TryReplaceMuscle(
-                handHandle,
-                new RagdollRuntimeMuscleRegistration(
-                    new BoneName("RightHand"),
-                    replacementJoint,
-                    handPair.TargetBone,
-                    RagdollMuscleGroup.Hand,
-                    null,
-                    false,
-                    true),
-                out RagdollBoneHandle replacementHandle,
-                out error), Is.True, error);
+            bool replaced = false;
+            string error = null;
+            RagdollBoneHandle replacementHandle = RagdollBoneHandle.Invalid;
+            FixedUpdateCommand command = replacement.AddComponent<FixedUpdateCommand>();
+            command.Command = () =>
+            {
+                replaced = rig.Animator.TryReplaceMuscle(
+                    handHandle,
+                    new RagdollRuntimeMuscleRegistration(
+                        new BoneName("RightHand"),
+                        replacementJoint,
+                        handPair.TargetBone,
+                        RagdollMuscleGroup.Hand,
+                        null,
+                        false,
+                        true),
+                    out replacementHandle,
+                    out error);
+            };
+            for (int step = 0; step < 10 && !command.Completed; step++)
+                yield return new WaitForFixedUpdate();
+            Assert.That(command.Completed, Is.True,
+                "The hierarchy transaction did not execute at a FixedUpdate boundary.");
+            Assert.That(command.Failure, Is.Null);
+            Assert.That(replaced, Is.True, error);
 
             Assert.That(rig.Animator.Bindings.Topology.Contains(handHandle),
                 Is.False, "The pre-transaction handle must be stale.");
@@ -770,6 +781,30 @@ namespace Hairibar.Ragdoll.Animation.Tests
         {
             internal RagdollPropMuscle Muscle;
             internal Rigidbody Body;
+        }
+
+        sealed class FixedUpdateCommand : MonoBehaviour
+        {
+            internal Action Command;
+            internal Exception Failure;
+            internal bool Completed;
+
+            void FixedUpdate()
+            {
+                if (Completed || Command == null) return;
+                try
+                {
+                    Command();
+                }
+                catch (Exception exception)
+                {
+                    Failure = exception;
+                }
+                finally
+                {
+                    Completed = true;
+                }
+            }
         }
     }
 }

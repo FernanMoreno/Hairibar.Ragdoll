@@ -555,6 +555,11 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 RagdollRuntimeSetupService.ConvertHierarchyDirectlyToPuppet(
                     targetRoot.transform, puppet, profile, 30, 31);
             Assert.That(result.Succeeded, Is.True, result.Error);
+            // This scenario certifies transactional hierarchy preservation. The
+            // documented BehaviourPuppet policy drops held props when entering
+            // Unpinned, so disable that independent policy before deliberately
+            // severing a branch; prop-drop behaviour is covered by its own tests.
+            result.PuppetBehaviour.DropProps = false;
             yield return null;
             yield return new WaitForFixedUpdate();
 
@@ -961,6 +966,22 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 Is.EqualTo(RagdollMuscleConnectionState.Disconnected));
             Rigidbody disconnectedConnection = child.Joint.connectedBody;
 
+            for (int frame = 0;
+                frame < 30
+                    && result.Animator.PendingMuscleConnectionOperationCount != 0;
+                frame++)
+            {
+                yield return new WaitForFixedUpdate();
+            }
+            Assert.That(result.Animator.PendingMuscleConnectionOperationCount,
+                Is.Zero,
+                "Root replacement requires the preceding disconnect transaction "
+                + "to have reached a stable physics boundary.");
+            Assert.That(propMuscle.State,
+                Is.EqualTo(RagdollPropMuscleState.Holding),
+                "Disconnecting an unrelated branch must preserve a held prop when "
+                + "BehaviourPuppet's independent DropProps policy is disabled.");
+
             RagdollBone oldRoot = puppet.Root;
             RagdollBoneHandle staleRoot = puppet.GetHandleAt(0);
             Transform rootTarget = result.Behaviours.Context.Pairs[0].TargetBone;
@@ -972,9 +993,9 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 replacementObject.AddComponent<ConfigurableJoint>();
             replacementObject.AddComponent<BoxCollider>();
 
-            yield return new WaitForFixedUpdate();
             RagdollBoneHandle replacementHandle;
-            Assert.That(result.Animator.TryReplaceMuscle(
+            replacementHandle = RagdollBoneHandle.Invalid;
+            bool replacementCommitted = result.Animator.TryReplaceMuscle(
                 staleRoot,
                 new RagdollRuntimeMuscleRegistration(
                     oldRoot.Name,
@@ -985,7 +1006,8 @@ namespace Hairibar.Ragdoll.Animation.Tests
                     false,
                     true),
                 out replacementHandle,
-                out error), Is.True, error);
+                out error);
+            Assert.That(replacementCommitted, Is.True, error);
             Assert.That(propMuscle.State,
                 Is.EqualTo(RagdollPropMuscleState.Holding));
             Assert.That(prop.CurrentRigidbody, Is.SameAs(slotBody));
@@ -1007,9 +1029,9 @@ namespace Hairibar.Ragdoll.Animation.Tests
             rollbackProbe.ThrowOnNextInitialize = true;
             int generationBeforeRollback = puppet.RegistryGeneration;
 
-            yield return new WaitForFixedUpdate();
             RagdollBoneHandle ignored;
-            Assert.That(result.Animator.TryReplaceMuscle(
+            ignored = RagdollBoneHandle.Invalid;
+            bool rollbackCommitted = result.Animator.TryReplaceMuscle(
                 replacementHandle,
                 new RagdollRuntimeMuscleRegistration(
                     oldRoot.Name,
@@ -1020,7 +1042,8 @@ namespace Hairibar.Ragdoll.Animation.Tests
                     false,
                     true),
                 out ignored,
-                out error), Is.False);
+                out error);
+            Assert.That(rollbackCommitted, Is.False);
             Assert.That(error, Does.Contain("rolled back"));
             Assert.That(puppet.Root.Joint, Is.SameAs(replacementJoint));
             Assert.That(puppet.RegistryGeneration,

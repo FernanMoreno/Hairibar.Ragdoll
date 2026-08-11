@@ -171,6 +171,7 @@ namespace Hairibar.Ragdoll.Animation
         /// Rigidbody currently carrying the prop: the PropMuscle body while a pickup is
         /// prepared/committed, otherwise the live standalone body.
         /// </summary>
+        [RagdollCompatibilityApi("Props and IK", "http://www.root-motion.com/puppetmasterdox/html/page6.html")]
         public Rigidbody CurrentRigidbody
         {
             get
@@ -223,6 +224,7 @@ namespace Hairibar.Ragdoll.Animation
         }
 
         /// <summary>Enables the additional pin and resets its temporal solver state.</summary>
+        [RagdollCompatibilityApi("Props and IK", "http://www.root-motion.com/puppetmasterdox/html/page6.html")]
         public void AddAdditionalPin()
         {
             if (additionalPin == null)
@@ -236,6 +238,7 @@ namespace Hairibar.Ragdoll.Animation
         }
 
         /// <summary>Disables the additional pin and clears all accumulated solver state.</summary>
+        [RagdollCompatibilityApi("Props and IK", "http://www.root-motion.com/puppetmasterdox/html/page6.html")]
         public void RemoveAdditionalPin()
         {
             if (additionalPin == null)
@@ -990,6 +993,15 @@ namespace Hairibar.Ragdoll.Animation
             out string error)
         {
             error = null;
+            // Animated Target children are an optional Prop feature. A prop that
+            // never authored any children must remain compatible with a standalone
+            // IPropMuscleRuntime and does not need to resolve a RagdollAnimator.
+            // Once a binding has been captured we still require the live animator
+            // so hierarchy replacement can reconcile that binding transactionally.
+            bool requiresTargetBinding = heldTargetBinding != null
+                || (animatedTargetChildren != null
+                    && animatedTargetChildren.Length != 0);
+            if (!requiresTargetBinding) return true;
             if (!animator)
             {
                 error = "Animated target children require a live RagdollAnimator.";

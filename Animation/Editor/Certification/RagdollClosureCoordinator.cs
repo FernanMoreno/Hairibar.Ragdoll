@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using UnityEditor.PackageManager;
+using UnityEngine;
 
 namespace Hairibar.Ragdoll.Animation.Editor
 {
@@ -15,13 +16,81 @@ namespace Hairibar.Ragdoll.Animation.Editor
     {
         internal const string OutputEnvironmentVariable =
             "HAIRIBAR_CLOSURE_OUTPUT";
+        internal const string RunIdEnvironmentVariable =
+            "HAIRIBAR_CLOSURE_RUN_ID";
+
+        [Serializable]
+        internal sealed class RunContext
+        {
+            public int schemaVersion = 1;
+            public string certificationRunId;
+            public string sourceRevision;
+            public string sourceTreeSha256;
+            public string sourceLatestWriteUtc;
+            public string createdUtc;
+        }
+
+        [Serializable]
+        sealed class EmbeddedProvenance
+        {
+            public string certificationRunId;
+            public string sourceRevision;
+            public string sourceTreeSha256;
+        }
+
+        internal static RunContext EnsureRunContext()
+        {
+            string output = RequireOutputRoot();
+            string path = Path.Combine(output, "run-context.json");
+            string sourceHash = RagdollCoverageManifest
+                .ComputeCurrentSourceTreeSha256();
+            string requestedRunId = Environment.GetEnvironmentVariable(
+                RunIdEnvironmentVariable);
+            Guid parsed;
+            if (!Guid.TryParse(requestedRunId, out parsed))
+                throw new InvalidOperationException(
+                    RunIdEnvironmentVariable + " must contain a GUID.");
+            if (File.Exists(path))
+            {
+                RunContext existing = JsonUtility.FromJson<RunContext>(
+                    File.ReadAllText(path));
+                ValidateRunContext(existing, requestedRunId, sourceHash);
+                return existing;
+            }
+            var context = new RunContext
+            {
+                certificationRunId = requestedRunId,
+                sourceTreeSha256 = sourceHash,
+                sourceRevision = ResolveSourceRevision(sourceHash),
+                sourceLatestWriteUtc = RagdollCoverageManifest
+                    .CurrentSourceLatestWriteUtc(),
+                createdUtc = DateTime.UtcNow.ToString("O")
+            };
+            File.WriteAllText(path, JsonUtility.ToJson(context, true));
+            return context;
+        }
+
+        internal static RunContext ReadRunContext()
+        {
+            string path = Path.Combine(RequireOutputRoot(), "run-context.json");
+            if (!File.Exists(path))
+                throw new FileNotFoundException(
+                    "The closure run context has not been produced.", path);
+            RunContext context = JsonUtility.FromJson<RunContext>(
+                File.ReadAllText(path));
+            ValidateRunContext(
+                context,
+                Environment.GetEnvironmentVariable(RunIdEnvironmentVariable),
+                RagdollCoverageManifest.ComputeCurrentSourceTreeSha256());
+            return context;
+        }
 
         internal static string GenerateProvisional()
         {
             string output = RequireOutputRoot();
-            string sourceHash = RagdollCoverageManifest
-                .ComputeCurrentSourceTreeSha256();
-            string revision = ResolveSourceRevision(sourceHash);
+            RunContext context = ReadRunContext();
+            string sourceHash = context.sourceTreeSha256;
+            string revision = context.sourceRevision;
             var artifacts = new List<RagdollEvidenceArtifact>();
             var nunit = new List<string>();
 
@@ -31,6 +100,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 "Editor",
                 revision,
                 sourceHash,
+                context.certificationRunId,
                 artifacts,
                 nunit);
             AddNUnit(
@@ -39,6 +109,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 "Editor",
                 revision,
                 sourceHash,
+                context.certificationRunId,
                 artifacts,
                 nunit);
 
@@ -50,6 +121,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 new[] { "J01" },
                 revision,
                 sourceHash,
+                context.certificationRunId,
                 artifacts);
             AddIfPresent(
                 Path.Combine(output, "windows-player-result.json"),
@@ -59,6 +131,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 new[] { "H05", "H08", "J04", "J05" },
                 revision,
                 sourceHash,
+                context.certificationRunId,
                 artifacts);
             AddOptionalEnvironmentArtifact(
                 "HAIRIBAR_LINUX_PLAYER_RESULTS",
@@ -68,6 +141,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 new[] { "H08", "J04" },
                 revision,
                 sourceHash,
+                context.certificationRunId,
                 artifacts);
             AddOptionalEnvironmentArtifact(
                 "HAIRIBAR_PROFILER_RESULTS",
@@ -77,6 +151,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 new[] { "H05", "H08", "I07", "J05" },
                 revision,
                 sourceHash,
+                context.certificationRunId,
                 artifacts);
             AddOptionalEnvironmentArtifact(
                 "HAIRIBAR_SCENE_RESULTS",
@@ -86,6 +161,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 new[] { "J04" },
                 revision,
                 sourceHash,
+                context.certificationRunId,
                 artifacts);
             AddOptionalEnvironmentArtifact(
                 "HAIRIBAR_DOCUMENTATION_AUDIT",
@@ -95,6 +171,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 new[] { "J07" },
                 revision,
                 sourceHash,
+                context.certificationRunId,
                 artifacts);
 
             var request = new RagdollCoverageRequest
@@ -103,8 +180,8 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 artifacts = artifacts.ToArray(),
                 sourceRevision = revision,
                 sourceTreeSha256 = sourceHash,
-                sourceLatestWriteUtc = RagdollCoverageManifest
-                    .CurrentSourceLatestWriteUtc()
+                sourceLatestWriteUtc = context.sourceLatestWriteUtc,
+                certificationRunId = context.certificationRunId
             };
             RagdollCoverageManifest.Manifest manifest =
                 RagdollCoverageManifest.Build(request);
@@ -138,16 +215,26 @@ namespace Hairibar.Ragdoll.Animation.Editor
             string platform,
             string revision,
             string sourceHash,
+            string certificationRunId,
             List<RagdollEvidenceArtifact> artifacts,
             List<string> nunit)
         {
             string path = Environment.GetEnvironmentVariable(environmentVariable);
             if (string.IsNullOrWhiteSpace(path)) return;
             path = Path.GetFullPath(path);
+            RunContext context = ReadRunContext();
+            DateTime createdUtc;
+            if (!DateTime.TryParse(context.createdUtc, out createdUtc)
+                || !File.Exists(path)
+                || File.GetLastWriteTimeUtc(path) < createdUtc.ToUniversalTime())
+                throw new InvalidDataException(
+                    kind + " NUnit artifact was not produced during closure run "
+                    + certificationRunId + ".");
             nunit.Add(path);
             AddIfPresent(
                 path, kind, platform, environmentVariable,
-                Array.Empty<string>(), revision, sourceHash, artifacts);
+                Array.Empty<string>(), revision, sourceHash,
+                certificationRunId, artifacts);
         }
 
         static void AddOptionalEnvironmentArtifact(
@@ -158,13 +245,14 @@ namespace Hairibar.Ragdoll.Animation.Editor
             string[] ids,
             string revision,
             string sourceHash,
+            string certificationRunId,
             List<RagdollEvidenceArtifact> artifacts)
         {
             string path = Environment.GetEnvironmentVariable(variable);
             if (!string.IsNullOrWhiteSpace(path))
                 AddIfPresent(
                     path, kind, platform, scenario, ids,
-                    revision, sourceHash, artifacts);
+                    revision, sourceHash, certificationRunId, artifacts);
         }
 
         static void AddIfPresent(
@@ -175,10 +263,27 @@ namespace Hairibar.Ragdoll.Animation.Editor
             string[] ids,
             string revision,
             string sourceHash,
+            string certificationRunId,
             List<RagdollEvidenceArtifact> artifacts)
         {
             string full = Path.GetFullPath(path);
             if (!File.Exists(full)) return;
+            if (kind != RagdollEvidenceKind.NUnitEditMode
+                && kind != RagdollEvidenceKind.NUnitPlayMode)
+            {
+                EmbeddedProvenance embedded = JsonUtility.FromJson<
+                    EmbeddedProvenance>(File.ReadAllText(full));
+                if (embedded == null
+                    || !string.Equals(embedded.certificationRunId,
+                        certificationRunId, StringComparison.Ordinal)
+                    || !string.Equals(embedded.sourceRevision, revision,
+                        StringComparison.Ordinal)
+                    || !string.Equals(embedded.sourceTreeSha256, sourceHash,
+                        StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException(
+                        kind + " artifact does not embed this closure run's "
+                        + "source provenance: " + full);
+            }
             artifacts.Add(new RagdollEvidenceArtifact
             {
                 kind = kind,
@@ -187,6 +292,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 platform = platform,
                 scenario = scenario,
                 generatedUtc = File.GetLastWriteTimeUtc(full).ToString("O"),
+                certificationRunId = certificationRunId,
                 sourceRevision = revision,
                 sourceTreeSha256 = sourceHash,
                 capabilityIds = ids ?? Array.Empty<string>()
@@ -205,7 +311,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
             return output;
         }
 
-        static string ResolveSourceRevision(string sourceHash)
+        internal static string ResolveSourceRevision(string sourceHash)
         {
             PackageInfo package = PackageInfo.FindForAssembly(
                 typeof(RagdollAnimator).Assembly);
@@ -237,6 +343,25 @@ namespace Hairibar.Ragdoll.Animation.Editor
             {
                 return "tree-" + sourceHash;
             }
+        }
+
+        static void ValidateRunContext(
+            RunContext context,
+            string expectedRunId,
+            string expectedSourceHash)
+        {
+            if (context == null || context.schemaVersion != 1)
+                throw new InvalidDataException("Closure run-context schema is invalid.");
+            if (!string.Equals(context.certificationRunId, expectedRunId,
+                    StringComparison.Ordinal)
+                || !string.Equals(context.sourceTreeSha256,
+                    expectedSourceHash, StringComparison.OrdinalIgnoreCase)
+                || string.IsNullOrWhiteSpace(context.sourceRevision)
+                || !context.sourceRevision.EndsWith(
+                    "tree-" + expectedSourceHash,
+                    StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException(
+                    "Closure run-context provenance does not match this process/source.");
         }
     }
 }

@@ -184,6 +184,12 @@ namespace Hairibar.Ragdoll.Animation
         {
             RegisteredMuscles.Remove(this);
             if (applicationQuitting) return;
+            // A hierarchy transaction may temporarily disable the Puppet root while
+            // replacing/rebuilding physical ownership. That lifecycle boundary is
+            // internal to the atomic commit and must not be interpreted as an owner
+            // drop; the same slot is rebound to the new registry generation before
+            // the transaction is published.
+            if (animator && animator.IsHierarchyTransactionInProgress) return;
             requestedProp = null;
             collisionPolicyError = null;
             physicalOverrideError = null;

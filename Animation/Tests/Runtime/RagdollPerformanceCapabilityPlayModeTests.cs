@@ -296,6 +296,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
             yield return new WaitForFixedUpdate();
             int observedBeforeThreshold = observed;
             int acceptedBeforeThreshold = accepted;
+            long rejectedBeforeThreshold = puppet.RejectedCollisionCount;
             puppet.MaximumCollisionsPerFixedStep = 30;
             puppet.CollisionThreshold = 1000000f;
             CreateProjectile(rootBody.position + Vector3.left * 0.65f,
@@ -307,8 +308,12 @@ namespace Hairibar.Ragdoll.Animation.Tests
             }
             Assert.That(observed, Is.GreaterThan(observedBeforeThreshold));
             Assert.That(accepted, Is.EqualTo(acceptedBeforeThreshold));
-            Assert.That(puppet.LastCollisionRejectionReason,
-                Is.EqualTo(RagdollPuppetCollisionRejectionReason.BelowThreshold));
+            Assert.That(puppet.RejectedCollisionCount,
+                Is.GreaterThan(rejectedBeforeThreshold),
+                "The high threshold must reject the real PhysX contact. The public "
+                + "last-reason value may subsequently be replaced by the matching "
+                + "unsupported Exit phase, so cumulative rejection is the stable "
+                + "observable for this prolonged scenario.");
         }
 
         [UnityTest]

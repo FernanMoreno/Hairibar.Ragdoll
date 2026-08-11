@@ -15,18 +15,21 @@ namespace Hairibar.Ragdoll.Animation.Tests
             new List<UnityEngine.Object>();
         bool ignoredBefore;
         float originalTimeScale;
+        Vector3 originalGravity;
 
         [SetUp]
         public void SetUp()
         {
             ignoredBefore = Physics.GetIgnoreLayerCollision(30, 31);
             originalTimeScale = Time.timeScale;
+            originalGravity = Physics.gravity;
         }
 
         [UnityTearDown]
         public IEnumerator TearDown()
         {
             Time.timeScale = originalTimeScale;
+            Physics.gravity = originalGravity;
             Physics.IgnoreLayerCollision(30, 31, ignoredBefore);
             for (int index = owned.Count - 1; index >= 0; index--)
                 if (owned[index]) UnityEngine.Object.Destroy(owned[index]);
@@ -90,6 +93,8 @@ namespace Hairibar.Ragdoll.Animation.Tests
         [UnityTest]
         public IEnumerator E01_TargetAnimatorFallRunsBlendRuntimeSettersAndBothEndGates()
         {
+            Time.timeScale = 1f;
+            Physics.gravity = Vector3.down * 9.81f;
             GameObject rig = InstantiateResource<GameObject>("RegressionRig");
             RagdollDefinitionBindings puppet =
                 rig.GetComponentInChildren<RagdollDefinitionBindings>(true);
@@ -98,9 +103,17 @@ namespace Hairibar.Ragdoll.Animation.Tests
             RagdollHumanoidBindingProfile semantic =
                 LoadResource<RagdollHumanoidBindingProfile>("HumanoidBindings");
             Animator targetAnimator = InstantiateHumanoid();
+            Rigidbody[] puppetBodies =
+                puppet.GetComponentsInChildren<Rigidbody>(true);
+            Assert.That(puppetBodies, Is.Not.Empty);
             Rigidbody pelvis = puppet.GetComponent<Rigidbody>();
             pelvis.position = Vector3.up * 2f;
-            pelvis.useGravity = false;
+            for (int bodyIndex = 0;
+                bodyIndex < puppetBodies.Length;
+                bodyIndex++)
+            {
+                puppetBodies[bodyIndex].useGravity = false;
+            }
 
             RagdollSetupResult result =
                 RagdollRuntimeSetupService.ConfigureSeparated(
@@ -112,6 +125,9 @@ namespace Hairibar.Ragdoll.Animation.Tests
                     31);
             Assert.That(result.Succeeded, Is.True, result.Error);
             result.Animator.TargetAnimator = targetAnimator;
+            result.Animator.MasterPinWeight = 0f;
+            result.Animator.MasterMuscleWeight = 0f;
+            result.Animator.AngularPinning = false;
             RagdollFallBehaviour fall = result.Behaviours.BehaviourRoot
                 .gameObject.AddComponent<RagdollFallBehaviour>();
             fall.StateName = "Fall";
@@ -119,8 +135,9 @@ namespace Hairibar.Ragdoll.Animation.Tests
             fall.TransitionDuration = 0f;
             fall.FixedTime = 0f;
             fall.BlendParameter = "FallBlend";
-            fall.RaycastLayers = ~0;
-            fall.WritheHeight = 4f;
+            const int fallGroundLayer = 29;
+            fall.RaycastLayers = 1 << fallGroundLayer;
+            fall.WritheHeight = 100f;
             fall.WritheYVelocity = 1f;
             fall.BlendSpeed = 100f;
             fall.BlendMappingSpeed = 100f;
@@ -138,29 +155,57 @@ namespace Hairibar.Ragdoll.Animation.Tests
 
             GameObject ground = Own(GameObject.CreatePrimitive(PrimitiveType.Plane));
             ground.name = "Fall Ground";
-            ground.transform.position = Vector3.zero;
+            ground.layer = fallGroundLayer;
+            ground.transform.position = Vector3.down * 10f;
+            Physics.SyncTransforms();
             yield return null;
             Assert.That(result.Animator.Initiated, Is.True);
             Assert.That(fall.IsInitialized, Is.True);
             Assert.That(fall.Activate(), Is.True);
-            pelvis.linearVelocity = Vector3.up * 2f;
-            yield return new WaitForFixedUpdate();
+            for (int step = 0; step < 10; step++)
+            {
+                SetVelocity(puppetBodies, Vector3.up * 2f);
+                yield return new WaitForFixedUpdate();
+                if (fall.HasGround
+                    && fall.SampledVerticalVelocity >= fall.WritheYVelocity)
+                {
+                    break;
+                }
+            }
             yield return null;
             Assert.That(targetAnimator.GetCurrentAnimatorStateInfo(0).IsName("Fall"),
                 Is.True);
-            Assert.That(fall.CurrentBlend, Is.InRange(0f, 1f));
+            Assert.That(fall.HasGround, Is.True);
+            Assert.That(fall.SampledHeight, Is.GreaterThan(0f)
+                .And.LessThan(fall.WritheHeight));
+            Assert.That(fall.SampledVerticalVelocity,
+                Is.GreaterThanOrEqualTo(fall.WritheYVelocity));
+            Assert.That(fall.CurrentBlend, Is.EqualTo(1f).Within(0.001f),
+                "Upward pelvis velocity at the writhe threshold must select "
+                + "the catch-fall end of the blend.");
+            Assert.That(fall.MappingBlend, Is.EqualTo(1f).Within(0.001f));
             Assert.That(targetAnimator.GetFloat("FallBlend"),
                 Is.EqualTo(fall.CurrentBlend).Within(0.001f));
 
             for (int step = 0; step < 8; step++)
+            {
+                SetVelocity(puppetBodies, Vector3.up * 2f);
                 yield return new WaitForFixedUpdate();
+            }
             Assert.That(fall.ElapsedTime, Is.GreaterThanOrEqualTo(fall.MinimumTime));
             Assert.That(fall.HasEnded, Is.False,
                 "Minimum time alone must not bypass the velocity gate.");
 
-            pelvis.linearVelocity = Vector3.zero;
+            SetVelocity(puppetBodies, Vector3.zero);
             for (int step = 0; step < 8 && !fall.HasEnded; step++)
                 yield return new WaitForFixedUpdate();
+            Assert.That(Mathf.Abs(fall.SampledVerticalVelocity),
+                Is.LessThan(0.01f));
+            Assert.That(fall.CurrentBlend, Is.LessThan(0.25f),
+                "With the pelvis stable and much lower than writheHeight, the "
+                + "height/velocity blend must leave the catch-fall end.");
+            Assert.That(targetAnimator.GetFloat("FallBlend"),
+                Is.EqualTo(fall.CurrentBlend).Within(0.001f));
             Assert.That(fall.HasEnded, Is.True);
             Assert.That(serializedEnds, Is.EqualTo(1));
             Assert.That(runtimeEnds, Is.EqualTo(1));
@@ -185,10 +230,13 @@ namespace Hairibar.Ragdoll.Animation.Tests
         {
             Animator first = InstantiateHumanoid();
             Animator second = InstantiateHumanoid();
+            first.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+            second.cullingMode = AnimatorCullingMode.AlwaysAnimate;
             first.applyRootMotion = true;
             second.applyRootMotion = true;
             HumanoidAnimationEventProbe probe =
-                first.gameObject.AddComponent<HumanoidAnimationEventProbe>();
+                first.GetComponent<HumanoidAnimationEventProbe>();
+            Assert.That(probe, Is.Not.Null);
             yield return null;
 
             AnimatorUpdateMode[] modes =
@@ -204,10 +252,29 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 for (int scaleIndex = 0; scaleIndex < scales.Length; scaleIndex++)
                 {
                     Time.timeScale = scales[scaleIndex];
+                    // A timeScale write affects the effective scaled delta on the
+                    // next player-loop iteration. Stabilize that boundary before
+                    // resetting and measuring the Animator state.
+                    yield return null;
                     first.Play("Locomotion", 0, 0f);
                     first.Update(0f);
                     float before = first.GetCurrentAnimatorStateInfo(0).normalizedTime;
-                    for (int frame = 0; frame < 8; frame++) yield return null;
+                    for (int frame = 0; frame < 8; frame++)
+                    {
+                        // Unity evaluates Fixed update-mode Animators on physics
+                        // boundaries, not on arbitrary rendered frames. At
+                        // timeScale zero no physics boundary is produced, so render
+                        // frames are intentionally used to prove it remains frozen.
+                        if (modes[modeIndex] == AnimatorUpdateMode.Fixed
+                            && scales[scaleIndex] > 0f)
+                        {
+                            yield return new WaitForFixedUpdate();
+                        }
+                        else
+                        {
+                            yield return null;
+                        }
+                    }
                     float after = first.GetCurrentAnimatorStateInfo(0).normalizedTime;
                     Assert.That(IsFinite(after), Is.True,
                         modes[modeIndex] + " @ " + scales[scaleIndex]);
@@ -217,7 +284,8 @@ namespace Hairibar.Ragdoll.Animation.Tests
                             == AnimatorUpdateMode.UnscaledTime;
                         Assert.That(unscaled ? after > before
                             : Mathf.Abs(after - before) < 0.0001f, Is.True,
-                            modes[modeIndex] + " @ timeScale 0");
+                            modes[modeIndex] + " @ timeScale 0; before="
+                            + before + ", after=" + after);
                     }
                     else
                     {
@@ -263,6 +331,8 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 && animator.avatar.isHuman, Is.True,
                 "Run HairibarCertification.PrepareAssets before PlayMode tests.");
             Assert.That(animator.runtimeAnimatorController, Is.Not.Null);
+            if (!animator.GetComponent<HumanoidAnimationEventProbe>())
+                animator.gameObject.AddComponent<HumanoidAnimationEventProbe>();
             return animator;
         }
 
@@ -301,6 +371,14 @@ namespace Hairibar.Ragdoll.Animation.Tests
         static bool IsFinite(float value)
         {
             return !float.IsNaN(value) && !float.IsInfinity(value);
+        }
+
+        static void SetVelocity(Rigidbody[] bodies, Vector3 velocity)
+        {
+            for (int index = 0; index < bodies.Length; index++)
+            {
+                if (bodies[index]) bodies[index].linearVelocity = velocity;
+            }
         }
     }
 

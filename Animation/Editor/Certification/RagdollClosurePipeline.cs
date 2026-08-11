@@ -34,6 +34,9 @@ namespace Hairibar.Ragdoll.Animation.Editor
             public string provisionalManifestSha256;
             public string sourceRevision;
             public string sourceTreeSha256;
+            public string certificationRunId;
+            public int producerProcessId;
+            public int validatorProcessId;
             public int total;
             public int verifiedBeforeJ06;
             public int openBeforeJ06;
@@ -51,6 +54,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
             public string provisionalManifestSha256;
             public string independentValidationPath;
             public string independentValidationSha256;
+            public int finalizerProcessId;
             public RagdollCoverageManifest.Manifest manifest;
         }
 
@@ -94,6 +98,10 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 provisionalManifestSha256 = ComputeSha256(provisional),
                 sourceRevision = manifest?.sourceRevision ?? string.Empty,
                 sourceTreeSha256 = manifest?.sourceTreeSha256 ?? string.Empty,
+                certificationRunId = manifest?.certificationRunId ?? string.Empty,
+                producerProcessId = manifest?.producerProcessId ?? 0,
+                validatorProcessId = System.Diagnostics.Process
+                    .GetCurrentProcess().Id,
                 total = manifest?.entries?.Length ?? 0,
                 verifiedBeforeJ06 = manifest?.entries?.Count(
                     entry => entry != null && entry.status == "Verified") ?? 0,
@@ -155,10 +163,26 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     File.ReadAllText(provisional));
             if (manifest == null) throw new InvalidDataException(
                 "The provisional manifest could not be deserialized.");
+            var finalAuditErrors = new List<string>();
+            AuditManifest(manifest, finalAuditErrors);
+            if (finalAuditErrors.Count != 0)
+                throw new InvalidDataException(
+                    "The provisional manifest no longer satisfies canonical "
+                    + "closure validation: "
+                    + string.Join(" | ", finalAuditErrors));
             if (!string.Equals(validation.sourceRevision, manifest.sourceRevision,
                     StringComparison.Ordinal)
                 || !string.Equals(validation.sourceTreeSha256,
                     manifest.sourceTreeSha256, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(validation.certificationRunId,
+                    manifest.certificationRunId, StringComparison.Ordinal)
+                || validation.producerProcessId != manifest.producerProcessId
+                || validation.validatorProcessId <= 0
+                || validation.validatorProcessId == manifest.producerProcessId
+                || validation.validatorProcessId == System.Diagnostics.Process
+                    .GetCurrentProcess().Id
+                || manifest.producerProcessId == System.Diagnostics.Process
+                    .GetCurrentProcess().Id
                 || validation.total != 140
                 || validation.verifiedBeforeJ06 != 138
                 || validation.openBeforeJ06 != 1
@@ -183,6 +207,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 platform = "Editor",
                 scenario = "J06",
                 generatedUtc = validation.generatedUtc,
+                certificationRunId = manifest.certificationRunId,
                 sourceRevision = manifest.sourceRevision,
                 sourceTreeSha256 = manifest.sourceTreeSha256,
                 capabilityIds = new[] { "J06" },
@@ -215,6 +240,8 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 provisionalManifestSha256 = provisionalDigest,
                 independentValidationPath = validationFile,
                 independentValidationSha256 = validationDigest,
+                finalizerProcessId = System.Diagnostics.Process
+                    .GetCurrentProcess().Id,
                 manifest = manifest
             };
             string output = PrepareOutputPath(finalOutputPath);
@@ -233,6 +260,12 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 return;
             }
 
+            if (!string.Equals(
+                manifest.matrix,
+                typeof(RagdollCapabilityCatalog).FullName,
+                StringComparison.Ordinal))
+                errors.Add("CatalogIdentityMismatch");
+
             var ids = new HashSet<string>(StringComparer.Ordinal);
             foreach (RagdollCoverageManifest.Entry entry in entries)
             {
@@ -245,8 +278,20 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     errors.Add("MissingOfficialSource:" + entry.id);
                 if (string.IsNullOrWhiteSpace(entry.affectedApi))
                     errors.Add("MissingRequirementOrApi:" + entry.id);
-                AuditEntry(manifest, entry, errors);
+                RagdollCapabilityContract contract;
+                if (!RagdollCapabilityCatalog.TryGet(entry.id, out contract))
+                {
+                    errors.Add("UnknownCatalogCapability:" + entry.id);
+                    continue;
+                }
+                AuditEntry(manifest, entry, contract, errors);
             }
+
+
+            foreach (RagdollCapabilityContract contract in
+                RagdollCapabilityCatalog.Contracts)
+                if (!ids.Contains(contract.Id))
+                    errors.Add("CatalogCapabilityMissing:" + contract.Id);
 
             int verified = entries.Count(value => value != null
                 && value.status == "Verified");
@@ -270,6 +315,14 @@ namespace Hairibar.Ragdoll.Animation.Editor
 
             if (string.IsNullOrWhiteSpace(manifest.sourceRevision))
                 errors.Add("MissingSourceRevision");
+            Guid runId;
+            if (!Guid.TryParse(manifest.certificationRunId, out runId))
+                errors.Add("CertificationRunIdInvalid");
+            if (manifest.producerProcessId <= 0)
+                errors.Add("ProducerProcessIdInvalid");
+            else if (manifest.producerProcessId == System.Diagnostics.Process
+                .GetCurrentProcess().Id)
+                errors.Add("IndependentValidatorMustUseAnotherProcess");
             if (!IsSha256(manifest.sourceTreeSha256))
                 errors.Add("InvalidSourceTreeSha256");
             else
@@ -279,18 +332,35 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 if (!string.Equals(current, manifest.sourceTreeSha256,
                     StringComparison.OrdinalIgnoreCase))
                     errors.Add("SourceTreeSha256DoesNotMatchCurrentPackage");
+                if (string.IsNullOrWhiteSpace(manifest.sourceRevision)
+                    || !manifest.sourceRevision.EndsWith(
+                        "tree-" + manifest.sourceTreeSha256,
+                        StringComparison.OrdinalIgnoreCase))
+                    errors.Add("SourceRevisionDoesNotBindSourceTree");
             }
 
+            var artifactIdentities = new HashSet<string>(
+                StringComparer.OrdinalIgnoreCase);
             foreach (RagdollEvidenceArtifact artifact in manifest.artifacts
                 ?? Array.Empty<RagdollEvidenceArtifact>())
+            {
                 AuditArtifact(manifest, null, artifact, errors);
+                if (artifact != null
+                    && !string.IsNullOrWhiteSpace(artifact.path)
+                    && !artifactIdentities.Add(
+                    artifact.kind + "|" + Path.GetFullPath(
+                        artifact.path)))
+                    errors.Add("DuplicateManifestArtifact:" + artifact.kind);
+            }
         }
 
         static void AuditEntry(
             RagdollCoverageManifest.Manifest manifest,
             RagdollCoverageManifest.Entry entry,
+            RagdollCapabilityContract contract,
             List<string> errors)
         {
+            AuditCanonicalContract(entry, contract, errors);
             if (entry.status != "Verified" && entry.status != "Open"
                 && entry.status != "N/A")
                 errors.Add("InvalidStatus:" + entry.id);
@@ -307,6 +377,9 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     errors.Add("UnknownEvidenceRequirement:" + entry.id + ":" + requirement);
             }
 
+            if (contract.IsApplicable)
+                AuditStableIdTest(manifest, entry, errors);
+
             if (entry.id == "J06" && entry.status == "Open")
             {
                 if (!requirements.Contains(
@@ -321,12 +394,29 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 ?? Array.Empty<RagdollEvidenceArtifact>();
             foreach (string requirement in requirements)
             {
-                if (!artifacts.Any(artifact => artifact != null
-                    && artifact.kind.ToString() == requirement))
+                int matches = artifacts.Count(artifact => artifact != null
+                    && artifact.kind.ToString() == requirement);
+                if (matches == 0)
                     errors.Add("RequiredEvidenceMissing:" + entry.id + ":" + requirement);
+                else if (matches != 1)
+                    errors.Add("RequiredEvidenceDuplicate:" + entry.id + ":" + requirement);
             }
             foreach (RagdollEvidenceArtifact artifact in artifacts)
+            {
                 AuditArtifact(manifest, entry.id, artifact, errors);
+                if (artifact == null) continue;
+                if (!requirements.Contains(artifact.kind.ToString()))
+                    errors.Add("UnexpectedEvidenceKind:" + entry.id + ":"
+                        + artifact.kind);
+                if (!ManifestContainsArtifact(manifest, artifact))
+                    errors.Add("EntryArtifactNotInManifest:" + entry.id + ":"
+                        + artifact.kind);
+                RagdollArtifactValidationResult validation =
+                    ValidateArtifactContent(entry, contract, artifact);
+                if (!validation.IsValid)
+                    errors.Add("ArtifactContentInvalid:" + entry.id + ":"
+                        + artifact.kind + ":" + validation.Reason);
+            }
 
             if (string.IsNullOrWhiteSpace(entry.executionArtifact)
                 || !File.Exists(entry.executionArtifact))
@@ -336,6 +426,154 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     entry.executionArtifactSha256,
                     StringComparison.OrdinalIgnoreCase))
                 errors.Add("ExecutionArtifactHashMismatch:" + entry.id);
+            else if (!artifacts.Any(artifact => artifact != null
+                && !string.IsNullOrWhiteSpace(artifact.path)
+                && string.Equals(Path.GetFullPath(artifact.path),
+                    Path.GetFullPath(entry.executionArtifact),
+                    StringComparison.OrdinalIgnoreCase)
+                && string.Equals(artifact.sha256,
+                    entry.executionArtifactSha256,
+                    StringComparison.OrdinalIgnoreCase)))
+                errors.Add("ExecutionArtifactNotDeclared:" + entry.id);
+        }
+
+        static void AuditCanonicalContract(
+            RagdollCoverageManifest.Entry entry,
+            RagdollCapabilityContract contract,
+            List<string> errors)
+        {
+            if (!string.Equals(entry.source, contract.OfficialSource,
+                    StringComparison.Ordinal))
+                errors.Add("CatalogSourceMismatch:" + entry.id);
+            if (!string.Equals(entry.sourceLocator, contract.SourceLocator,
+                    StringComparison.Ordinal))
+                errors.Add("CatalogLocatorMismatch:" + entry.id);
+            if (!string.Equals(entry.observableClaim, contract.ObservableClaim,
+                    StringComparison.Ordinal))
+                errors.Add("CatalogClaimMismatch:" + entry.id);
+            if (!string.Equals(entry.affectedApis, contract.AffectedApis,
+                    StringComparison.Ordinal))
+                errors.Add("CatalogApisMismatch:" + entry.id);
+            if (!string.Equals(entry.affectedApi, contract.AffectedApis,
+                    StringComparison.Ordinal))
+                errors.Add("CatalogAffectedApiMismatch:" + entry.id);
+            string[] actual = entry.requiredEvidenceKinds
+                ?? Array.Empty<string>();
+            string[] expected = contract.RequiredEvidence
+                .Select(kind => kind.ToString()).ToArray();
+            if (!actual.SequenceEqual(expected, StringComparer.Ordinal))
+                errors.Add("CatalogEvidenceRequirementsMismatch:" + entry.id);
+
+            if (!contract.IsApplicable)
+            {
+                if (entry.status != "N/A"
+                    || !string.Equals(entry.reason, contract.ExclusionReason,
+                        StringComparison.Ordinal)
+                    || !string.IsNullOrEmpty(entry.exactTest))
+                    errors.Add("CatalogExclusionMismatch:" + entry.id);
+                return;
+            }
+            string expectedStatus = entry.id == "J06" ? "Open" : "Verified";
+            if (!string.Equals(entry.status, expectedStatus,
+                    StringComparison.Ordinal))
+                errors.Add("CatalogStatusMismatch:" + entry.id);
+        }
+
+        static void AuditStableIdTest(
+            RagdollCoverageManifest.Manifest manifest,
+            RagdollCoverageManifest.Entry entry,
+            List<string> errors)
+        {
+            string exact = entry.exactTest ?? string.Empty;
+            string method = exact.LastIndexOf('.') >= 0
+                ? exact.Substring(exact.LastIndexOf('.') + 1)
+                : exact;
+            if (string.IsNullOrWhiteSpace(exact)
+                || !method.StartsWith(entry.id + "_", StringComparison.Ordinal))
+            {
+                errors.Add("StableIdTestMissing:" + entry.id);
+                return;
+            }
+            RagdollEvidenceKind kind;
+            if (string.Equals(entry.testKind, "EditMode", StringComparison.Ordinal))
+                kind = RagdollEvidenceKind.NUnitEditMode;
+            else if (!string.IsNullOrEmpty(entry.testKind)
+                && entry.testKind.StartsWith("PlayMode/", StringComparison.Ordinal))
+                kind = RagdollEvidenceKind.NUnitPlayMode;
+            else
+            {
+                errors.Add("StableIdTestKindInvalid:" + entry.id);
+                return;
+            }
+            RagdollEvidenceArtifact[] candidates = (manifest.artifacts
+                ?? Array.Empty<RagdollEvidenceArtifact>())
+                .Where(artifact => artifact != null && artifact.kind == kind)
+                .ToArray();
+            if (!candidates.Any(artifact =>
+                RagdollEvidenceArtifactValidators.Validate(
+                    artifact,
+                    new RagdollArtifactValidationContext
+                    {
+                        ExactTestName = exact
+                    }).IsValid))
+                errors.Add("StableIdTestNotExecuted:" + entry.id);
+        }
+
+        static RagdollArtifactValidationResult ValidateArtifactContent(
+            RagdollCoverageManifest.Entry entry,
+            RagdollCapabilityContract contract,
+            RagdollEvidenceArtifact artifact)
+        {
+            string exact = null;
+            if (artifact.kind == RagdollEvidenceKind.NUnitEditMode
+                || artifact.kind == RagdollEvidenceKind.NUnitPlayMode)
+            {
+                if (!contract.ExactNUnitEvidenceTests.TryGetValue(
+                    artifact.kind, out exact))
+                {
+                    bool primary = artifact.kind == RagdollEvidenceKind.NUnitEditMode
+                        ? string.Equals(entry.testKind, "EditMode",
+                            StringComparison.Ordinal)
+                        : !string.IsNullOrEmpty(entry.testKind)
+                            && entry.testKind.StartsWith("PlayMode/",
+                                StringComparison.Ordinal);
+                    if (primary) exact = entry.exactTest;
+                }
+            }
+            return RagdollEvidenceArtifactValidators.Validate(
+                artifact,
+                new RagdollArtifactValidationContext
+                {
+                    ExactTestName = exact,
+                    ExpectedCapabilityId = entry.id,
+                    ExpectedCertificationRunId = artifact.certificationRunId,
+                    ExpectedSourceRevision = artifact.sourceRevision,
+                    ExpectedSourceTreeSha256 = artifact.sourceTreeSha256,
+                    ExpectedPlatform = artifact.kind ==
+                        RagdollEvidenceKind.WindowsPlayerScenario
+                            ? "Windows64"
+                            : artifact.kind ==
+                                RagdollEvidenceKind.LinuxPlayerScenario
+                                ? "Linux64"
+                                : string.Empty
+                });
+        }
+
+        static bool ManifestContainsArtifact(
+            RagdollCoverageManifest.Manifest manifest,
+            RagdollEvidenceArtifact expected)
+        {
+            if (expected == null || string.IsNullOrWhiteSpace(expected.path))
+                return false;
+            return (manifest.artifacts ?? Array.Empty<RagdollEvidenceArtifact>())
+                .Any(artifact => artifact != null
+                    && !string.IsNullOrWhiteSpace(artifact.path)
+                    && artifact.kind == expected.kind
+                    && string.Equals(Path.GetFullPath(artifact.path),
+                        Path.GetFullPath(expected.path),
+                        StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(artifact.sha256, expected.sha256,
+                        StringComparison.OrdinalIgnoreCase));
         }
 
         static void AuditArtifact(
@@ -360,16 +598,33 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 || !string.Equals(artifact.sourceTreeSha256,
                     manifest.sourceTreeSha256, StringComparison.OrdinalIgnoreCase))
                 errors.Add("ArtifactProvenanceMismatch:" + label);
+            if (!string.Equals(artifact.certificationRunId,
+                manifest.certificationRunId, StringComparison.Ordinal))
+                errors.Add("ArtifactRunIdMismatch:" + label);
             if (!string.Equals(artifact.validationStatus, "Valid",
                 StringComparison.Ordinal))
                 errors.Add("ArtifactNotValidated:" + label);
-            if (entryId != null && (artifact.capabilityIds == null
-                || !artifact.capabilityIds.Contains(entryId,
-                    StringComparer.Ordinal)))
+            if (entryId != null
+                && artifact.kind != RagdollEvidenceKind.NUnitEditMode
+                && artifact.kind != RagdollEvidenceKind.NUnitPlayMode
+                && (artifact.capabilityIds == null
+                    || !artifact.capabilityIds.Contains(entryId,
+                        StringComparer.Ordinal)))
                 errors.Add("ArtifactCapabilityMismatch:" + label);
             DateTime generated;
             if (!DateTime.TryParse(artifact.generatedUtc, out generated))
                 errors.Add("ArtifactGeneratedUtcInvalid:" + label);
+            else
+            {
+                DateTime latestSource;
+                if (DateTime.TryParse(
+                    RagdollCoverageManifest.CurrentSourceLatestWriteUtc(),
+                    out latestSource)
+                    && generated.ToUniversalTime() < latestSource.ToUniversalTime())
+                    errors.Add("ArtifactStale:" + label);
+                if (generated.ToUniversalTime() > DateTime.UtcNow.AddMinutes(5d))
+                    errors.Add("ArtifactGeneratedUtcFuture:" + label);
+            }
         }
 
         static bool HasOfficialSource(string source)

@@ -15,17 +15,21 @@ namespace Hairibar.Ragdoll.Animation.Tests
         [UnityTest]
         public IEnumerator J03_PlayModeRunExecutesInitializedRuntimeAssembly()
         {
-            GameObject owner = new GameObject("J03 Runtime Evidence");
+            RagdollAnimationProfile profile =
+                ScriptableObject.CreateInstance<RagdollAnimationProfile>();
             try
             {
-                RagdollCollisionHub hub = owner.AddComponent<RagdollCollisionHub>();
                 yield return null;
-                Assert.That(hub, Is.Not.Null);
-                Assert.That(hub.isActiveAndEnabled, Is.True);
+                BoneProfile bone = profile.GetBoneProfile(
+                    new BoneName("J03 Runtime Evidence"), true);
+                Assert.That(float.IsNaN(bone.positionAlpha), Is.False);
+                Assert.That(float.IsNaN(bone.rotationAlpha), Is.False);
+                Assert.That(bone.PositionPinWeight,
+                    Is.InRange(0f, 1f));
             }
             finally
             {
-                Object.DestroyImmediate(owner);
+                Object.DestroyImmediate(profile);
             }
         }
     }

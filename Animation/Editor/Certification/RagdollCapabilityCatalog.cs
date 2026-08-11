@@ -75,6 +75,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
         const string Creation = "http://www.root-motion.com/puppetmasterdox/html/page1.html";
         const string Editing = "http://www.root-motion.com/puppetmasterdox/html/page2.html";
         const string Setup = "http://www.root-motion.com/puppetmasterdox/html/page4.html";
+        const string PuppetMasterComponent = "http://www.root-motion.com/puppetmasterdox/html/page5.html";
         const string PuppetMaster = "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html";
         const string Behaviours = "http://www.root-motion.com/puppetmasterdox/html/page9.html";
         const string BehaviourPuppet = "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_behaviour_puppet.html";
@@ -147,7 +148,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 S("angularPinning", "Angular pinning can operate independently of muscle drive and linear pinning.", "AngularPinning; MasterPinWeight; MasterMuscleWeight"),
                 S("UpdateJointAnchors", "Runtime anchor updates commit on a physics boundary and restore the authored anchor snapshot.", "UpdateJointAnchors; ConfigurableJoint.anchor; connectedAnchor"),
                 S("mapping translation", "Animated local translation is mapped with authored offsets without overwriting mapped rotation.", "RagdollMuscle.Mapping; AnimatedTarget"),
-                S("angular limits", "Global and per-muscle angular-limit control update physical joints and restore the prior policy.", "SetAngularLimits; ConfigurableJoint"),
+                S("angular limits", "PuppetMaster.angularLimits is represented by RagdollAnimator.AngularLimits; it and SetAngularLimitsManual update every physical joint, preserve explicit manual ownership and restore each joint's distinct authored angular motions.", "RagdollAnimator.AngularLimits; RagdollAnimator.SetAngularLimitsManual; ConfigurableJoint"),
                 S("internal collisions", "Global and per-muscle internal-collision control updates ignores and restores the authored collision state.", "SetInternalCollisions; Physics.IgnoreCollision"),
                 S("muscle properties", "Weights can be assigned independently by muscle, group and recursive branch without affecting unrelated muscles.", "SetMuscleWeights; SetGroupWeights; SetBranchWeights"),
                 S("Humanoid config", "A semantic Humanoid profile is shareable by two compatible valid Avatars without name-based binding.", "RagdollHumanoidProfile; Avatar"),
@@ -158,8 +159,9 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 S("disconnect and reconnect", "Disconnect and reconnect preserve an explicit unmapped state and resolve the nearest continuous ancestor on reconnection.", "DisconnectMuscle; ReconnectMuscle"),
                 S("joint break", "A real PhysX joint break invalidates the affected physical connection once and emits one hierarchy notification.", "OnJointBreak; RagdollMuscleHandle"),
                 S("flat hierarchy", "Runtime flat/tree conversion preserves topology, connected bodies and pose and reports every root-inclusive muscle.", "FlattenHierarchy; RestoreHierarchy; HierarchyIsFlat"),
-                S("visualize target pose", "Runtime visualization renders the current Target pose and bindings without changing simulation state.", "RagdollTargetPoseVisualizer"),
+                S(PuppetMasterComponent + "; " + Performance, "visualizeTargetPose", "In the Editor only, TargetPoseVisualizer observes and renders the current Target pose as green lines using physical connectedBody topology without changing Target, Rigidbody, joint or simulation state; its Player implementation is a no-op and its optional leaf marker is explicitly Hairibar design.", "Hairibar.Ragdoll.Animation.Debug.TargetPoseVisualizer; TargetPoseVisualizer.TryGetSnapshot; TargetPoseVisualizer.LastDrawnSegmentCount"),
             });
+            ReplaceEvidence(result, "B30", RagdollEvidenceKind.NUnitEditMode);
 
             Add(result, "C", Behaviours, RagdollEvidenceKind.NUnitPlayMode, new[]
             {
@@ -354,6 +356,19 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 .Concat(additional)
                 .Distinct()
                 .ToArray();
+            contracts[index] = C(current.Id, current.OfficialSource,
+                current.SourceLocator, current.ObservableClaim,
+                current.AffectedApis, evidence);
+        }
+
+        static void ReplaceEvidence(
+            List<RagdollCapabilityContract> contracts,
+            string id,
+            params RagdollEvidenceKind[] evidence)
+        {
+            int index = contracts.FindIndex(contract => contract.Id == id);
+            if (index < 0) throw new InvalidOperationException("Unknown contract " + id + ".");
+            RagdollCapabilityContract current = contracts[index];
             contracts[index] = C(current.Id, current.OfficialSource,
                 current.SourceLocator, current.ObservableClaim,
                 current.AffectedApis, evidence);

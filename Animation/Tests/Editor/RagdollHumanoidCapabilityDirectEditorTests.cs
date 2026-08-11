@@ -56,15 +56,20 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
             var required = new Dictionary<HumanBodyBones, Transform>
             {
                 { HumanBodyBones.Hips, references.hips },
+                { HumanBodyBones.Spine, references.spine },
                 { HumanBodyBones.Head, references.head },
                 { HumanBodyBones.LeftUpperArm, references.leftUpperArm },
                 { HumanBodyBones.LeftLowerArm, references.leftLowerArm },
+                { HumanBodyBones.LeftHand, references.leftHand },
                 { HumanBodyBones.RightUpperArm, references.rightUpperArm },
                 { HumanBodyBones.RightLowerArm, references.rightLowerArm },
+                { HumanBodyBones.RightHand, references.rightHand },
                 { HumanBodyBones.LeftUpperLeg, references.leftUpperLeg },
                 { HumanBodyBones.LeftLowerLeg, references.leftLowerLeg },
+                { HumanBodyBones.LeftFoot, references.leftFoot },
                 { HumanBodyBones.RightUpperLeg, references.rightUpperLeg },
-                { HumanBodyBones.RightLowerLeg, references.rightLowerLeg }
+                { HumanBodyBones.RightLowerLeg, references.rightLowerLeg },
+                { HumanBodyBones.RightFoot, references.rightFoot }
             };
             foreach (KeyValuePair<HumanBodyBones, Transform> pair in required)
             {
@@ -73,6 +78,10 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
             }
             Assert.That(required.Values.Distinct().Count(),
                 Is.EqualTo(required.Count));
+            Transform expectedChest = animator.GetBoneTransform(HumanBodyBones.Chest)
+                ? animator.GetBoneTransform(HumanBodyBones.Chest)
+                : animator.GetBoneTransform(HumanBodyBones.UpperChest);
+            Assert.That(references.chest, Is.SameAs(expectedChest));
 
             int renameIndex = 0;
             foreach (Transform bone in references.EnumerateAll())
@@ -108,8 +117,8 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
             Animator animator = InstantiateHumanoid();
             Transform hips = animator.GetBoneTransform(HumanBodyBones.Hips);
             Transform spine = animator.GetBoneTransform(HumanBodyBones.Spine);
-            hips.name = "Alternate_Hips_NoNameMatch";
-            spine.name = "Alternate_Spine_NoNameMatch";
+            Assert.That(hips.name, Is.Not.EqualTo("Root"));
+            Assert.That(spine.name, Is.Not.EqualTo("Child"));
             hips.localRotation *= Quaternion.Euler(13f, -21f, 8f);
             spine.localRotation *= Quaternion.Euler(-9f, 17f, 5f);
             Quaternion hipsAuthored = hips.localRotation;
@@ -136,6 +145,9 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
                 Is.LessThan(0.001f));
             Assert.That(Quaternion.Angle(spine.localRotation, spineAuthored),
                 Is.LessThan(0.001f));
+            Transform committedTarget = result.Target;
+            RagdollTargetBindings committedBindings =
+                result.Animator.TargetBindings;
 
             GameObject invalid = Own(new GameObject("Non Humanoid Target"));
             invalid.layer = 6;
@@ -155,6 +167,14 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
             Assert.That(invalid.layer, Is.EqualTo(6));
             Assert.That(Physics.GetIgnoreLayerCollision(28, 29),
                 Is.EqualTo(alternateIgnoredBefore));
+            Assert.That(result.Target, Is.SameAs(committedTarget));
+            Assert.That(result.Target, Is.SameAs(animator.transform));
+            Assert.That(result.Animator.TargetBindings,
+                Is.SameAs(committedBindings));
+            Assert.That(committedBindings.TryGetBinding(
+                new BoneName("Root"), out RagdollTargetBinding retainedRoot),
+                Is.True);
+            Assert.That(retainedRoot.Target, Is.SameAs(hips));
         }
 
         [Test]
@@ -165,10 +185,21 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
                 GeneratedRoot + "/HairibarCertificationLocomotion.anim");
             AnimationClip output = BakeClip(animator, source, "_I02", true);
             EditorCurveBinding[] bindings = AnimationUtility.GetCurveBindings(output);
+            Assert.That(output.humanMotion, Is.True,
+                "The committed output must remain a Unity Humanoid clip.");
+            Assert.That(output.legacy, Is.False);
+            Assert.That(AnimationUtility.GetObjectReferenceCurveBindings(output),
+                Is.Empty);
             Assert.That(bindings.Any(value => value.type == typeof(Animator)
                 && HumanTrait.MuscleName.Contains(value.propertyName)), Is.True);
-            Assert.That(bindings.Any(value => value.propertyName == "RootT.x"),
-                Is.True);
+            AssertAnimatorCurve(output, "RootT.x", true);
+            AssertAnimatorCurve(output, "RootT.y", true);
+            AssertAnimatorCurve(output, "RootT.z", true);
+            AssertAnimatorCurve(output, "RootQ.x", true);
+            AssertAnimatorCurve(output, "RootQ.y", true);
+            AssertAnimatorCurve(output, "RootQ.z", true);
+            AssertAnimatorCurve(output, "RootQ.w", true);
+            AssertAllFloatCurvesFinite(output);
 
             using (HumanPoseHandler handler = new HumanPoseHandler(
                 animator.avatar, animator.avatarRoot))
@@ -213,17 +244,18 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
             AnimationClip withHands = BakeClip(animator, source, "_I08Hands", true);
             string[] properties = AnimationUtility.GetCurveBindings(withHands)
                 .Select(value => value.propertyName).ToArray();
-            AssertGoal(properties, "LeftFoot");
-            AssertGoal(properties, "RightFoot");
-            AssertGoal(properties, "LeftHand");
-            AssertGoal(properties, "RightHand");
+            AssertGoal(withHands, properties, "LeftFoot");
+            AssertGoal(withHands, properties, "RightFoot");
+            AssertGoal(withHands, properties, "LeftHand");
+            AssertGoal(withHands, properties, "RightHand");
+            AssertAllFloatCurvesFinite(withHands);
 
             AnimationClip withoutHands =
                 BakeClip(animator, source, "_I08FeetOnly", false);
             string[] feetOnly = AnimationUtility.GetCurveBindings(withoutHands)
                 .Select(value => value.propertyName).ToArray();
-            AssertGoal(feetOnly, "LeftFoot");
-            AssertGoal(feetOnly, "RightFoot");
+            AssertGoal(withoutHands, feetOnly, "LeftFoot");
+            AssertGoal(withoutHands, feetOnly, "RightFoot");
             Assert.That(feetOnly.Any(value => value.StartsWith("LeftHand")),
                 Is.False);
             Assert.That(feetOnly.Any(value => value.StartsWith("RightHand")),
@@ -234,6 +266,105 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
         public void I09_MultilayerControllerBakeCommitsRootAndUpperBodyAndRetargets()
         {
             Animator first = InstantiateHumanoid();
+            Assert.That(first.layerCount, Is.GreaterThanOrEqualTo(2));
+            first.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+            first.Rebind();
+            first.Update(0f);
+            first.SetLayerWeight(1, 1f);
+            AnimationClip upperSource = Load<AnimationClip>(
+                GeneratedRoot + "/HairibarCertificationUpperBody.anim");
+            string armMuscle = HumanTrait.MuscleName.First(value =>
+                value.IndexOf(
+                    "Left Arm",
+                    StringComparison.OrdinalIgnoreCase) >= 0);
+            AnimationCurve upperArmCurve = AnimationUtility.GetEditorCurve(
+                upperSource,
+                EditorCurveBinding.FloatCurve(
+                    string.Empty, typeof(Animator), armMuscle));
+            Assert.That(upperSource.humanMotion, Is.True);
+            Assert.That(upperArmCurve, Is.Not.Null);
+            Assert.That(CurveRange(upperArmCurve), Is.GreaterThan(0.5f),
+                "The certification upper-body source itself is not variable.");
+
+            Animator directClipProbe = InstantiateHumanoid();
+            directClipProbe.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+            directClipProbe.enabled = false;
+            Transform directArm = directClipProbe.GetBoneTransform(
+                HumanBodyBones.LeftUpperArm);
+            float directInitialMuscle;
+            float directAdvancedMuscle;
+            Quaternion directInitialRotation;
+            Quaternion directAdvancedRotation;
+            int armMuscleIndex = Array.IndexOf(
+                HumanTrait.MuscleName, armMuscle);
+            Assert.That(armMuscleIndex, Is.GreaterThanOrEqualTo(0));
+            using (HumanPoseHandler directHandler = new HumanPoseHandler(
+                directClipProbe.avatar, directClipProbe.avatarRoot))
+            {
+                HumanPose directPose = new HumanPose();
+                upperSource.SampleAnimation(directClipProbe.gameObject, 0f);
+                directHandler.GetHumanPose(ref directPose);
+                directInitialMuscle = directPose.muscles[armMuscleIndex];
+                directInitialRotation = directArm.localRotation;
+                upperSource.SampleAnimation(
+                    directClipProbe.gameObject, upperSource.length * 0.5f);
+                directHandler.GetHumanPose(ref directPose);
+                directAdvancedMuscle = directPose.muscles[armMuscleIndex];
+                directAdvancedRotation = directArm.localRotation;
+            }
+            Assert.That(Mathf.Abs(
+                    directAdvancedMuscle - directInitialMuscle),
+                Is.GreaterThan(0.05f),
+                "Unity did not evaluate the generated Humanoid muscle curve "
+                + "when the source clip was sampled directly.");
+            Assert.That(Quaternion.Angle(
+                    directInitialRotation, directAdvancedRotation),
+                Is.GreaterThan(0.05f),
+                "The directly sampled Humanoid source did not move LeftUpperArm.");
+
+            first.Play("Locomotion", 0, 0f);
+            first.Play("Waving", 1, 0f);
+            first.Update(0f);
+            AnimatorStateInfo upperState =
+                first.GetCurrentAnimatorStateInfo(1);
+            Assert.That(upperState.IsName("Waving"),
+                Is.True,
+                "Layer 1 did not enter the real upper-body state.");
+            Assert.That(first.GetLayerWeight(1),
+                Is.EqualTo(1f).Within(0.0001f));
+            Assert.That(upperState.length,
+                Is.EqualTo(upperSource.length).Within(0.001f),
+                "Layer 1 is not evaluating the generated upper-body motion.");
+            Transform controllerArm = first.GetBoneTransform(
+                HumanBodyBones.LeftUpperArm);
+            Quaternion controllerInitialRotation = controllerArm.localRotation;
+            float initialArm;
+            float advancedArm;
+            using (HumanPoseHandler poseHandler = new HumanPoseHandler(
+                first.avatar, first.avatarRoot))
+            {
+                HumanPose pose = new HumanPose();
+                poseHandler.GetHumanPose(ref pose);
+                initialArm = pose.muscles[armMuscleIndex];
+                first.Update(upperSource.length * 0.5f);
+                poseHandler.GetHumanPose(ref pose);
+                advancedArm = pose.muscles[armMuscleIndex];
+            }
+            Assert.That(Quaternion.Angle(
+                    controllerInitialRotation, controllerArm.localRotation),
+                Is.GreaterThan(0.05f),
+                "The effective layer state and weight did not move LeftUpperArm.");
+            Assert.That(Mathf.Abs(advancedArm - initialArm),
+                Is.GreaterThan(0.05f),
+                "The real AnimatorController/AvatarMask did not produce an "
+                + "observable upper-body Humanoid pose before Baker ran.");
+
+            first.Play("Locomotion", 0, 0f);
+            first.Play("Waving", 1, 0f);
+            first.Update(0f);
+            HumanoidEditorAnimationEventProbe eventProbe =
+                first.GetComponent<HumanoidEditorAnimationEventProbe>();
+            int eventsBeforeBake = eventProbe.Count;
             RagdollHumanoidBaker baker =
                 first.gameObject.AddComponent<RagdollHumanoidBaker>();
             baker.mode = RagdollBakerMode.AnimationStates;
@@ -247,24 +378,36 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
             Assert.That(RagdollBakerSessionManager.RunBatchImmediately(
                 baker, out error), Is.True, error);
             Assert.That(baker.LastResult.Succeeded, Is.True, baker.LastResult.Error);
+            Assert.That(eventProbe.Count, Is.GreaterThan(eventsBeforeBake),
+                "The base-state AnimationEvent must be evaluated by the real "
+                + "AnimatorController during the state bake.");
             AnimationClip output = AssetDatabase.LoadAssetAtPath<AnimationClip>(
                 OutputRoot + "/Locomotion_I09.anim");
             Assert.That(output, Is.Not.Null);
             string[] properties = AnimationUtility.GetCurveBindings(output)
                 .Select(value => value.propertyName).ToArray();
             Assert.That(properties, Does.Contain("RootT.x"));
-            Assert.That(properties.Any(value =>
-                value.IndexOf("Arm", StringComparison.OrdinalIgnoreCase) >= 0),
-                Is.True, "The upper-body layer produced no recorded arm muscle.");
+            string varyingArmCurve = FindVaryingMuscleCurve(output, "Arm");
+            Assert.That(varyingArmCurve, Is.Not.Null.And.Not.Empty,
+                "The upper-body layer must affect an arm muscle over time; "
+                + "the mere presence of a recorder-created binding is not evidence "
+                + "that the layer was evaluated.");
+            AssertAllFloatCurvesFinite(output);
 
             Animator second = InstantiateHumanoid();
             Transform secondHips = second.GetBoneTransform(HumanBodyBones.Hips);
+            Transform secondArm = second.GetBoneTransform(
+                HumanBodyBones.LeftUpperArm);
             second.enabled = false;
             Quaternion before = secondHips.localRotation;
+            Quaternion armBefore = secondArm.localRotation;
             output.SampleAnimation(second.gameObject, output.length * 0.6f);
             Assert.That(Quaternion.Angle(before, secondHips.localRotation),
                 Is.GreaterThan(0.001f),
                 "The committed Humanoid clip did not retarget to a second Avatar.");
+            Assert.That(Quaternion.Angle(armBefore, secondArm.localRotation),
+                Is.GreaterThan(0.001f),
+                "The recorded upper-body result did not retarget to the second Avatar.");
             Assert.That(AnimationUtility.GetAnimationEvents(
                 Load<AnimationClip>(GeneratedRoot
                     + "/HairibarCertificationLocomotion.anim")),
@@ -308,12 +451,118 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
             baker.saveToFolder = OutputRoot;
         }
 
-        static void AssertGoal(IEnumerable<string> properties, string goal)
+        static void AssertGoal(
+            AnimationClip clip,
+            IEnumerable<string> properties,
+            string goal)
         {
             Assert.That(properties, Does.Contain(goal + "T.x"));
             Assert.That(properties, Does.Contain(goal + "T.y"));
             Assert.That(properties, Does.Contain(goal + "T.z"));
+            Assert.That(properties, Does.Contain(goal + "Q.x"));
+            Assert.That(properties, Does.Contain(goal + "Q.y"));
+            Assert.That(properties, Does.Contain(goal + "Q.z"));
             Assert.That(properties, Does.Contain(goal + "Q.w"));
+            AssertAnimatorCurve(clip, goal + "T.x", true);
+            AssertAnimatorCurve(clip, goal + "T.y", true);
+            AssertAnimatorCurve(clip, goal + "T.z", true);
+            AssertAnimatorCurve(clip, goal + "Q.x", true);
+            AssertAnimatorCurve(clip, goal + "Q.y", true);
+            AssertAnimatorCurve(clip, goal + "Q.z", true);
+            AssertAnimatorCurve(clip, goal + "Q.w", true);
+        }
+
+        static void AssertAnimatorCurve(
+            AnimationClip clip,
+            string property,
+            bool requireEndpoints)
+        {
+            EditorCurveBinding binding = EditorCurveBinding.FloatCurve(
+                string.Empty, typeof(Animator), property);
+            AnimationCurve curve = AnimationUtility.GetEditorCurve(clip, binding);
+            Assert.That(curve, Is.Not.Null, property);
+            Assert.That(curve.length, Is.GreaterThanOrEqualTo(
+                requireEndpoints && clip.length > 0f ? 2 : 1), property);
+            Keyframe[] keys = curve.keys;
+            for (int index = 0; index < keys.Length; index++)
+            {
+                Assert.That(IsFinite(keys[index].time), Is.True,
+                    property + " key time " + index);
+                Assert.That(IsFinite(keys[index].value), Is.True,
+                    property + " key value " + index);
+            }
+            if (!requireEndpoints || clip.length <= 0f) return;
+            Assert.That(keys[0].time, Is.EqualTo(0f).Within(0.00001f), property);
+            Assert.That(keys[keys.Length - 1].time,
+                Is.EqualTo(clip.length).Within(0.0001f), property);
+        }
+
+        static void AssertAllFloatCurvesFinite(AnimationClip clip)
+        {
+            EditorCurveBinding[] bindings = AnimationUtility.GetCurveBindings(clip);
+            Assert.That(bindings, Is.Not.Empty);
+            for (int bindingIndex = 0;
+                bindingIndex < bindings.Length;
+                bindingIndex++)
+            {
+                AnimationCurve curve = AnimationUtility.GetEditorCurve(
+                    clip, bindings[bindingIndex]);
+                Assert.That(curve, Is.Not.Null, bindings[bindingIndex].propertyName);
+                Keyframe[] keys = curve.keys;
+                Assert.That(keys, Is.Not.Empty, bindings[bindingIndex].propertyName);
+                for (int keyIndex = 0; keyIndex < keys.Length; keyIndex++)
+                {
+                    Assert.That(IsFinite(keys[keyIndex].time), Is.True,
+                        bindings[bindingIndex].propertyName + " time " + keyIndex);
+                    Assert.That(IsFinite(keys[keyIndex].value), Is.True,
+                        bindings[bindingIndex].propertyName + " value " + keyIndex);
+                }
+            }
+        }
+
+        static string FindVaryingMuscleCurve(
+            AnimationClip clip,
+            string semanticToken)
+        {
+            EditorCurveBinding[] bindings = AnimationUtility.GetCurveBindings(clip);
+            for (int index = 0; index < bindings.Length; index++)
+            {
+                EditorCurveBinding binding = bindings[index];
+                if (binding.type != typeof(Animator)
+                    || !HumanTrait.MuscleName.Contains(binding.propertyName)
+                    || binding.propertyName.IndexOf(
+                        semanticToken,
+                        StringComparison.OrdinalIgnoreCase) < 0)
+                {
+                    continue;
+                }
+
+                AnimationCurve curve = AnimationUtility.GetEditorCurve(clip, binding);
+                if (curve == null || curve.length < 2) continue;
+                float minimum = curve.keys[0].value;
+                float maximum = minimum;
+                for (int keyIndex = 1; keyIndex < curve.length; keyIndex++)
+                {
+                    minimum = Mathf.Min(minimum, curve.keys[keyIndex].value);
+                    maximum = Mathf.Max(maximum, curve.keys[keyIndex].value);
+                }
+                if (maximum - minimum > 0.0001f) return binding.propertyName;
+            }
+            return string.Empty;
+        }
+
+        static float CurveRange(AnimationCurve curve)
+        {
+            if (curve == null || curve.length == 0) return 0f;
+            Keyframe[] keys = curve.keys;
+            float minimum = keys[0].value;
+            float maximum = minimum;
+            for (int index = 1; index < keys.Length; index++)
+            {
+                minimum = Mathf.Min(minimum, keys[index].value);
+                maximum = Mathf.Max(maximum, keys[index].value);
+            }
+            return maximum - minimum;
         }
 
         Animator InstantiateHumanoid()
@@ -323,6 +572,8 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
             Animator animator = value.GetComponentInChildren<Animator>(true);
             Assert.That(animator && animator.avatar && animator.avatar.isValid
                 && animator.avatar.isHuman, Is.True);
+            if (!animator.GetComponent<HumanoidEditorAnimationEventProbe>())
+                animator.gameObject.AddComponent<HumanoidEditorAnimationEventProbe>();
             return animator;
         }
 
@@ -358,6 +609,16 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
         {
             Assert.That(AssetDatabase.IsValidFolder(RuntimeRoot), Is.True,
                 "Run HairibarCertification.PrepareAssets before certification tests.");
+        }
+    }
+
+    public sealed class HumanoidEditorAnimationEventProbe : MonoBehaviour
+    {
+        public int Count { get; private set; }
+
+        public void OnHairibarCertificationAnimationEvent()
+        {
+            Count++;
         }
     }
 }

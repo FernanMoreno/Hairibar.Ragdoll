@@ -4,23 +4,69 @@ using UnityEngine;
 namespace Hairibar.Ragdoll.Animation.Debug
 {
     /// <summary>
-    /// Draws the animated pose that the RagdollAnimator has read this frame. Not suitable for Release.
+    /// Draws, in the Unity Editor only, the animated Target pose read by the
+    /// RagdollAnimator. Player builds retain the component contract but execute
+    /// no visualization work, matching PuppetMaster's documented profiling rule.
     /// </summary>
     [AddComponentMenu("Ragdoll/Target Pose Visualizer")]
     [RequireComponent(typeof(RagdollAnimator))]
-    public class TargetPoseVisualizer : MonoBehaviour, ITargetPoseModifier
+    public class TargetPoseVisualizer : MonoBehaviour
+#if UNITY_EDITOR
+        , ITargetPoseModifier
+#endif
     {
         #region Inspector
         [Header("Visual Style")]
-        public Color boneColor = Color.red;
+        public Color boneColor = Color.green;
+        [Tooltip("Hairibar-only leaf direction marker; the documented Target-pose segments remain green by default.")]
         public Color leafBoneColor = Color.yellow;
         [Range(0, 1)] public float leafBoneLength = 0.2f;
         #endregion
 
-        Dictionary<Transform, Bone> bones = null;
+#if UNITY_EDITOR
+        Dictionary<Transform, Bone> bones;
+        int lastDrawnSegmentCount;
+#endif
 
-        public bool IsInitialized => bones != null;
-        public int BindingCount => bones?.Count ?? 0;
+        public bool IsInitialized
+        {
+            get
+            {
+#if UNITY_EDITOR
+                return bones != null;
+#else
+                return false;
+#endif
+            }
+        }
+
+        public int BindingCount
+        {
+            get
+            {
+#if UNITY_EDITOR
+                return bones?.Count ?? 0;
+#else
+                return 0;
+#endif
+            }
+        }
+
+        /// <summary>
+        /// Number of parent-to-child segments submitted to Debug.DrawLine by
+        /// the last Editor pose pass. Always zero in a Player build.
+        /// </summary>
+        public int LastDrawnSegmentCount
+        {
+            get
+            {
+#if UNITY_EDITOR
+                return lastDrawnSegmentCount;
+#else
+                return 0;
+#endif
+            }
+        }
 
         /// <summary>
         /// Returns the last pose observed for one physical binding. This is a
@@ -38,6 +84,7 @@ namespace Hairibar.Ragdoll.Animation.Debug
             worldPosition = Vector3.zero;
             worldRotation = Quaternion.identity;
             isLeaf = false;
+#if UNITY_EDITOR
             Bone bone;
             if (bones == null || !ragdollBone
                 || !bones.TryGetValue(ragdollBone, out bone))
@@ -47,19 +94,29 @@ namespace Hairibar.Ragdoll.Animation.Debug
             worldRotation = bone.lastReadRotation;
             isLeaf = bone.isLeaf;
             return true;
+#else
+            return false;
+#endif
         }
 
 
         public void ModifyPose(IEnumerable<RagdollAnimator.AnimatedPair> pairs)
         {
+#if UNITY_EDITOR
+            if (bones == null)
+                throw new System.InvalidOperationException(
+                    "TargetPoseVisualizer must be initialized before it draws.");
             ReadAnimatedPose(pairs);
 
+            lastDrawnSegmentCount = 0;
             foreach (Bone bone in bones.Values)
             {
                 DrawBone(bone);
             }
+#endif
         }
 
+#if UNITY_EDITOR
         void ReadAnimatedPose(IEnumerable<RagdollAnimator.AnimatedPair> pairs)
         {
             foreach (RagdollAnimator.AnimatedPair pair in pairs)
@@ -81,13 +138,16 @@ namespace Hairibar.Ragdoll.Animation.Debug
             if (!bones.TryGetValue(bone.parent, out parent)) return;
 
             UnityEngine.Debug.DrawLine(parent.lastReadPosition, bone.lastReadPosition, boneColor);
+            lastDrawnSegmentCount++;
 
             if (bone.isLeaf) UnityEngine.Debug.DrawLine(bone.lastReadPosition, bone.lastReadPosition + bone.lastReadRotation * Vector3.up * leafBoneLength, leafBoneColor);
         }
+#endif
 
 
         public void Initialize(IEnumerable<RagdollAnimator.AnimatedPair> pairs)
         {
+#if UNITY_EDITOR
             if (pairs == null)
                 throw new System.ArgumentNullException(nameof(pairs));
             bones = new Dictionary<Transform, Bone>();
@@ -126,9 +186,10 @@ namespace Hairibar.Ragdoll.Animation.Debug
                 if (bone.parent && bones.TryGetValue(bone.parent, out parent))
                     parent.isLeaf = false;
             }
+#endif
         }
 
-
+#if UNITY_EDITOR
         class Bone
         {
             public Transform transform;
@@ -139,5 +200,6 @@ namespace Hairibar.Ragdoll.Animation.Debug
             public Vector3 lastReadPosition;
             public Quaternion lastReadRotation;
         }
+#endif
     }
 }

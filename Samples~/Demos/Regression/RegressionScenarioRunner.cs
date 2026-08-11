@@ -159,13 +159,21 @@ namespace Hairibar.Ragdoll.Demo
             public long memoryMedianBytes;
             public long memoryP95Bytes;
             public long maximumGcAllocatedInFrame;
+            public int measuredFrames;
+            [NonSerialized] public long[] cpuSamplesNanoseconds;
+            [NonSerialized] public long[] memorySamplesBytes;
         }
 
         [Serializable]
         sealed class ScenarioAssertion
         {
+            public string id;
             public string name;
             public bool succeeded;
+            public string comparison;
+            public double actual;
+            public double expected;
+            public double tolerance;
         }
 
         [Serializable]
@@ -189,7 +197,10 @@ namespace Hairibar.Ragdoll.Demo
         [Serializable]
         sealed class CertificationResult
         {
-            public int schemaVersion = 2;
+            public int schemaVersion = 3;
+            public string certificationRunId;
+            public string sourceRevision;
+            public string sourceTreeSha256;
             public string unityVersion;
             public string platform;
             public bool succeeded;
@@ -199,7 +210,10 @@ namespace Hairibar.Ragdoll.Demo
         [Serializable]
         sealed class SceneEvidence
         {
-            public int schemaVersion = 2;
+            public int schemaVersion = 3;
+            public string certificationRunId;
+            public string sourceRevision;
+            public string sourceTreeSha256;
             public bool succeeded;
             public ScenarioResult[] scenes;
         }
@@ -209,6 +223,8 @@ namespace Hairibar.Ragdoll.Demo
         {
             public double median;
             public double p95;
+            public int sampleCount;
+            public double[] rawSamples;
         }
 
         [Serializable]
@@ -220,12 +236,18 @@ namespace Hairibar.Ragdoll.Demo
             public int samples;
             public long gcAllocatedBytes;
             public long maxGcAllocatedBytesInFrame;
+            public long[] rawAllocationSamples;
+            [NonSerialized] public readonly List<long> sampleBuffer =
+                new List<long>(MeasurementFrames);
         }
 
         [Serializable]
         sealed class ProfilerEvidence
         {
-            public int schemaVersion = 2;
+            public int schemaVersion = 3;
+            public string certificationRunId;
+            public string sourceRevision;
+            public string sourceTreeSha256;
             public bool succeeded;
             public int warmupFrames;
             public int measuredFrames;
@@ -364,7 +386,9 @@ namespace Hairibar.Ragdoll.Demo
                 float initialHeight = bodies[0].position.y;
                 WaitForFixedUpdate fixedUpdate = new WaitForFixedUpdate();
                 for (int frame = 0; frame < 90; frame++) yield return fixedUpdate;
-                Require(result, bodies[0].position.y < initialHeight - 0.25f,
+                RequireSemantic(result, bodies[0].position.y < initialHeight - 0.25f,
+                    "core.physx-fall-distance", initialHeight - bodies[0].position.y,
+                    0.25d, "GreaterOrEqual",
                     "The real puppet did not fall onto the static ground.");
                 RequireFinite(result, bodies);
 
@@ -387,7 +411,9 @@ namespace Hairibar.Ragdoll.Demo
                 for (int frame = 0; frame < 12; frame++)
                     yield return fixedUpdate;
                 rig.Setup.PuppetBehaviour.CollisionObserved -= observed;
-                Require(result, observedContacts > 0,
+                RequireSemantic(result, observedContacts > 0,
+                    "core.saturated-contact-count", observedContacts, 1d,
+                    "GreaterOrEqual",
                     "Saturated real PhysX contacts produced no observed collision.");
                 RequireFinite(result, bodies);
 
@@ -522,8 +548,11 @@ namespace Hairibar.Ragdoll.Demo
                 Vector3 respawn = new Vector3(2f, 4f, -1f);
                 rig.Setup.PuppetBehaviour.Respawn(
                     respawn, Quaternion.Euler(0f, 35f, 0f));
-                Require(result, Vector3.Distance(
-                    rig.Setup.Target.position, respawn) < 0.001f,
+                double respawnError = Vector3.Distance(
+                    rig.Setup.Target.position, respawn);
+                RequireSemantic(result, respawnError < 0.001f,
+                    "core.respawn-position-error", respawnError, 0d,
+                    "Approximately", 0.001d,
                     "Respawn did not move the Target atomically.");
                 Require(result, VelocitiesAreZero(bodies),
                     "Respawn left muscle velocity behind.");
@@ -579,8 +608,11 @@ namespace Hairibar.Ragdoll.Demo
                         "Manual-simulation teleport was not consumed during prepare.");
                     Physics.Simulate(0.02f);
                     rig.Setup.Animator.OnPostSimulate();
-                    Require(result,
+                    RequireSemantic(result,
                         !rig.Setup.Animator.IsManualSimulationPrepared,
+                        "core.manual-simulation-completed",
+                        rig.Setup.Animator.IsManualSimulationPrepared ? 0d : 1d,
+                        1d, "Equal",
                         "Manual simulation did not complete.");
                 }
                 finally
@@ -604,7 +636,9 @@ namespace Hairibar.Ragdoll.Demo
                 bodies[1].AddForce(Vector3.right * 5000f, ForceMode.Impulse);
                 for (int frame = 0; frame < 120 && breakJoint; frame++)
                     yield return fixedUpdate;
-                Require(result, !breakJoint,
+                RequireSemantic(result, !breakJoint,
+                    "core.joint-break-irreversible", breakJoint ? 0d : 1d,
+                    1d, "Equal",
                     "PhysX did not produce the configured irreversible joint break.");
                 RequireFinite(result, bodies);
                 result.succeeded = string.IsNullOrEmpty(result.error);
@@ -637,7 +671,10 @@ namespace Hairibar.Ragdoll.Demo
                 Application.targetFrameRate = 120;
                 Animator a = first.GetComponentInChildren<Animator>(true);
                 Animator b = second.GetComponentInChildren<Animator>(true);
-                Require(result, IsValidHumanoid(a) && IsValidHumanoid(b),
+                int validAvatars = (IsValidHumanoid(a) ? 1 : 0)
+                    + (IsValidHumanoid(b) ? 1 : 0);
+                RequireSemantic(result, validAvatars == 2,
+                    "humanoid.valid-avatar-count", validAvatars, 2d, "Equal",
                     "Retarget fixtures are not valid Humanoid Avatars.");
                 a.runtimeAnimatorController = humanoidController;
                 b.runtimeAnimatorController = humanoidController;
@@ -653,11 +690,16 @@ namespace Hairibar.Ragdoll.Demo
                 // Awake, so the newly activated Target must cross one player-loop
                 // boundary before its initialized state can be certified.
                 yield return null;
-                Require(result, integrationRig.Fall
+                RequireSemantic(result, integrationRig.Fall
                         && integrationRig.Fall.IsInitialized,
+                    "humanoid.fall-initialized",
+                    integrationRig.Fall && integrationRig.Fall.IsInitialized ? 1d : 0d,
+                    1d, "Equal",
                     "BehaviourFall was not initialized by the real controller.");
-                Require(result, integrationRig.IKScheduler
-                        && integrationRig.IKScheduler.SolverCount == 1,
+                int solverCount = integrationRig.IKScheduler
+                    ? integrationRig.IKScheduler.SolverCount : 0;
+                RequireSemantic(result, solverCount == 1,
+                    "humanoid.ik-owned-solver-count", solverCount, 1d, "Equal",
                     "IK scheduler did not take ownership of real solver.");
                 Require(result, !integrationRig.IKSolver.AutomaticUpdates,
                     "IK scheduler did not disable solver automatic updates.");
@@ -714,10 +756,15 @@ namespace Hairibar.Ragdoll.Demo
                 while (eventReceiver.Count <= eventCountBefore
                     && Time.realtimeSinceStartup < eventDeadline)
                     yield return null;
-                Require(result, eventReceiver.Count > eventCountBefore,
+                RequireSemantic(result, eventReceiver.Count > eventCountBefore,
+                    "humanoid.animation-event-count",
+                    eventReceiver.Count - eventCountBefore, 1d, "GreaterOrEqual",
                     "The real AnimatorController did not dispatch its AnimationEvent.");
-                Require(result,
-                    Vector3.Distance(rootBefore, a.transform.position) > 0.0001f,
+                double rootMotionDistance = Vector3.Distance(
+                    rootBefore, a.transform.position);
+                RequireSemantic(result, rootMotionDistance > 0.0001f,
+                    "humanoid.root-motion-distance", rootMotionDistance,
+                    0.0001d, "GreaterOrEqual",
                     "The generated Humanoid locomotion clip did not apply root motion.");
 
                 RagdollHumanoidBaker baker = a.gameObject
@@ -769,8 +816,10 @@ namespace Hairibar.Ragdoll.Demo
                 Require(result, baker.LastResult.Status ==
                     RagdollBakerCompletionStatus.Succeeded,
                     "Stopping realtime Baker did not commit the recording.");
-                Require(result, clipRecorder.Clip
-                        && clipRecorder.Clip.length > 0f,
+                double clipLength = clipRecorder.Clip ? clipRecorder.Clip.length : 0d;
+                RequireSemantic(result, clipLength > 0f,
+                    "humanoid.baker-clip-length", clipLength, 0d,
+                    "GreaterThan",
                     "Realtime Baker recorder produced no inspectable clip.");
                 if (clipRecorder.Clip)
                 {
@@ -902,8 +951,10 @@ namespace Hairibar.Ragdoll.Demo
                 for (int frame = 0; frame < TransitionFrameLimit
                     && muscle.State != RagdollPropMuscleState.Holding; frame++)
                     yield return fixedUpdate;
-                Require(result, muscle.State == RagdollPropMuscleState.Holding
-                    && prop.IsHeld, "Prop pickup did not commit: " + muscle.State
+                RequireSemantic(result,
+                    muscle.State == RagdollPropMuscleState.Holding && prop.IsHeld,
+                    "props.pickup-held", prop.IsHeld ? 1d : 0d, 1d, "Equal",
+                    "Prop pickup did not commit: " + muscle.State
                     + " " + muscle.LastError);
                 if (muscle.State != RagdollPropMuscleState.Holding) yield break;
                 Require(result, prop.CurrentRigidbody == slotBody,
@@ -938,8 +989,9 @@ namespace Hairibar.Ragdoll.Demo
                 for (int frame = 0; frame < WarmupFrames; frame++)
                     yield return null;
                 long additionalPinMaximumGc = 0;
-                long additionalPinCriticalPathMaximumGc = 0;
-                long additionalPinCriticalPathTotalGc = 0;
+                var additionalPinPath = NewCriticalPath(
+                    "additional-pin",
+                    "RagdollPropMuscle.ApplyAdditionalPinAfterAnimationMatching");
                 string additionalPinGcName;
                 using (ProfilerRecorder additionalPinGc = StartAvailableRecorder(
                     new[] { "GC Allocated In Frame" }, out additionalPinGcName))
@@ -950,11 +1002,7 @@ namespace Hairibar.Ragdoll.Demo
                         muscle.ApplyAdditionalPinForDiagnostics();
                         long scopedAllocation =
                             GC.GetAllocatedBytesForCurrentThread() - before;
-                        additionalPinCriticalPathTotalGc += scopedAllocation;
-                        if (scopedAllocation > additionalPinCriticalPathMaximumGc)
-                        {
-                            additionalPinCriticalPathMaximumGc = scopedAllocation;
-                        }
+                        AddCriticalSample(additionalPinPath, scopedAllocation);
                         yield return null;
                         if (additionalPinGc.LastValue > additionalPinMaximumGc)
                             additionalPinMaximumGc = additionalPinGc.LastValue;
@@ -968,20 +1016,12 @@ namespace Hairibar.Ragdoll.Demo
                         + additionalPinGc.UnitType + ".");
                 }
                 result.maximumGcAllocatedInFrame = additionalPinMaximumGc;
-                Require(result, additionalPinCriticalPathMaximumGc == 0,
+                FinalizeCriticalPath(additionalPinPath);
+                Require(result, additionalPinPath.maxGcAllocatedBytesInFrame == 0,
                     "Hairibar additional-pin critical path allocated managed memory: "
-                    + additionalPinCriticalPathMaximumGc
+                    + additionalPinPath.maxGcAllocatedBytesInFrame
                     + " bytes. Whole-frame ambient maximum was "
                     + additionalPinMaximumGc + " bytes.");
-                var additionalPinPath = NewCriticalPath(
-                    "additional-pin",
-                    "RagdollPropMuscle.ApplyAdditionalPinAfterAnimationMatching");
-                additionalPinPath.samples = MeasurementFrames;
-                additionalPinPath.gcAllocatedBytes =
-                    additionalPinCriticalPathTotalGc;
-                additionalPinPath.maxGcAllocatedBytesInFrame =
-                    additionalPinCriticalPathMaximumGc;
-                FinalizeCriticalPath(additionalPinPath);
                 result.criticalPaths = new[] { additionalPinPath };
 
                 yield return fixedUpdate;
@@ -993,9 +1033,12 @@ namespace Hairibar.Ragdoll.Demo
                 RagdollHierarchyTransactionResult transaction;
                 Require(result, rig.Setup.Animator.TrySetMuscles(
                     collection, out transaction), transaction.Error);
-                Require(result, transaction.Succeeded && prop.IsHeld,
+                RequireSemantic(result, transaction.Succeeded && prop.IsHeld,
+                    "props.collection-held", prop.IsHeld ? 1d : 0d, 1d, "Equal",
                     "Collection replacement lost the held prop.");
-                Require(result, prop.AdditionalPin.Enabled,
+                RequireSemantic(result, prop.AdditionalPin.Enabled,
+                    "props.additional-pin-preserved",
+                    prop.AdditionalPin.Enabled ? 1d : 0d, 1d, "Equal",
                     "Collection replacement lost additional pin settings.");
 
                 int generation = rig.Bindings.RegistryGeneration;
@@ -1004,15 +1047,21 @@ namespace Hairibar.Ragdoll.Demo
                 Require(result, !rig.Setup.Animator.TrySetMuscles(
                     collection, out rejected),
                     "Invalid collection unexpectedly committed.");
-                Require(result, rig.Bindings.RegistryGeneration == generation
-                    && prop.IsHeld && prop.CurrentRigidbody == slotBody,
+                bool exactRollback = rig.Bindings.RegistryGeneration == generation
+                    && prop.IsHeld && prop.CurrentRigidbody == slotBody;
+                RequireSemantic(result, exactRollback,
+                    "props.rollback-exact", exactRollback ? 1d : 0d, 1d, "Equal",
                     "Rejected collection did not roll back ownership exactly.");
 
                 muscle.Drop();
                 for (int frame = 0; frame < TransitionFrameLimit
                     && muscle.State != RagdollPropMuscleState.Empty; frame++)
                     yield return fixedUpdate;
-                Require(result, muscle.State == RagdollPropMuscleState.Empty,
+                RequireSemantic(result,
+                    muscle.State == RagdollPropMuscleState.Empty,
+                    "props.drop-empty", muscle.State ==
+                        RagdollPropMuscleState.Empty ? 1d : 0d,
+                    1d, "Equal",
                     "Prop drop did not complete after hierarchy replacement.");
                 Require(result, prop.CurrentRigidbody != null && !prop.IsHeld,
                     "Drop did not restore a standalone Rigidbody.");
@@ -1110,7 +1159,10 @@ namespace Hairibar.Ragdoll.Demo
                             cpuP95Nanoseconds = Percentile(cpu, 0.95f),
                             memoryMedianBytes = Percentile(memory, 0.5f),
                             memoryP95Bytes = Percentile(memory, 0.95f),
-                            maximumGcAllocatedInFrame = maxGc
+                            maximumGcAllocatedInFrame = maxGc,
+                            measuredFrames = MeasurementFrames,
+                            cpuSamplesNanoseconds = cpu,
+                            memorySamplesBytes = memory
                         });
                         if (maxGc > result.maximumGcAllocatedInFrame)
                             result.maximumGcAllocatedInFrame = maxGc;
@@ -1119,6 +1171,16 @@ namespace Hairibar.Ragdoll.Demo
                     }
                 }
                 result.performance = measurements.ToArray();
+                rigs[0].Setup.Animator.FlattenHierarchy();
+                bool flat = rigs[0].Setup.Animator.HierarchyIsFlat();
+                RequireSemantic(result, flat, "performance.flatten-hierarchy",
+                    flat ? 1d : 0d, 1d, "Equal",
+                    "FlattenHierarchy semantic metric failed.");
+                rigs[0].Setup.Animator.TreeHierarchy();
+                bool tree = !rigs[0].Setup.Animator.HierarchyIsFlat();
+                RequireSemantic(result, tree, "performance.tree-hierarchy",
+                    tree ? 1d : 0d, 1d, "Equal",
+                    "TreeHierarchy semantic metric failed.");
                 result.succeeded = string.IsNullOrEmpty(result.error);
             }
             finally
@@ -1410,10 +1472,47 @@ namespace Hairibar.Ragdoll.Demo
         {
             result.assertionBuffer.Add(new ScenarioAssertion
             {
+                id = string.Empty,
                 name = string.IsNullOrWhiteSpace(error)
                     ? "Unnamed assertion"
                     : error,
                 succeeded = condition
+            });
+            if (!condition) Fail(result, error);
+        }
+
+        static void RequireSemantic(
+            ScenarioResult result,
+            bool condition,
+            string id,
+            double actual,
+            double expected,
+            string comparison,
+            string error)
+        {
+            RequireSemantic(result, condition, id, actual, expected,
+                comparison, 0d, error);
+        }
+
+        static void RequireSemantic(
+            ScenarioResult result,
+            bool condition,
+            string id,
+            double actual,
+            double expected,
+            string comparison,
+            double tolerance,
+            string error)
+        {
+            result.assertionBuffer.Add(new ScenarioAssertion
+            {
+                id = id,
+                name = string.IsNullOrWhiteSpace(error) ? id : error,
+                succeeded = condition,
+                comparison = comparison,
+                actual = actual,
+                expected = expected,
+                tolerance = tolerance
             });
             if (!condition) Fail(result, error);
         }
@@ -1444,6 +1543,11 @@ namespace Hairibar.Ragdoll.Demo
             }
             CertificationResult result = new CertificationResult
             {
+                certificationRunId = Provenance("HAIRIBAR_CLOSURE_RUN_ID"),
+                sourceRevision = Provenance(
+                    "HAIRIBAR_CLOSURE_SOURCE_REVISION"),
+                sourceTreeSha256 = Provenance(
+                    "HAIRIBAR_CLOSURE_SOURCE_TREE_SHA256"),
                 unityVersion = Application.unityVersion,
                 platform = CertificationPlatformName(Application.platform),
                 succeeded = succeeded,
@@ -1462,6 +1566,12 @@ namespace Hairibar.Ragdoll.Demo
             {
                 WriteJson(scenePath, new SceneEvidence
                 {
+                    certificationRunId = Provenance(
+                        "HAIRIBAR_CLOSURE_RUN_ID"),
+                    sourceRevision = Provenance(
+                        "HAIRIBAR_CLOSURE_SOURCE_REVISION"),
+                    sourceTreeSha256 = Provenance(
+                        "HAIRIBAR_CLOSURE_SOURCE_TREE_SHA256"),
                     succeeded = succeeded,
                     scenes = Results.ToArray()
                 });
@@ -1516,6 +1626,11 @@ namespace Hairibar.Ragdoll.Demo
                 complete &= paths[index].succeeded;
             return new ProfilerEvidence
             {
+                certificationRunId = Provenance("HAIRIBAR_CLOSURE_RUN_ID"),
+                sourceRevision = Provenance(
+                    "HAIRIBAR_CLOSURE_SOURCE_REVISION"),
+                sourceTreeSha256 = Provenance(
+                    "HAIRIBAR_CLOSURE_SOURCE_TREE_SHA256"),
                 succeeded = complete,
                 warmupFrames = WarmupFrames,
                 measuredFrames = MeasurementFrames,
@@ -1526,7 +1641,13 @@ namespace Hairibar.Ragdoll.Demo
                         : -1d,
                     p95 = activeTree != null
                         ? activeTree.cpuP95Nanoseconds / 1000000d
-                        : -1d
+                        : -1d,
+                    sampleCount = activeTree != null
+                        ? activeTree.measuredFrames : 0,
+                    rawSamples = activeTree != null
+                        ? Array.ConvertAll(activeTree.cpuSamplesNanoseconds,
+                            sample => sample / 1000000d)
+                        : Array.Empty<double>()
                 },
                 memoryBytes = new DistributionEvidence
                 {
@@ -1535,7 +1656,13 @@ namespace Hairibar.Ragdoll.Demo
                         : -1d,
                     p95 = activeTree != null
                         ? activeTree.memoryP95Bytes
-                        : -1d
+                        : -1d,
+                    sampleCount = activeTree != null
+                        ? activeTree.measuredFrames : 0,
+                    rawSamples = activeTree != null
+                        ? Array.ConvertAll(activeTree.memorySamplesBytes,
+                            sample => (double)sample)
+                        : Array.Empty<double>()
                 },
                 criticalPaths = paths
             };
@@ -1567,13 +1694,15 @@ namespace Hairibar.Ragdoll.Demo
                 succeeded = false,
                 samples = 0,
                 gcAllocatedBytes = 0L,
-                maxGcAllocatedBytesInFrame = 0L
+                maxGcAllocatedBytesInFrame = 0L,
+                rawAllocationSamples = Array.Empty<long>()
             };
         }
 
         static void AddCriticalSample(CriticalPathEvidence path, long bytes)
         {
             long sanitized = Math.Max(0L, bytes);
+            path.sampleBuffer.Add(sanitized);
             path.samples++;
             path.gcAllocatedBytes += sanitized;
             if (sanitized > path.maxGcAllocatedBytesInFrame)
@@ -1582,6 +1711,7 @@ namespace Hairibar.Ragdoll.Demo
 
         static void FinalizeCriticalPath(CriticalPathEvidence path)
         {
+            path.rawAllocationSamples = path.sampleBuffer.ToArray();
             path.succeeded = path.samples == MeasurementFrames
                 && path.gcAllocatedBytes == 0L
                 && path.maxGcAllocatedBytesInFrame == 0L;
@@ -1611,6 +1741,12 @@ namespace Hairibar.Ragdoll.Demo
             string directory = Path.GetDirectoryName(fullPath);
             if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
             File.WriteAllText(fullPath, JsonUtility.ToJson(value, true));
+        }
+
+        static string Provenance(string variable)
+        {
+            return Environment.GetEnvironmentVariable(variable)
+                ?? string.Empty;
         }
 
         static string CertificationPlatformName(RuntimePlatform platform)

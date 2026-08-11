@@ -242,8 +242,10 @@ aparentemente vigente.
 El Player Windows escribe observaciones separadas:
 
 - `windows-player-result.json`: las cuatro escenas y todas sus aserciones;
-- `scene-results.json`: contrato de ejecucion de escenas usado por J04;
-- `profiler-results.json`: schema 2, 120 frames de calentamiento, 600 muestras,
+- `scene-results.json`: schema 3 con IDs semánticos exactos y métricas
+  (`actual`, `expected`, comparación y tolerancia) revalidadas por J04;
+- `profiler-results.json`: schema 3, 120 frames de calentamiento, 600 muestras
+  crudas revalidadas contra mediana/p95 y agregados GC,
   mediana/p95 y GC de los seis caminos criticos.
 
 `GC Allocated In Frame` se conserva como diagnostico ambiental de cada celda, no
@@ -256,7 +258,10 @@ caminos.
 
 El Editor acepta esos archivos solo despues de validarlos. `build-manifest.json`
 se deriva de `BuildReport.summary`, `BuildReport.steps/messages`, opciones
-Development/AllowDebugging y existencia real de cada salida. El audit documental
+Development/AllowDebugging y existencia real de cada salida. Su schema 3 conserva
+el recorrido ordenado de steps/messages, sus conteos y un SHA-256 que el validador
+recalcula antes de clasificar cada diagnóstico. Provisional, validación y finalización
+registran PIDs distintos y el script rechaza reutilizar un mismo proceso. El audit documental
 incluye el hash de la guia, comprueba los simbolos publicos por reflexion y conserva
 la fuente oficial. Ningun productor escribe `succeeded=true` cuando falta una
 medicion, un contador, un output, una asercion o un simbolo.

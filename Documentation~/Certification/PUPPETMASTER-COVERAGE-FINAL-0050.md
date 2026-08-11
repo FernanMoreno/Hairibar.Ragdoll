@@ -1,16 +1,22 @@
-# Auditoría 0050 — certificación funcional reabierta
+# Auditoría 0050 — certificación funcional cerrada
 
-> El cierre anterior queda suspendido por la auditoría R01-R34. Las ejecuciones
-> históricas se conservan como evidencia, no como certificación vigente.
+> La reapertura R01-R34 queda cerrada por el manifiesto ejecutable schema 3 del
+> 2026-08-11. Las cifras anteriores se conservan debajo como historial y no se
+> usan para certificar el árbol actual.
 
-## Estado actual: certificacion reabierta
+## Estado actual: certificación vigente
 
-La auditoria R01-R34 del 2026-08-01 encontro contratos funcionales y pruebas de
-cierre que no ejercitaban la capacidad declarada. Este documento conserva la
-evidencia historica, pero no certifica cobertura completa mientras alguna
-reparacion R01-R34 o fila del manifiesto ejecutable permanezca abierta.
+El cierre se ejecutó desde un proyecto Unity limpio que referencia únicamente el
+paquete local y Unity Test Framework. El catálogo canónico contiene 140 contratos:
+139 quedaron `Verified` y G05 quedó `N/A` por la exclusión deliberada de Final IK;
+Animator IK y el contrato genérico `IRagdollIKSolver` permanecen cubiertos.
 
-Fecha de la ultima evidencia historica: 2026-08-01
+La validación final exige evidencia NUnit por ID y, donde corresponde, artefactos
+Player, escenas, profiler, BuildReport y auditoría documental unidos por el mismo
+`runId`, revisión y SHA-256 del árbol. El provisional, el auditor independiente y
+el finalizador se ejecutaron en tres procesos distintos.
+
+Fecha de la evidencia vigente: 2026-08-11
 Paquete: `com.hairibar.ragdoll` 2.0.0  
 Unity usada para validación: 6000.5.2f1
 
@@ -44,7 +50,28 @@ constantes internas ni resultado numérico con un producto de terceros.
 | 0047–0049 | Baker Generic/Legacy/Humanoid, batch, states, Director, realtime e IK/reducción separada. |
 | 0050 | Compilación real, tests acumulativos, auditoría del diff y documentación. |
 
-## Evidencia automática histórica
+## Evidencia automática vigente
+
+- El cierre se ejecuta con `Tools~/Run-HairibarClosure.ps1` sobre un proyecto
+  temporal limpio y una carpeta de salida externa al repositorio.
+- EditMode del paquete: **107/107**.
+- PlayMode del paquete: **651/651**.
+- Total limpio: **758/758**, cero fallos, omitidos o inconclusos.
+- Development builds: Windows64, Linux64, macOS y WebGL correctos; cero
+  diagnósticos propios. Windows Player fue ejecutado; los otros tres targets se
+  validaron mediante su `BuildReport` en este host Windows.
+- Escenarios ejecutados: CoreLifecycle, HumanoidBakerFall, HierarchyProps y
+  CollisionsPerformance, con 18 contratos semánticos identificados y medidos.
+- Profiler: 120 frames de warm-up y 600 muestras crudas. Matching, mapping,
+  collision relay, COM, additional pin y Baker Realtime registraron **0 B** de
+  asignación administrada en sus ámbitos medidos.
+- Matriz final: **139 Verified / 1 N/A / 0 Open**.
+- El manifiesto final guarda los SHA-256 concretos del provisional, validación,
+  XML NUnit, BuildReport, Player, escenas, profiler y auditoría documental. No se
+  duplican aquí para evitar una referencia circular entre documentación fuente y
+  artefactos ligados al hash de esa misma fuente.
+
+## Evidencia automática histórica (sustituida)
 
 - EditMode: **202/202**.
 - PlayMode: **533/533**.

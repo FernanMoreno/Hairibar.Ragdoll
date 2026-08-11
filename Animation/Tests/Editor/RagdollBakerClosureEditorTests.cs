@@ -343,8 +343,10 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
             else if (expected == RagdollBakerCompletionStatus.Failed)
                 afterSessionAttached = () => baker.SampleRequested += ThrowDirectorSample;
             string error;
-            Assert.That(RagdollBakerSessionManager.RunBatchImmediately(
-                baker, out error, afterSessionAttached), Is.True, error);
+            bool completed = RagdollBakerSessionManager.RunBatchImmediately(
+                baker, out error, afterSessionAttached);
+            Assert.That(completed, Is.EqualTo(
+                expected == RagdollBakerCompletionStatus.Succeeded), error);
 
             Assert.That(baker.LastResult.Status, Is.EqualTo(expected));
             Assert.That(director.timeUpdateMode, Is.EqualTo(originalMode));

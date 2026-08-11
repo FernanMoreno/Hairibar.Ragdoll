@@ -38,7 +38,10 @@ namespace Hairibar.Ragdoll.Animation.Tests
         {
             rig = new CoreRig();
             yield return rig.Initialize();
+            yield return new WaitForFixedUpdate();
             JointDrive authored = rig.RootJoint.slerpDrive;
+            Assert.That(authored.positionSpring, Is.GreaterThan(0f),
+                "The powered authored drive must be materialized before Kill is sampled.");
 
             rig.Animator.Kill(new RagdollLifecycleSettings(0f, 0.2f, 9f));
             yield return null;
@@ -134,7 +137,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [UnityTest]
-        public IEnumerator B19_SimulationModesRespectLifecycleOwnership()
+        public IEnumerator Legacy_SimulationModesRespectLifecycleOwnership()
         {
             rig = new CoreRig();
             yield return rig.Initialize();
@@ -153,6 +156,49 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 "Lifecycle owns simulation while Dead.");
             Assert.That(rig.Simulation.CurrentMode,
                 Is.EqualTo(RagdollSimulationMode.Active));
+        }
+
+        [UnityTest]
+        public IEnumerator B19_AngularLimitsAndManualOwnershipRestoreAuthoredJointMotions()
+        {
+            rig = new CoreRig();
+            yield return rig.Initialize();
+            // CoreRig authors three distinct motions before runtime initialization.
+            // The default global angularLimits=false may already have released them
+            // when this coroutine resumes, so the authored contract must not be
+            // recaptured from that live override.
+            ConfigurableJointMotion authoredX = ConfigurableJointMotion.Limited;
+            ConfigurableJointMotion authoredY = ConfigurableJointMotion.Locked;
+            ConfigurableJointMotion authoredZ = ConfigurableJointMotion.Limited;
+
+            rig.Animator.AngularLimits = false;
+            Assert.That(rig.ChildJoint.angularXMotion,
+                Is.EqualTo(ConfigurableJointMotion.Free));
+            Assert.That(rig.ChildJoint.angularYMotion,
+                Is.EqualTo(ConfigurableJointMotion.Free));
+            Assert.That(rig.ChildJoint.angularZMotion,
+                Is.EqualTo(ConfigurableJointMotion.Free));
+
+            rig.Animator.AngularLimits = true;
+            Assert.That(rig.ChildJoint.angularXMotion, Is.EqualTo(authoredX));
+            Assert.That(rig.ChildJoint.angularYMotion, Is.EqualTo(authoredY));
+            Assert.That(rig.ChildJoint.angularZMotion, Is.EqualTo(authoredZ));
+
+            rig.Animator.ManualAngularLimitControl = true;
+            rig.Animator.SetAngularLimitsManual(false);
+            Assert.That(rig.ChildJoint.angularXMotion,
+                Is.EqualTo(ConfigurableJointMotion.Free));
+            rig.Animator.AngularLimits = true;
+            yield return new WaitForFixedUpdate();
+            Assert.That(rig.ChildJoint.angularXMotion,
+                Is.EqualTo(ConfigurableJointMotion.Free),
+                "Automatic writes must not steal explicit manual ownership.");
+
+            rig.Animator.SetAngularLimitsManual(true);
+            Assert.That(rig.ChildJoint.angularXMotion, Is.EqualTo(authoredX));
+            Assert.That(rig.ChildJoint.angularYMotion, Is.EqualTo(authoredY));
+            Assert.That(rig.ChildJoint.angularZMotion, Is.EqualTo(authoredZ));
+            rig.Animator.ManualAngularLimitControl = false;
         }
 
         [UnityTest]

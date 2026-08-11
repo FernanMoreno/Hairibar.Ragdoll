@@ -1,14 +1,24 @@
 # R01-R34 repair register
 
-Status date: 2026-08-08. This register reopens the previous 0050 closure. A row
-may become `Verified` only when its official contract, focused regression and
-executed artifact are recorded. `In progress` is not certification.
+Status date: 2026-08-11. This is the historical register that reopened 0050 for the
+**Hairibar.Ragdoll package only**. The executable schema 3 manifest has now closed
+that reopening with 139 `Verified`, G05 as the only `N/A`, and zero open rows.
+The per-repair statuses below describe the historical remediation pass; they are
+not the current certification authority.
+
+R24-R33 were originally entered here even though they describe integration policy
+owned by the CODE RED consumer (AI, NavMesh, pooling, visuals, hit routing and
+weapons). They are preserved verbatim in the
+[consumer integration history](../Integration/CODE-RED-CONSUMER-HISTORY.md), but are
+not package requirements, package evidence or gates for the 140-row package matrix.
+Closing Hairibar.Ragdoll neither asserts nor requires completion of those consumer
+items.
 
 ## Latest executed evidence (2026-08-08)
 
-The implementation and regression work for R01-R33 is present, but this register
-deliberately remains open until R34 links every historical capability to unique
-executable evidence. The latest clean-clone execution established:
+Package implementation and regression work for R01-R23 is present, but this register
+deliberately remains open until R34 links every historical package capability to
+unique executable evidence. The latest clean-clone package execution established:
 
 - EditMode: `219/219`; SHA-256
   `ACEEC802F7D23A40A5FD66BA5EF311549B367CD2ECB8783298CA954336951565`.
@@ -57,17 +67,11 @@ observations for this run, not universal RootMotion or Hairibar thresholds.
 | R21 | Hairibar cancellation contract | Baker runtime/editor | Cancel leaves destination asset unchanged | In progress |
 | R22 | Unity PackageManager Sample import | Certification assets | Second preparation performs no import/recompile | In progress |
 | R23 | Unity BuildReport | Certification builds | Hairibar warnings fail; external warnings are reported | In progress |
-| R24 | PuppetMaster Active/Unpinned | CODE RED authority | Critical hit retains BehaviourPuppet muscle policy | In progress |
-| R25 | BehaviourPuppet `canMoveTarget` | CODE RED recovery | Pelvis/Target/actor/NavMesh continuity | In progress |
-| R26 | PuppetMaster Resurrect | CODE RED lifecycle | Alive recovery never requests resurrection | In progress |
-| R27 | PuppetMaster `targetAnimator` | CODE RED animation | Visual_UAL1 is sole bound Animator | In progress |
-| R28 | Unity Rigidbody velocity | CODE RED death | Inherited velocity reaches every live muscle | In progress |
-| R29 | BehaviourPuppet Reset | CODE RED reuse | Kill/reset/move/reuse/second-kill scenario | In progress |
-| R30 | PuppetMaster Teleport/BehaviourPuppet Reset | CODE RED teleport | All lifecycle and physics states | In progress |
-| R31 | BehaviourPuppet Unpinned policy | CODE RED impacts | All impact order permutations | In progress |
-| R32 | Unity collider/Rigidbody identity | CODE RED hit lookup | Foreign homonymous body rejected | In progress |
-| R33 | PuppetMaster props | CODE RED weapons | Pickup/drop/melee/owner/death/reuse/branch replacement | In progress |
 | R34 | RootMotion public reference and Unity tests | 140-row matrix | Source, exact test and artifact for every row | In progress |
+
+The identifier gap R24-R33 is intentional. IDs are not renumbered because they are
+stable historical references; their relocation cannot change the meaning of R01-R23
+or R34.
 
 Normative indexes:
 

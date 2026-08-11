@@ -34,6 +34,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
         public string platform;
         public string scenario;
         public string generatedUtc;
+        public string certificationRunId;
         public string sourceRevision;
         public string sourceTreeSha256;
         public string[] capabilityIds;
@@ -54,6 +55,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
         public string sourceRevision;
         public string sourceTreeSha256;
         public string sourceLatestWriteUtc;
+        public string certificationRunId;
     }
 
     /// <summary>
@@ -82,6 +84,8 @@ namespace Hairibar.Ragdoll.Animation.Editor
             public string testResultsArtifact;
             public string sourceRevision;
             public string sourceTreeSha256;
+            public string certificationRunId;
+            public int producerProcessId;
             public RagdollEvidenceArtifact[] artifacts;
             public int total;
             public int verified;
@@ -179,7 +183,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                         source = contract.OfficialSource,
                         sourceLocator = contract.SourceLocator,
                         observableClaim = contract.ObservableClaim,
-                        affectedApi = capability + " / IRagdollIKSolver",
+                        affectedApi = capability,
                         affectedApis = contract.AffectedApis,
                         testKind = "N/A",
                         requiredEvidenceKinds = Array.Empty<string>(),
@@ -211,13 +215,11 @@ namespace Hairibar.Ragdoll.Animation.Editor
                         requiredKinds,
                         matchingArtifacts,
                         results));
-                bool artifactOnlyExecuted = strict
-                    && AllowsArtifactOnlyEvidence(id)
-                    && requiredKinds.Length != 0
-                    && requiredKinds.All(required => matchingArtifacts.Any(
-                        artifact => artifact.kind.ToString() == required
-                            && ArtifactContentProvesCapability(artifact, id)));
-                bool verified = executed || artifactOnlyExecuted;
+                // Every applicable catalog row owns one stable ID-prefixed NUnit
+                // test. Non-NUnit artifacts supplement that executed test; they
+                // must never replace it. In particular, quality rows J01-J07 may
+                // not close from a self-reported JSON artifact alone.
+                bool verified = executed;
                 string reason;
                 if (verified)
                 {
@@ -283,6 +285,9 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     : string.Empty,
                 sourceRevision = request?.sourceRevision ?? string.Empty,
                 sourceTreeSha256 = request?.sourceTreeSha256 ?? string.Empty,
+                certificationRunId = request?.certificationRunId ?? string.Empty,
+                producerProcessId = System.Diagnostics.Process
+                    .GetCurrentProcess().Id,
                 artifacts = artifacts,
                 total = entries.Count,
                 verified = entries.Count(entry => entry.status == "Verified"),
@@ -386,6 +391,11 @@ namespace Hairibar.Ragdoll.Animation.Editor
             if (string.IsNullOrWhiteSpace(request.sourceRevision))
                 throw new ArgumentException(
                     "Strict coverage requires a source revision.", nameof(request));
+            Guid runId;
+            if (!Guid.TryParse(request.certificationRunId, out runId))
+                throw new ArgumentException(
+                    "Strict coverage requires a certificationRunId GUID.",
+                    nameof(request));
             if (string.IsNullOrWhiteSpace(request.sourceTreeSha256))
                 throw new ArgumentException(
                     "Strict coverage requires a source tree SHA-256.", nameof(request));
@@ -414,7 +424,12 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     "Strict coverage requires sourceLatestWriteUtc in round-trip format.",
                     nameof(request));
             }
-            sourceLatestWriteUtc = GetLatestSourceWriteUtc(packageRoot);
+            DateTime currentLatestWriteUtc = GetLatestSourceWriteUtc(packageRoot);
+            if (sourceLatestWriteUtc.ToUniversalTime()
+                != currentLatestWriteUtc.ToUniversalTime())
+                throw new InvalidDataException(
+                    "The requested sourceLatestWriteUtc does not match the "
+                    + "current package tree timestamp.");
 
             RagdollEvidenceArtifact[] artifacts = request.artifacts
                 ?? Array.Empty<RagdollEvidenceArtifact>();
@@ -460,7 +475,10 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     || !string.Equals(
                         artifact.sourceTreeSha256,
                         request.sourceTreeSha256,
-                        StringComparison.OrdinalIgnoreCase))
+                        StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(artifact.certificationRunId,
+                        request.certificationRunId,
+                        StringComparison.Ordinal))
                 {
                     artifact.validationReason = "ArtifactSourceMismatch";
                     continue;
@@ -515,11 +533,6 @@ namespace Hairibar.Ragdoll.Animation.Editor
         {
             return RagdollCapabilityCatalog.Get(id).RequiredEvidence
                 .Select(kind => kind.ToString()).ToArray();
-        }
-
-        static bool AllowsArtifactOnlyEvidence(string id)
-        {
-            return id[0] == 'J';
         }
 
         static RagdollEvidenceArtifact[] FindEvidenceArtifacts(

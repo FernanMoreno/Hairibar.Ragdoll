@@ -6,10 +6,10 @@ manual y la referencia pública enlazados por RootMotion. La página oficial his
 de Doxygen actualmente responde 404; por ello no se amplía ningún contrato a partir
 de memoria, nombres de símbolos o código propietario.
 
-Estado vigente: **reabierto por la auditoria R01-R34 del 2026-08-01**. Las marcas
-`V` siguientes son el resultado historico del pase de 2026-07-31 y no vuelven a
-ser certificacion vigente hasta enlazarse a una fuente oficial, un test especifico
-y un artefacto ejecutado en el nuevo manifiesto.
+Estado vigente: **cerrado por el manifiesto schema 3 del 2026-08-11**. Las marcas
+`V` siguientes conservan la tabla histórica; la autoridad vigente es el catálogo
+ejecutable, que enlaza cada fila con fuente oficial, API, test exacto y artefactos
+especializados. Resultado: 139 `Verified`, G05 `N/A` y cero filas abiertas.
 
 Estados historicos:
 
@@ -211,7 +211,10 @@ La lista contiene cada ID histórico exactamente una vez (12 A + 30 B + 7 C +
 
 ## Cierre actual
 
-Reauditoría cerrada con 139 filas verificadas y G05 como única exclusión deliberada.
+Resultado histórico invalidado: la afirmación anterior de 139 filas verificadas
+no constituye certificación vigente. La reauditoría permanece abierta hasta que
+`Run-HairibarClosure.ps1` produzca, sobre el árbol actual y un proyecto limpio,
+el manifiesto final de 139 filas verificadas y G05 como única exclusión deliberada.
 La evidencia comprende 735 pruebas NUnit, 109 aserciones integrales en Windows
 Development Player, cuatro BuildReports válidos y perfil de 120 frames de warm-up
 más 600 frames medidos. Linux64 está compilado; su ejecución queda explícitamente

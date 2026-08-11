@@ -20,7 +20,12 @@ Invalid numeric values are resolved at the application boundary.
 `MasterMuscleDamper` is the absolute documented joint-drive damper;
 `MasterMuscleDamperMultiplier` is the Hairibar compatibility multiplier. Use
 `SetMuscleWeights` for the PuppetMaster-compatible argument order. The older
-`SetAuthorityWeights` remains a Hairibar compatibility API.
+`SetAuthorityWeights` and `SetAuthorityWeightsRecursive` overloads remain Hairibar
+compatibility APIs.
+The complete overload family is `SetMuscleWeights` and
+`SetMuscleWeightsRecursive`; overloads are inventoried by their complete reflected
+signature, not merely by method name. `MasterDampingRatio` is the obsolete Hairibar
+alias retained for source compatibility.
 Renamed serialized fields retain their previous scene and prefab data through
 Unity's `FormerlySerializedAs` migration metadata; split-semantics fields use an
 explicit serialized version before the compatibility value is applied.
@@ -36,6 +41,8 @@ For scripted physics call `PrepareManualSimulation(deltaTime)`, then
 `Physics.Simulate(deltaTime)`, then `CompleteManualSimulation()`. Invalid or duplicate
 ordering throws. `Respawn(position, rotation)` restores lifecycle, physics, surfaces,
 props and temporary boosts transactionally.
+`OnPreSimulate(deltaTime)` and `OnPostSimulate()` are compatibility names for the
+same pre/post manual-simulation boundary.
 
 `RagdollPuppetBehaviour.State` can explicitly select Puppet, Unpinned or GetUp.
 `RagdollAnimator.Mode`, `IsActive`, `IsBlending`,
@@ -57,9 +64,32 @@ roll back on failure. Existing leaf/branch APIs remain supported.
 safe physics boundary. `CurrentRigidbody` returns the body that physically owns the
 prop. Additional pin can be changed using `AddAdditionalPin` and
 `RemoveAdditionalPin` while held.
+`BeginAction()` and `EndAction()` remain the manual compatibility alternative to the
+timed action.
 
 Final IK is intentionally not a dependency. External solvers implement
 `IRagdollIKSolver` and are scheduled through the generic Hairibar hook contract.
+
+## Serialization migrations
+
+Unity's `FormerlySerializedAs` contract preserves the exact historical serialized
+name. J07 inventories every occurrence from every compiled package Runtime assembly;
+the current mapping is `canGetUp <- automaticGetUp` on
+`RagdollPuppetBehaviour`. Both the current field and `automaticGetUp` are part of the
+audited identity, so adding, removing or renaming a migration invalidates existing
+evidence until the documentation audit is regenerated.
+
+## Baker compatibility
+
+`inheritClipSettings` is the obsolete source-compatible alias for
+`clipSettingsPolicy`. New code selects `PreserveDestination`, `InheritSource` or
+`UseDefaults` explicitly; the alias is retained only so existing callers compile.
+
+## Runtime setup compatibility
+
+The `ConfigureSeparated` overload without a Humanoid binding profile is retained for
+legacy name-based Target migration. New Humanoid integrations should use the semantic
+binding-profile overload, which does not assume matching Transform names or axes.
 
 ## Certification
 

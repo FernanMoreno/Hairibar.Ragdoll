@@ -155,6 +155,7 @@ namespace Hairibar.Ragdoll.Animation
 
         const float KinematicSuppressionEpsilon = 0.0001f;
 
+        [RagdollCompatibilityApi("Lifecycle and animation", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_behaviour_puppet.html")]
         public RagdollPuppetState State
         {
             get => stateMachine != null
@@ -598,6 +599,7 @@ namespace Hairibar.Ragdoll.Animation
         }
 
         /// <summary>Official BehaviourPuppet collision callback name.</summary>
+        [RagdollCompatibilityApi("Lifecycle and animation", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_behaviour_puppet.html")]
         public event Action<RagdollCollisionEvent> OnCollision
         {
             add => collisionObservedSubscribers.Add(value);
@@ -605,6 +607,7 @@ namespace Hairibar.Ragdoll.Animation
         }
 
         /// <summary>Official callback name for collisions that reduced pinning.</summary>
+        [RagdollCompatibilityApi("Lifecycle and animation", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_behaviour_puppet.html")]
         public event Action<RagdollCollisionEvent, float> OnCollisionImpulse
         {
             add => collisionUnpinSubscribers.Add(value);
@@ -1025,6 +1028,7 @@ namespace Hairibar.Ragdoll.Animation
         /// BehaviourPuppet state, then restores the live Puppet state. Restoration is
         /// best-effort; all failures are reported together after every cleanup ran.
         /// </summary>
+        [RagdollCompatibilityApi("Lifecycle and animation", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_behaviour_puppet.html")]
         public void Respawn(Vector3 position, Quaternion rotation)
         {
             if (!IsInitialized)
@@ -1130,6 +1134,7 @@ namespace Hairibar.Ragdoll.Animation
         /// Applies the authored Puppet or Unpinned collider/material policy immediately
         /// without changing the behaviour state. The activation baseline remains intact.
         /// </summary>
+        [RagdollCompatibilityApi("Lifecycle and animation", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_behaviour_puppet.html")]
         public bool SetColliderSurfaceState(bool unpinned)
         {
             if (!IsInitialized || colliderSurfaceController == null) return false;

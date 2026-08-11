@@ -14,6 +14,7 @@ namespace Hairibar.Ragdoll.Animation
     /// Adapter contract for an external IK solver. Implement this on a component that
     /// wraps the chosen IK package; Hairibar.Ragdoll remains package-independent.
     /// </summary>
+    [RagdollCompatibilityApi("Props and IK", "http://www.root-motion.com/puppetmasterdox/html/page7.html")]
     public interface IRagdollIKSolver
     {
         bool IsSolverEnabled { get; }

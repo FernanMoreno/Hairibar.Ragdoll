@@ -16,7 +16,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
         float massMultiplier = 1f;
 
         RagdollAuthoredRig Rig => (RagdollAuthoredRig)target;
-        internal float SymmetryDistance
+        public float SymmetryDistance
         {
             get => symmetryDistance;
             set => symmetryDistance = Mathf.Max(0f, value);
@@ -323,7 +323,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
         /// authored components are changed, so rejected editor input cannot
         /// partially mutate the rig.
         /// </summary>
-        internal bool TrySetSelectedJointAxes(
+        public bool TrySetSelectedJointAxes(
             Vector3 axis,
             Vector3 secondaryAxis,
             out string error)
@@ -364,7 +364,12 @@ namespace Hairibar.Ragdoll.Animation.Editor
             }
         }
 
-        internal bool TrySetSelectedConnectedBody(
+        /// <summary>
+        /// Changes the selected joint connection after validating that the body
+        /// belongs to this authored rig and is not the joint's own Rigidbody.
+        /// Rejected input is guaranteed not to create an Undo record or mutation.
+        /// </summary>
+        public bool TrySetSelectedConnectedBody(
             Rigidbody connectedBody,
             out string error)
         {
@@ -396,7 +401,11 @@ namespace Hairibar.Ragdoll.Animation.Editor
             return true;
         }
 
-        internal bool TryApplySymmetricEdit(
+        /// <summary>
+        /// Applies collider geometry, joint frame and angular limits to the
+        /// selected side and its spatial mirror as one atomic Undo operation.
+        /// </summary>
+        public bool TryApplySymmetricEdit(
             Vector3 center,
             Vector3 size,
             Vector3 axis,
@@ -505,7 +514,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
             else { joint.secondaryAxis = blue; }
         }
 
-        internal bool ConvertSelectedCollider(System.Type colliderType)
+        public bool ConvertSelectedCollider(System.Type colliderType)
         {
             if (colliderType != typeof(BoxCollider)
                 && colliderType != typeof(CapsuleCollider)

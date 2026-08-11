@@ -82,6 +82,7 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
 
         [TestCase("Packages/com.hairibar.ragdoll/Animation/Foo.cs(1): warning", true)]
         [TestCase("Hairibar.Ragdoll runtime warning", true)]
+        [TestCase("C:/Temp/Hairibar-Ragdoll-a1/Animation/Foo.cs(1): warning", true)]
         [TestCase("Packages/com.hairibar.engineextensions/Runtime/Foo.cs(1): warning Hairibar.EngineExtensions", false)]
         [TestCase("Packages/com.vendor.tool/Foo.cs(1): warning", false)]
         public void BuildDiagnosticOwnership_IsClassifiedByPackageIdentity(

@@ -67,6 +67,7 @@ namespace Hairibar.Ragdoll.Animation
             RagdollBakerClipSettingsPolicy.PreserveDestination;
 
         [Obsolete("Use clipSettingsPolicy instead.")]
+        [RagdollCompatibilityApi("Baker compatibility", "http://www.root-motion.com/puppetmasterdox/html/page12.html")]
         public bool inheritClipSettings
         {
             get => clipSettingsPolicy == RagdollBakerClipSettingsPolicy.InheritSource;
@@ -363,6 +364,28 @@ namespace Hairibar.Ragdoll.Animation
                 string state = animationStates[index];
                 if (string.IsNullOrEmpty(state)) continue;
 
+                // AnimationStates is documented for controllers whose final pose is
+                // composed by multiple layers and AvatarMasks. A newly-created
+                // AnimatorControllerPlayable does not inherit runtime layer weights
+                // or current layer states from the Animator, so preserve the
+                // configured composition before the graph takes control of its
+                // output. Update(0) initializes the controller without advancing its
+                // clock; the requested base-layer state is still selected below.
+                animator.Update(0f);
+                int sourceLayerCount = animator.layerCount;
+                float[] sourceLayerWeights = new float[sourceLayerCount];
+                AnimatorStateInfo[] sourceLayerStates =
+                    new AnimatorStateInfo[sourceLayerCount];
+                for (int layerIndex = 0;
+                    layerIndex < sourceLayerCount;
+                    layerIndex++)
+                {
+                    sourceLayerWeights[layerIndex] =
+                        animator.GetLayerWeight(layerIndex);
+                    sourceLayerStates[layerIndex] =
+                        animator.GetCurrentAnimatorStateInfo(layerIndex);
+                }
+
                 activeGraph = PlayableGraph.Create("Ragdoll Baker State");
                 activeGraph.SetTimeUpdateMode(DirectorUpdateMode.Manual);
                 hasActiveGraph = true;
@@ -377,6 +400,37 @@ namespace Hairibar.Ragdoll.Animation
                 output.SetSourcePlayable(controller);
                 activeGraph.Play();
                 controller.Play(state, 0, 0f);
+                int playableLayerCount = controller.GetLayerCount();
+                int copiedLayerCount = Mathf.Min(
+                    sourceLayerWeights.Length,
+                    playableLayerCount);
+                for (int layerIndex = 1;
+                    layerIndex < copiedLayerCount;
+                    layerIndex++)
+                {
+                    AnimatorStateInfo layerState =
+                        sourceLayerStates[layerIndex];
+                    int stateHash = layerState.fullPathHash;
+                    if (!controller.HasState(layerIndex, stateHash))
+                        stateHash = layerState.shortNameHash;
+                    if (stateHash != 0
+                        && controller.HasState(layerIndex, stateHash))
+                    {
+                        float normalizedTime = layerState.normalizedTime;
+                        if (float.IsNaN(normalizedTime)
+                            || float.IsInfinity(normalizedTime))
+                        {
+                            normalizedTime = 0f;
+                        }
+                        controller.Play(
+                            stateHash,
+                            layerIndex,
+                            normalizedTime);
+                    }
+                    controller.SetLayerWeight(
+                        layerIndex,
+                        sourceLayerWeights[layerIndex]);
+                }
                 activeGraph.Evaluate(0f);
 
                 AnimatorStateInfo info = controller.GetCurrentAnimatorStateInfo(0);

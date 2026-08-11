@@ -13,7 +13,9 @@ Laboratorio determinista de telemetría/análisis para ragdolls basados en `Rigi
 - `RagdollLabTypes`: esquema serializable (`PhysicsFrame`, `ScenarioReport`, `DiagnosticsReport`, …).
 - `RagdollSupportGeometry`: convex hull / point-containment 2D XZ para el polígono de soporte.
 
-El driver de escenarios (Idle/Push/JointImpulse/Fall) y el batch runner son específicos de cada proyecto consumidor — ver el repo del juego para un ejemplo (`CODE RED`, `Assets/_Project/RagdollLab/`).
+El driver de escenarios (Idle/Push/JointImpulse/Fall) y el batch runner son
+específicos de cada proyecto consumidor y deben residir y probarse en ese proyecto;
+no forman parte de la certificación de este paquete.
 
 ## Artifacts
 

@@ -17,6 +17,7 @@ namespace Hairibar.Ragdoll.Animation
         /// Executes Target read, modifiers and matching before a caller-owned
         /// Physics.Simulate call. Physics.simulationMode must be Script.
         /// </summary>
+        [RagdollCompatibilityApi("Lifecycle and animation", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public void PrepareManualSimulation(float deltaTime)
         {
             if (manualSimulationPrepared)
@@ -100,6 +101,7 @@ namespace Hairibar.Ragdoll.Animation
         /// Completes mapping and hooks after the caller has simulated physics, then
         /// restores the exact Animator/Animation enabled state.
         /// </summary>
+        [RagdollCompatibilityApi("Lifecycle and animation", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public void CompleteManualSimulation()
         {
             if (!manualSimulationPrepared)
@@ -128,12 +130,14 @@ namespace Hairibar.Ragdoll.Animation
         /// PuppetMaster-compatible name for the documented pre-simulation contract.
         /// The component must be disabled and Physics must use scripted simulation.
         /// </summary>
+        [RagdollCompatibilityApi("Lifecycle and animation", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public void OnPreSimulate(float deltaTime)
         {
             PrepareManualSimulation(deltaTime);
         }
 
         /// <summary>PuppetMaster-compatible name for the post-simulation contract.</summary>
+        [RagdollCompatibilityApi("Lifecycle and animation", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public void OnPostSimulate()
         {
             CompleteManualSimulation();
