@@ -348,12 +348,16 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     AnimationClip destination = mainAsset as AnimationClip;
                     if (destination)
                     {
+                        string destinationName = destination.name;
                         backups.Add(new AssetBackup
                         {
                             Destination = destination,
                             Snapshot = UnityEngine.Object.Instantiate(destination)
                         });
                         EditorUtility.CopySerialized(clip, destination);
+                        // ponytail: CopySerialized copies the source's name too;
+                        // the main asset's name must keep matching its filename.
+                        destination.name = destinationName;
                         EditorUtility.SetDirty(destination);
                     }
                     else
@@ -383,8 +387,10 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     if (!backup.Destination || !backup.Snapshot) continue;
                     try
                     {
+                        string destinationName = backup.Destination.name;
                         EditorUtility.CopySerialized(
                             backup.Snapshot, backup.Destination);
+                        backup.Destination.name = destinationName;
                         EditorUtility.SetDirty(backup.Destination);
                     }
                     catch (Exception exception)
