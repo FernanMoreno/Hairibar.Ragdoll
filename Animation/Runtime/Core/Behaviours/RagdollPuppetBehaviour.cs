@@ -2361,6 +2361,32 @@ namespace Hairibar.Ragdoll.Animation
                     pair.RagdollBone.Transform.position,
                     pair.currentPose.worldPosition);
 
+                // ponytail: currentPose can go stale relative to the live Target
+                // after ApplyTargetRootAlignment's rigid root-delta propagation
+                // (the propagation math itself is correct; the snapshot it moves
+                // is not refreshed if the Target is nudged again afterward, e.g.
+                // by weapon/IK binding). A cached-only distance can then false-
+                // positive TargetDrift on a bone that is actually fine. Require
+                // the live Target to also exceed threshold before knocking out.
+                float knockOutThreshold =
+                    settings.knockOutDistance * stateDistanceMultiplier;
+                if (pair.TargetBone
+                    && targetDistance > knockOutThreshold)
+                {
+                    float liveTargetDistance = Vector3.Distance(
+                        pair.RagdollBone.Transform.position,
+                        pair.TargetBone.position);
+                    if (liveTargetDistance <= knockOutThreshold)
+                    {
+                        UnityEngine.Debug.Log("TARGET_POSE_MISMATCH bone=" + pair.Name
+                            + " cached=" + targetDistance.ToString("0.000")
+                            + " live=" + liveTargetDistance.ToString("0.000")
+                            + " threshold=" + knockOutThreshold.ToString("0.000")
+                            + " decision=suppress_target_drift");
+                        continue;
+                    }
+                }
+
                 BoneProfile authoredProfile =
                     Context.Animator.GetBoneProfile(pair.Name);
                 float configuredPinWeight =
