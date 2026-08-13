@@ -53,6 +53,8 @@ namespace Hairibar.Ragdoll.Animation
         [SerializeField] string rightStateName = "StepRight";
         [SerializeField, Min(0f)] float transitionDuration = 0.1f;
         [SerializeField] int animatorLayer = -1;
+        [Tooltip("Animator int parameter set to 0 (left) or 1 (right) right before the crossfade, so the controller can mirror/branch the clip to the physically-selected swing foot. Leave empty to skip -- the 4 clips above must then already commit to one leading foot.")]
+        [SerializeField] string swingFootParameterName = "StepSwingFoot";
 
         [Header("Recovery")]
         [Tooltip("Sibling RagdollPuppetBehaviour reactivated on both success and failure. Auto-resolved from this GameObject when left empty.")]
@@ -64,6 +66,7 @@ namespace Hairibar.Ragdoll.Animation
             new RagdollBipedStaggerStateMachine();
         RagdollBipedStepFoot swingFoot;
         BoneName swingFootBone;
+        bool pendingFirstClassification;
 
         public RagdollBipedBalanceState CurrentState { get; private set; } =
             RagdollBipedBalanceState.Stable;
@@ -111,7 +114,12 @@ namespace Hairibar.Ragdoll.Animation
             CurrentState = RagdollBipedBalanceState.Stable;
             LastSignedSupportMargin = 0f;
             stepMachine.Reset();
-            BeginStep();
+            // Do not classify/BeginStep here: centerOfMass has not run a single
+            // FixedUpdate yet, so its Snapshot is still Empty (zero COM/velocity).
+            // Deciding a step from that would pick a foot/direction blind. Defer
+            // to the first real OnBehaviourFixedUpdate, which runs the probe
+            // before classifying.
+            pendingFirstClassification = true;
         }
 
         protected override void OnBehaviourDeactivated()
@@ -128,6 +136,30 @@ namespace Hairibar.Ragdoll.Animation
         {
             centerOfMass.FixedUpdate(deltaTime);
             UpdateBalanceClassification();
+
+            // Unrecoverable aborts the moment it is observed, mid-cycle or not --
+            // finishing a visual LiftOff/Swing/Replant/Settling the physics has
+            // already given up on would be lying to the player.
+            if (CurrentState == RagdollBipedBalanceState.Unrecoverable)
+            {
+                Recover(succeeded: false);
+                return;
+            }
+
+            if (pendingFirstClassification)
+            {
+                pendingFirstClassification = false;
+                if (CurrentState == RagdollBipedBalanceState.Stable
+                    || CurrentState == RagdollBipedBalanceState.RecoverableWithoutStep)
+                {
+                    // Already balanced by the time the real capture point could
+                    // be read -- no step needed after all.
+                    Recover(succeeded: true);
+                    return;
+                }
+                BeginStep();
+                return;
+            }
 
             if (stepMachine.State == RagdollBipedStaggerState.Failed)
             {
@@ -228,21 +260,37 @@ namespace Hairibar.Ragdoll.Animation
             RagdollBipedStepDirection direction = RagdollBipedStaggerMath.ClassifyStepDirection(
                 offset, transform.forward, transform.up);
 
-            CrossFadeStep(direction);
+            if (!TryCrossFadeStep(direction))
+            {
+                // Nothing will animate the step -- fail the cycle now rather
+                // than let the state machine run its timers on an Animator
+                // that never actually moved.
+                stepMachine.RegisterStepFailed();
+            }
         }
 
-        void CrossFadeStep(RagdollBipedStepDirection direction)
+        bool TryCrossFadeStep(RagdollBipedStepDirection direction)
         {
             Animator animator = Context != null && Context.Animator
                 ? Context.Animator.TargetAnimator
                 : null;
-            if (!animator) return;
+            if (!animator) return false;
 
             string stateName = ResolveStepStateName(direction);
-            if (string.IsNullOrEmpty(stateName)) return;
+            if (string.IsNullOrEmpty(stateName)) return false;
+            if (!animator.HasState(Mathf.Max(0, animatorLayer), Animator.StringToHash(stateName)))
+            {
+                return false;
+            }
 
+            if (!string.IsNullOrEmpty(swingFootParameterName))
+            {
+                animator.SetInteger(
+                    swingFootParameterName, swingFoot == RagdollBipedStepFoot.Left ? 0 : 1);
+            }
             animator.CrossFadeInFixedTime(
                 stateName, transitionDuration, animatorLayer);
+            return true;
         }
 
         string ResolveStepStateName(RagdollBipedStepDirection direction)

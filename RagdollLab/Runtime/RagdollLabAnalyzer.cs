@@ -8,6 +8,14 @@ namespace Hairibar.Ragdoll.RagdollLab
     {
         const float AnchorEventHorizonSeconds = 1.5f;
         const int AnchorEventBaselineLookbackFrames = 5;
+        // Hairibar-owned diagnostic thresholds (not part of RagdollLabThresholds):
+        // an anchor-drift event is "persistent" rather than a transient impact
+        // excursion when it still hasn't settled, or is still above the warning
+        // threshold, half a second after the event -- either signal alone is
+        // enough, since a spike that settles fast but keeps re-crossing the
+        // threshold is just as real a problem as one that never comes down.
+        const float PersistentAnchorSettlingSeconds = 0.5f;
+        const float PersistentAnchorTimeAboveThresholdSeconds = 0.5f;
 
         public static ScenarioReport Analyze(IReadOnlyList<PhysicsFrame> frames, float characterHeight, float totalMass, float gravity, RagdollLabThresholds thresholds = null)
         {
@@ -93,7 +101,7 @@ namespace Hairibar.Ragdoll.RagdollLab
             {
                 JointReport joint = report.joints[i];
                 if (joint.anchorError.p95 > thresholds.anchorErrorWarningMeters)
-                    Add(result, "AnchorDrift", "high", "0.85", joint.name, "anchor p95 exceeds threshold", "constraint anchor or solver instability", joint.anchorError, joint.anchorError.p95, 0, 0);
+                    AddAnchorDriftDiagnostic(result, joint);
                 if (joint.torque.p95 > thresholds.torqueSpikeWarning)
                     Add(result, "HighJointTorque", "medium", "0.70", joint.name, "torque p95 exceeds threshold", "overcontrol, collision load, or effective inertia", joint.torque, joint.torque.p95, 0, 0);
                 if (joint.oscillationZeroCrossings >= thresholds.oscillationWarningCrossings && joint.dominantFrequencyHz >= thresholds.oscillationWarningHz)
@@ -102,6 +110,46 @@ namespace Hairibar.Ragdoll.RagdollLab
                     Add(result, "TrackingError", "medium", "0.65", joint.name, "mean target-to-physics angular error high", "insufficient drive, collision, or mapping mismatch", joint.angularTrackingError, joint.angularTrackingError.mean, 0, 0);
             }
             return result;
+        }
+
+        static void AddAnchorDriftDiagnostic(DiagnosticsReport result, JointReport joint)
+        {
+            bool hasEvents = joint.anchorErrorEvents != null && joint.anchorErrorEvents.Length > 0;
+            if (!hasEvents)
+            {
+                Add(result, "AnchorDrift", "high", "0.85", joint.name,
+                    "anchor p95 exceeds threshold (no event markers captured to classify further)",
+                    "constraint anchor or solver instability", joint.anchorError, joint.anchorError.p95, 0, 0);
+                return;
+            }
+
+            bool persistent = false;
+            for (int e = 0; e < joint.anchorErrorEvents.Length; e++)
+            {
+                AnchorDriftEventReport evt = joint.anchorErrorEvents[e];
+                if (evt.settlingTimeSeconds >= PersistentAnchorSettlingSeconds
+                    || evt.timeAboveThresholdSeconds >= PersistentAnchorTimeAboveThresholdSeconds)
+                {
+                    persistent = true;
+                    break;
+                }
+            }
+
+            if (persistent)
+            {
+                Add(result, "PersistentAnchorDrift", "high", "0.85", joint.name,
+                    "anchor error has not settled within " + PersistentAnchorSettlingSeconds
+                    + "s of an impact event", "constraint anchor or solver instability",
+                    joint.anchorError, joint.anchorError.p95, 0, 0);
+            }
+            else
+            {
+                Add(result, "TransientAnchorExcursion", "medium", "0.6", joint.name,
+                    "anchor p95 exceeds threshold but settled within "
+                    + PersistentAnchorSettlingSeconds + "s of every captured impact event",
+                    "transient impact response, not persistent drift",
+                    joint.anchorError, joint.anchorError.p95, 0, 0);
+            }
         }
 
         static AnchorDriftEventReport[] BuildAnchorEventReports(List<float> anchors, float dt, List<(string name, int frameIndex, float simulationTime)> eventFrames, int frameCount, RagdollLabThresholds thresholds)

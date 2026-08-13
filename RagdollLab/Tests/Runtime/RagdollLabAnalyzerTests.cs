@@ -79,6 +79,73 @@ namespace Hairibar.Ragdoll.RagdollLab.Tests
             Assert.That(evt.aucError, Is.GreaterThan(0f));
         }
 
+        [Test]
+        public void Diagnose_TransientSpikeThatSettlesQuickly_IsNotFlaggedAsPersistentDrift()
+        {
+            // 10 frames, spike at 3-4 (20% of samples -> p95 still crosses the
+            // warning threshold), settled back below tolerance from frame 5.
+            float[] anchorErrors = BuildSeries(frameCount: 10, spikeFrame: 3, spikeValue: 0.05f,
+                baseline: 0.001f, settleAtFrame: 5);
+            ScenarioReport report = AnalyzeAnchorSeries(anchorErrors, spikeFrame: 3);
+            RagdollLabThresholds thresholds = RagdollLabThresholds();
+
+            DiagnosticsReport diagnostics = RagdollLabAnalyzer.Diagnose(report, thresholds);
+
+            Assert.That(diagnostics.diagnostics.Exists(d => d.type == "TransientAnchorExcursion"),
+                Is.True);
+            Assert.That(diagnostics.diagnostics.Exists(d => d.type == "PersistentAnchorDrift"),
+                Is.False);
+        }
+
+        [Test]
+        public void Diagnose_SpikeThatNeverSettles_IsFlaggedAsPersistentDrift()
+        {
+            // 40 frames (0.8s @ 0.02 dt): spike at frame 3, stays above tolerance
+            // for the rest of the run -- settlingTimeSeconds must exceed the
+            // 0.5s persistence threshold, which needs real elapsed time, not
+            // just a high proportion of samples.
+            float[] anchorErrors = BuildSeries(frameCount: 40, spikeFrame: 3, spikeValue: 0.05f,
+                baseline: 0.001f, settleAtFrame: -1);
+            ScenarioReport report = AnalyzeAnchorSeries(anchorErrors, spikeFrame: 3);
+            RagdollLabThresholds thresholds = RagdollLabThresholds();
+
+            DiagnosticsReport diagnostics = RagdollLabAnalyzer.Diagnose(report, thresholds);
+
+            Assert.That(diagnostics.diagnostics.Exists(d => d.type == "PersistentAnchorDrift"),
+                Is.True);
+            Assert.That(diagnostics.diagnostics.Exists(d => d.type == "TransientAnchorExcursion"),
+                Is.False);
+        }
+
+        static float[] BuildSeries(int frameCount, int spikeFrame, float spikeValue, float baseline, int settleAtFrame)
+        {
+            var series = new float[frameCount];
+            for (int i = 0; i < frameCount; i++)
+            {
+                if (i < spikeFrame) series[i] = baseline;
+                else if (settleAtFrame >= 0 && i >= settleAtFrame) series[i] = baseline;
+                else series[i] = spikeValue;
+            }
+            return series;
+        }
+
+        static ScenarioReport AnalyzeAnchorSeries(float[] anchorErrors, int spikeFrame)
+        {
+            JointTelemetry joint = new() { id = "ConfigurableJoint:A", name = "A", bodyId = "Rigidbody:A" };
+            var frames = new List<PhysicsFrame>();
+            for (int i = 0; i < anchorErrors.Length; i++)
+            {
+                JointTelemetry sample = new() { id = joint.id, name = joint.name, bodyId = joint.bodyId, anchorError = anchorErrors[i] };
+                frames.Add(new PhysicsFrame
+                {
+                    fixedDeltaTime = 0.02f,
+                    joints = new[] { sample },
+                    events = i == spikeFrame ? new[] { new EventMarker { name = "eventApplied", frameIndex = i, simulationTime = i * 0.02f } } : null,
+                });
+            }
+            return RagdollLabAnalyzer.Analyze(frames, 1.8f, 70f, 9.81f, RagdollLabThresholds());
+        }
+
         static RagdollLabThresholds RagdollLabThresholds()
         {
             var thresholds = ScriptableObject.CreateInstance<RagdollLabThresholds>();

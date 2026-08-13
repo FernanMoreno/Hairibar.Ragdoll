@@ -10,13 +10,18 @@ namespace Hairibar.Ragdoll.Animation
     /// correction math (RagdollBipedBalancerMath) is Hairibar-owned: RootMotion's
     /// own implementation is closed-source, only the public settings surface and
     /// their documented meaning are public.
+    ///
+    /// Partial: DamperForSpring/MaxForceMlp are exposed for field-for-field
+    /// parity but have no wired effect yet (RagdollBipedBalancerMath does not
+    /// read them) -- only IMlp/VelocityF/CopOffset/TorqueMlp/MaxTorqueMag are
+    /// applied by the current reactive-torque implementation.
     /// </summary>
     [Serializable]
     public struct RagdollBipedBalancerSettings
     {
-        [Tooltip("Ankle joint damper/spring. Increase to make the balancing effect softer.")]
+        [Tooltip("NOT YET WIRED to any joint drive -- settings-surface parity only. Ankle joint damper/spring; increase to make the balancing effect softer.")]
         [SerializeField] float damperForSpring;
-        [Tooltip("Multiplier for joint max force.")]
+        [Tooltip("NOT YET WIRED to any joint drive -- settings-surface parity only. Multiplier for joint max force.")]
         [SerializeField] float maxForceMlp;
         [Tooltip("Multiplier for the inertia tensor. Increasing this will increase the balancing forces.")]
         [SerializeField] float iMlp;

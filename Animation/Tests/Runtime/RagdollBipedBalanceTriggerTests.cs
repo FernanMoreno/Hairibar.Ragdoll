@@ -65,6 +65,29 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [Test]
+        public void ZeroMinimumDuration_FiresImmediatelyOnFirstRequiresStepFrame()
+        {
+            var trigger = new RagdollBipedBalanceTrigger();
+            bool fired = trigger.Evaluate(
+                RagdollBipedBalanceState.RequiresStep, 0.016f, minimumRequiresStepDuration: 0f);
+
+            Assert.That(fired, Is.True,
+                "A zero minimum duration must mean 'immediate', not 'never'.");
+        }
+
+        [Test]
+        public void ZeroMinimumDuration_DoesNotFireTwice()
+        {
+            var trigger = new RagdollBipedBalanceTrigger();
+            trigger.Evaluate(RagdollBipedBalanceState.RequiresStep, 0.016f, 0f);
+
+            bool firedAgain = trigger.Evaluate(
+                RagdollBipedBalanceState.RequiresStep, 0.016f, 0f);
+
+            Assert.That(firedAgain, Is.False);
+        }
+
+        [Test]
         public void Reset_ClearsMidCountState()
         {
             var trigger = new RagdollBipedBalanceTrigger();

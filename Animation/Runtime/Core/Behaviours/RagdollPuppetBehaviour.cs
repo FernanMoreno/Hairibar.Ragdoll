@@ -1707,13 +1707,18 @@ namespace Hairibar.Ragdoll.Animation
                 return;
             }
 
-            if (canStagger
+            // canStagger (recovery step) and balancerSettings.TorqueMlp>0 (continuous
+            // ankle correction) are independent PuppetMaster capabilities -- a
+            // project may want the reactive balancer without opting into steps,
+            // or vice versa. Only gate the shared classification on needing either.
+            bool balanceMonitoringRequired = canStagger || balancerSettings.TorqueMlp > 0f;
+            if (balanceMonitoringRequired
                 && State == RagdollPuppetState.Puppet
                 && !targetAlignmentPending
                 && TryClassifyStaggerBalance(out RagdollBipedBalanceState staggerClassification))
             {
                 ApplyReactiveBalancer(staggerClassification);
-                EvaluateStaggerTrigger(staggerClassification, deltaTime);
+                if (canStagger) EvaluateStaggerTrigger(staggerClassification, deltaTime);
             }
 
             if (!loseBalanceOnTargetDrift

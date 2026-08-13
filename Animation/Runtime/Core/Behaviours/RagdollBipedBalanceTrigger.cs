@@ -10,24 +10,33 @@ namespace Hairibar.Ragdoll.Animation
     internal sealed class RagdollBipedBalanceTrigger
     {
         float requiresStepElapsed;
+        bool firedThisEpisode;
 
         internal void Reset()
         {
             requiresStepElapsed = 0f;
+            firedThisEpisode = false;
         }
 
         internal bool Evaluate(RagdollBipedBalanceState classification, float deltaTime, float minimumRequiresStepDuration)
         {
             if (classification != RagdollBipedBalanceState.RequiresStep)
             {
-                requiresStepElapsed = 0f;
+                Reset();
                 return false;
             }
 
-            bool wasBelow = requiresStepElapsed < minimumRequiresStepDuration;
+            if (firedThisEpisode) return false;
+
+            // A latch, not a strict "was below now at/above" comparison: with
+            // minimumRequiresStepDuration == 0 the strict form never fires
+            // (0 < 0 is false on the very first frame), even though a zero
+            // duration should mean "immediate".
             requiresStepElapsed += Mathf.Max(0f, deltaTime);
-            bool isAtOrAbove = requiresStepElapsed >= minimumRequiresStepDuration;
-            return wasBelow && isAtOrAbove;
+            if (requiresStepElapsed < minimumRequiresStepDuration) return false;
+
+            firedThisEpisode = true;
+            return true;
         }
     }
 }
