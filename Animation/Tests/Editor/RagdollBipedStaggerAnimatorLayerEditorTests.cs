@@ -55,5 +55,24 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
             Assert.That(animator.GetCurrentAnimatorStateInfo(layer).fullPathHash,
                 Is.EqualTo(stateHash));
         }
+
+        [Test]
+        public void SwingFootParameter_MustExistAndBeInteger()
+        {
+            AnimatorController controller = AnimatorController.CreateAnimatorControllerAtPath(
+                Folder + "/Parameters.controller");
+            controller.AddParameter("StepSwingFoot", AnimatorControllerParameterType.Int);
+            controller.AddParameter("WrongType", AnimatorControllerParameterType.Bool);
+            AssetDatabase.SaveAssets();
+            Animator animator = root.AddComponent<Animator>();
+            animator.runtimeAnimatorController = controller;
+
+            Assert.That(RagdollBipedStaggerBehaviour.HasIntegerParameter(
+                animator, "StepSwingFoot"), Is.True);
+            Assert.That(RagdollBipedStaggerBehaviour.HasIntegerParameter(
+                animator, "WrongType"), Is.False);
+            Assert.That(RagdollBipedStaggerBehaviour.HasIntegerParameter(
+                animator, "Missing"), Is.False);
+        }
     }
 }

@@ -284,6 +284,7 @@ namespace Hairibar.Ragdoll.Animation
 
             if (!string.IsNullOrEmpty(swingFootParameterName))
             {
+                if (!HasIntegerParameter(animator, swingFootParameterName)) return false;
                 animator.SetInteger(
                     swingFootParameterName, swingFoot == RagdollBipedStepFoot.Left ? 0 : 1);
             }
@@ -295,6 +296,18 @@ namespace Hairibar.Ragdoll.Animation
             Animator animator, int stateHash, float duration, int layer)
         {
             animator.CrossFadeInFixedTime(stateHash, duration, layer);
+        }
+
+        internal static bool HasIntegerParameter(Animator animator, string parameterName)
+        {
+            if (!animator || string.IsNullOrEmpty(parameterName)) return false;
+            AnimatorControllerParameter[] parameters = animator.parameters;
+            for (int index = 0; index < parameters.Length; index++)
+            {
+                if (parameters[index].name == parameterName)
+                    return parameters[index].type == AnimatorControllerParameterType.Int;
+            }
+            return false;
         }
 
         // Animator.CrossFadeInFixedTime accepts -1 as its default layer, but

@@ -214,14 +214,16 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
             RagdollCoverageManifest.Manifest manifest =
                 RagdollCoverageManifest.Build();
 
-            Assert.That(manifest.total, Is.EqualTo(140));
+            Assert.That(manifest.total,
+                Is.EqualTo(RagdollCapabilityCatalog.ExpectedCount));
             Assert.That(manifest.notApplicable, Is.EqualTo(1));
             Assert.That(manifest.entries,
                 Has.Exactly(1).Matches<RagdollCoverageManifest.Entry>(entry =>
                     entry.id == "G05" && entry.status == "N/A"));
             Assert.That(manifest.verified, Is.Zero,
                 "A discovered test is not verified without an execution artifact.");
-            Assert.That(manifest.open, Is.EqualTo(139));
+            Assert.That(manifest.open,
+                Is.EqualTo(RagdollCapabilityCatalog.ExpectedCount - 1));
         }
 
         [Test]
@@ -246,7 +248,8 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
                     .Single(value => value.id == "B08");
 
                 Assert.That(manifest.verified, Is.EqualTo(1));
-                Assert.That(manifest.open, Is.EqualTo(138));
+                Assert.That(manifest.open,
+                    Is.EqualTo(RagdollCapabilityCatalog.ExpectedCount - 2));
                 Assert.That(entry.status, Is.EqualTo("Verified"));
                 Assert.That(entry.exactTest, Is.EqualTo(exact));
                 Assert.That(entry.affectedApi,

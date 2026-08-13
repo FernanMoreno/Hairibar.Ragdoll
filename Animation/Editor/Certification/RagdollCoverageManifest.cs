@@ -168,7 +168,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
             Dictionary<string, List<TestEvidence>> discovered = DiscoverTests();
             NUnitResultIndex results = LoadNUnitResults(
                 testResultsXmlPaths, strict);
-            List<Entry> entries = new List<Entry>(140);
+            List<Entry> entries = new List<Entry>(RagdollCapabilityCatalog.ExpectedCount);
 
             foreach (RagdollCapabilityContract contract in
                 RagdollCapabilityCatalog.Contracts)
@@ -841,10 +841,12 @@ namespace Hairibar.Ragdoll.Animation.Editor
 
         static void ValidateRows(List<Entry> entries)
         {
-            if (entries.Count != 140)
+            if (entries.Count != RagdollCapabilityCatalog.ExpectedCount)
             {
                 throw new InvalidOperationException(
-                    $"Coverage matrix must contain exactly 140 rows; found {entries.Count}.");
+                    "Coverage matrix must contain exactly "
+                    + RagdollCapabilityCatalog.ExpectedCount + " rows; found "
+                    + entries.Count + ".");
             }
 
             string[] duplicateIds = entries.GroupBy(entry => entry.id)

@@ -183,8 +183,8 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     .GetCurrentProcess().Id
                 || manifest.producerProcessId == System.Diagnostics.Process
                     .GetCurrentProcess().Id
-                || validation.total != 140
-                || validation.verifiedBeforeJ06 != 138
+                || validation.total != RagdollCapabilityCatalog.ExpectedCount
+                || validation.verifiedBeforeJ06 != RagdollCapabilityCatalog.ExpectedCount - 2
                 || validation.openBeforeJ06 != 1
                 || validation.notApplicable != 1)
             {
@@ -226,10 +226,10 @@ namespace Hairibar.Ragdoll.Animation.Editor
             manifest.artifacts = (manifest.artifacts
                 ?? Array.Empty<RagdollEvidenceArtifact>())
                 .Concat(new[] { validationArtifact }).ToArray();
-            manifest.verified = 139;
+            manifest.verified = RagdollCapabilityCatalog.ExpectedCount - 1;
             manifest.open = 0;
             manifest.notApplicable = 1;
-            manifest.total = 140;
+            manifest.total = RagdollCapabilityCatalog.ExpectedCount;
             manifest.generatedUtc = DateTime.UtcNow.ToString("O");
 
             var envelope = new FinalManifestEnvelope
@@ -254,9 +254,9 @@ namespace Hairibar.Ragdoll.Animation.Editor
             List<string> errors)
         {
             RagdollCoverageManifest.Entry[] entries = manifest.entries;
-            if (entries == null || entries.Length != 140)
+            if (entries == null || entries.Length != RagdollCapabilityCatalog.ExpectedCount)
             {
-                errors.Add("EntryCountMustBe140");
+                errors.Add("EntryCountMustMatchCatalog");
                 return;
             }
 
@@ -299,11 +299,12 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 && value.status == "Open");
             int notApplicable = entries.Count(value => value != null
                 && value.status == "N/A");
-            if (manifest.total != 140 || manifest.verified != verified
+            if (manifest.total != RagdollCapabilityCatalog.ExpectedCount || manifest.verified != verified
                 || manifest.open != open || manifest.notApplicable != notApplicable)
                 errors.Add("DeclaredCountsDoNotMatchEntries");
-            if (verified != 138 || open != 1 || notApplicable != 1)
-                errors.Add("ProvisionalCountsMustBe138Verified1Open1NA");
+            if (verified != RagdollCapabilityCatalog.ExpectedCount - 2
+                || open != 1 || notApplicable != 1)
+                errors.Add("ProvisionalCountsMustMatchCatalog");
             if (entries.Count(value => value != null && value.id == "J06"
                 && value.status == "Open") != 1)
                 errors.Add("J06MustBeTheSingleOpenEntry");

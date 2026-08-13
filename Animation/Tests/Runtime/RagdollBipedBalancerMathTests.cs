@@ -116,7 +116,44 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Vector3 torque = RagdollBipedBalancerMath.ResolveReactiveTorque(
                 new Vector3(0f, 0f, 2f), Vector3.zero, Vector3.zero, Vector3.up, settings);
 
-            Assert.That(torque.magnitude, Is.EqualTo(5f).Within(0.001f));
+            Assert.That(torque.magnitude, Is.EqualTo(0.25f).Within(0.001f),
+                "Effective cap is MaxTorqueMag * MaxForceMlp.");
+        }
+
+        [Test]
+        public void ResolveReactiveTorque_MaxForceMlpScalesEffectiveCorrectionLimit()
+        {
+            RagdollBipedBalancerSettings low = DefaultSettings(torqueMlp: 100f);
+            low.MaxTorqueMag = 10f;
+            low.MaxForceMlp = 0.1f;
+            RagdollBipedBalancerSettings high = low;
+            high.MaxForceMlp = 0.5f;
+
+            Vector3 lowTorque = RagdollBipedBalancerMath.ResolveReactiveTorque(
+                new Vector3(0f, 0f, 2f), Vector3.zero, Vector3.zero, Vector3.up, low);
+            Vector3 highTorque = RagdollBipedBalancerMath.ResolveReactiveTorque(
+                new Vector3(0f, 0f, 2f), Vector3.zero, Vector3.zero, Vector3.up, high);
+
+            Assert.That(lowTorque.magnitude, Is.EqualTo(1f).Within(0.001f));
+            Assert.That(highTorque.magnitude, Is.EqualTo(5f).Within(0.001f));
+        }
+
+        [Test]
+        public void ResolveReactiveTorque_DamperForSpringAttenuatesMatchingAngularVelocity()
+        {
+            RagdollBipedBalancerSettings settings = DefaultSettings(torqueMlp: 10f);
+            settings.MaxForceMlp = 1f;
+            settings.MaxTorqueMag = 10f;
+            settings.DamperForSpring = 1f;
+            Vector3 baseline = RagdollBipedBalancerMath.ResolveReactiveTorque(
+                new Vector3(0f, 0f, 0.5f), Vector3.zero, Vector3.zero,
+                Vector3.up, settings);
+            Vector3 damped = RagdollBipedBalancerMath.ResolveReactiveTorque(
+                new Vector3(0f, 0f, 0.5f), Vector3.zero, Vector3.zero,
+                Vector3.up, baseline.normalized * 2f, settings);
+
+            Assert.That(damped.magnitude,
+                Is.EqualTo(baseline.magnitude - 2f).Within(0.001f));
         }
 
         [Test]

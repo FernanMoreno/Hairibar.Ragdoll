@@ -42,8 +42,10 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
 
             Assert.That(validation.succeeded, Is.True,
                 string.Join("\n", validation.errors ?? Array.Empty<string>()));
-            Assert.That(validation.total, Is.EqualTo(140));
-            Assert.That(validation.verifiedBeforeJ06, Is.EqualTo(138));
+            Assert.That(validation.total,
+                Is.EqualTo(RagdollCapabilityCatalog.ExpectedCount));
+            Assert.That(validation.verifiedBeforeJ06,
+                Is.EqualTo(RagdollCapabilityCatalog.ExpectedCount - 2));
             Assert.That(validation.openBeforeJ06, Is.EqualTo(1));
             Assert.That(validation.notApplicable, Is.EqualTo(1));
             Assert.That(validation.provisionalManifestSha256,
@@ -182,8 +184,10 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
                 Is.EqualTo(RagdollClosurePipeline.ComputeSha256(provisional)));
             Assert.That(result.independentValidationSha256,
                 Is.EqualTo(RagdollClosurePipeline.ComputeSha256(validationPath)));
-            Assert.That(result.manifest.total, Is.EqualTo(140));
-            Assert.That(result.manifest.verified, Is.EqualTo(139));
+            Assert.That(result.manifest.total,
+                Is.EqualTo(RagdollCapabilityCatalog.ExpectedCount));
+            Assert.That(result.manifest.verified,
+                Is.EqualTo(RagdollCapabilityCatalog.ExpectedCount - 1));
             Assert.That(result.manifest.open, Is.Zero);
             Assert.That(result.manifest.notApplicable, Is.EqualTo(1));
 
@@ -310,8 +314,8 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
             manifest.producerProcessId = System.Diagnostics.Process
                 .GetCurrentProcess().Id + 1;
             manifest.artifacts = artifacts.ToArray();
-            manifest.total = 140;
-            manifest.verified = 138;
+            manifest.total = RagdollCapabilityCatalog.ExpectedCount;
+            manifest.verified = RagdollCapabilityCatalog.ExpectedCount - 2;
             manifest.open = 1;
             manifest.notApplicable = 1;
             return manifest;

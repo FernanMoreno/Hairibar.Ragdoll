@@ -64,13 +64,13 @@ namespace Hairibar.Ragdoll.Animation.Editor
     }
 
     /// <summary>
-    /// Code-owned inventory of all 140 public-documentation capabilities. It is
+    /// Code-owned inventory of all public-documentation capabilities. It is
     /// intentionally independent from certification Markdown and its status
     /// columns, so documentation can never certify itself.
     /// </summary>
     public static class RagdollCapabilityCatalog
     {
-        public const int ExpectedCount = 140;
+        public const int ExpectedCount = 142;
 
         const string Creation = "http://www.root-motion.com/puppetmasterdox/html/page1.html";
         const string Editing = "http://www.root-motion.com/puppetmasterdox/html/page2.html";
@@ -80,6 +80,8 @@ namespace Hairibar.Ragdoll.Animation.Editor
         const string Behaviours = "http://www.root-motion.com/puppetmasterdox/html/page9.html";
         const string BehaviourPuppet = "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_behaviour_puppet.html";
         const string BehaviourFall = "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_behaviour_fall.html";
+        const string BehaviourBipedStagger = "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_behaviour_biped_stagger.html";
+        const string SubBehaviourBalancer = "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_sub_behaviour_balancer.html";
         const string Props = "http://www.root-motion.com/puppetmasterdox/html/page6.html";
         const string Ik = "http://www.root-motion.com/puppetmasterdox/html/page7.html";
         const string Performance = "http://www.root-motion.com/puppetmasterdox/html/page8.html";
@@ -227,7 +229,15 @@ namespace Hairibar.Ragdoll.Animation.Editor
             Add(result, "E", BehaviourFall, RagdollEvidenceKind.NUnitPlayMode, new[]
             {
                 S("BehaviourFall", "The Target Animator enters the configured Fall state, updates its height/velocity blend, obeys runtime parameters and invokes onEnd once only after both time and velocity gates pass.", "RagdollFallBehaviour; TargetAnimator"),
+                S(BehaviourBipedStagger, "BehaviourBipedStagger", "A sustained capture-point RequiresStep episode selects one swing foot, drives an Animator step state and physically recovers through lift-off, swing and replant without unpinning.", "RagdollBipedStaggerBehaviour; RagdollPuppetBehaviour.OnRequiresStep; StepSwingFoot"),
+                S(SubBehaviourBalancer + "; " + "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_sub_behaviour_balancer_1_1_settings.html", "SubBehaviourBalancer.Settings", "Reactive lower-leg torque uses the documented setting surface; force limit and damping have independently observable Hairibar effects.", "RagdollBipedBalancerSettings; RagdollBipedBalancerMath"),
             }, UnityAnimator);
+            RequireExactNUnitTest(result, "E02", RagdollEvidenceKind.NUnitPlayMode,
+                "Hairibar.Ragdoll.Animation.Tests.RagdollBipedStaggerBehaviourPlayModeTests." +
+                "PhysicalPush_RequiresStepEventActivatesStaggerWithoutManualBeginStep");
+            RequireExactNUnitTest(result, "E03", RagdollEvidenceKind.NUnitPlayMode,
+                "Hairibar.Ragdoll.Animation.Tests.RagdollBipedBalancerMathTests." +
+                "ResolveReactiveTorque_DamperForSpringAttenuatesMatchingAngularVelocity");
 
             Add(result, "F", Props, RagdollEvidenceKind.NUnitPlayMode, new[]
             {
@@ -316,7 +326,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
             result.Add(C("J03", UnityTests, "PlayMode test execution", "The complete PlayMode result contains zero failed, skipped or inconclusive cases.", "HairibarCertification.RunClosure", RagdollEvidenceKind.NUnitPlayMode));
             result.Add(C("J04", UnityBuild, "Development Player regression scenes", "All four imported regression scenes have no missing scripts and execute their deterministic assertions in a Development Player.", "RegressionScenarioRunner; HairibarCertification", RagdollEvidenceKind.SceneArtifact, RagdollEvidenceKind.WindowsPlayerScenario));
             result.Add(C("J05", UnityProfiler, "ProfilerRecorder", "Player profiling records warm-up, sample count, median and p95 CPU/memory and zero post-warm-up allocation for declared critical paths.", "HairibarCertification; ProfilerRecorder", RagdollEvidenceKind.ProfilerResult, RagdollEvidenceKind.WindowsPlayerScenario));
-            result.Add(C("J06", UnityTests, "independent manifest validation", "An independent second process validates 140 unique contracts, official sources, required current hashes and the provisional closure before the final manifest is issued.", "RagdollCapabilityCatalog; RagdollCoverageManifest", RagdollEvidenceKind.IndependentValidation));
+            result.Add(C("J06", UnityTests, "independent manifest validation", "An independent second process validates every unique catalog contract, official sources, required current hashes and the provisional closure before the final manifest is issued.", "RagdollCapabilityCatalog; RagdollCoverageManifest", RagdollEvidenceKind.IndependentValidation));
             result.Add(C("J07", PuppetMaster, "public API reference and Unity serialization contracts", "Technical migration documentation maps every exposed compatibility API and serialized migration to a real symbol and an official source without claiming undocumented PuppetMaster behavior.", "Public API; FormerlySerializedAs; migration guide", RagdollEvidenceKind.DocumentationAudit));
         }
 
@@ -430,7 +440,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
         {
             if (result.Count != ExpectedCount)
                 throw new InvalidOperationException(
-                    "Capability catalog must contain exactly 140 contracts; found " +
+                    "Capability catalog must contain exactly " + ExpectedCount + " contracts; found " +
                     result.Count + ".");
 
             string[] duplicates = result.GroupBy(contract => contract.Id)

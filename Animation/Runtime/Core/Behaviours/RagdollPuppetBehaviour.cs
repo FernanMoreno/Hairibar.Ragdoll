@@ -2815,6 +2815,8 @@ namespace Hairibar.Ragdoll.Animation
                 snapshot.CenterOfMassVelocity,
                 centerOfPressureTarget,
                 centerOfMass.Up,
+                (leftCalf.Rigidbody.angularVelocity
+                    + rightCalf.Rigidbody.angularVelocity) * 0.5f,
                 balancerSettings);
             if (torque.sqrMagnitude <= Mathf.Epsilon) return;
 

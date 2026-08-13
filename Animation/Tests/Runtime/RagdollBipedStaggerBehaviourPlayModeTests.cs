@@ -68,7 +68,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [UnityTest]
-        public IEnumerator StepActuator_CrossFadesSelectedFootAndRunsStepPhases()
+        public IEnumerator StepActuator_CrossFadesStepStateAndRunsStepPhases()
         {
             RuntimeAnimatorController controller = Resources.Load<RuntimeAnimatorController>(
                 "HairibarStaggerTests/StepRecovery");
@@ -95,14 +95,93 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 Is.EqualTo(RagdollBipedBalanceState.RequiresStep));
             yield return null;
 
-            Assert.That(rig.TargetAnimator.GetInteger("StepSwingFoot"), Is.EqualTo(0),
-                "Capture point lies left of both feet, so left foot must swing.");
+            Assert.That(rig.TargetAnimator.GetInteger("StepSwingFoot"), Is.EqualTo(1),
+                "Capture point lies left of both feet, so right trailing foot must swing.");
             Assert.That(rig.TargetAnimator.GetCurrentAnimatorStateInfo(0).fullPathHash,
                 Is.EqualTo(Animator.StringToHash("Base Layer.StepLeft")));
 
-            yield return new WaitForSeconds(0.08f);
+            // Sample animator directly before the ragdoll mapping pass can
+            // reconcile the Target pose. This is actuator evidence only.
+            rig.TargetAnimator.Update(0.15f);
             Assert.That(rig.LeftTarget.localPosition.x,
-                Is.LessThan(-0.5f), "StepLeft clip must move selected target foot.");
+                Is.LessThan(-0.5f), "StepLeft test clip must move its authored target foot.");
+            Assert.That(rig.RightTarget.localPosition.x,
+                Is.EqualTo(0.5f).Within(0.001f),
+                "StepLeft test clip must not move its other target foot.");
+        }
+
+        [UnityTest]
+        public IEnumerator PhysicalStep_SelectedFootMovesWhileStanceFootStaysGrounded()
+        {
+            RuntimeAnimatorController controller = Resources.Load<RuntimeAnimatorController>(
+                "HairibarStaggerTests/StepRecovery");
+            Assert.That(controller, Is.Not.Null);
+            rig = new StaggerPhysicalRig(footOffsetX: 0.5f, stepController: controller,
+                freezeBodies: false);
+            yield return new WaitForFixedUpdate();
+            StaggerPhysicalRig.SetField(rig.Stagger, "transitionDuration", 0f);
+            StaggerPhysicalRig.SetField(rig.Stagger, "liftOffDuration", 0.08f);
+            StaggerPhysicalRig.SetField(rig.Stagger, "swingDuration", 0.18f);
+            StaggerPhysicalRig.SetField(rig.Stagger, "replantDuration", 0.08f);
+            StaggerPhysicalRig.SetField(rig.Stagger, "settlingDuration", 0.12f);
+            Assert.That(rig.Controller.Activate<RagdollBipedStaggerBehaviour>(), Is.True);
+            SetProperty(rig.Stagger, "CurrentState", RagdollBipedBalanceState.RequiresStep);
+            Vector3 selectedStart = rig.LeftFootBody.position;
+            Vector3 stanceStart = rig.RightFootBody.position;
+            InvokePrivate(rig.Stagger, "BeginStep");
+
+            float selectedPeakHeight = selectedStart.y;
+            for (int frame = 0; frame < 18; frame++)
+            {
+                yield return new WaitForFixedUpdate();
+                selectedPeakHeight = Mathf.Max(selectedPeakHeight,
+                    rig.LeftFootBody.position.y);
+            }
+
+            float selectedTravel = Vector3.Distance(
+                rig.LeftFootBody.position, selectedStart);
+            float stanceTravel = Vector3.Distance(
+                rig.RightFootBody.position, stanceStart);
+            Assert.That(selectedTravel, Is.GreaterThan(0.02f),
+                "Selected physical foot must move during the step clip.");
+            Assert.That(stanceTravel, Is.LessThan(selectedTravel),
+                "Stance foot must move less than selected swing foot.");
+            Assert.That(selectedPeakHeight, Is.GreaterThan(selectedStart.y + 0.005f),
+                "Selected physical foot must lift off the ground during Swing.");
+            Assert.That(rig.LeftFootBody.position.y,
+                Is.EqualTo(selectedStart.y).Within(0.08f),
+                "Selected physical foot must replant by the end of the cycle.");
+        }
+
+        [UnityTest]
+        public IEnumerator PhysicalPush_RequiresStepEventActivatesStaggerWithoutManualBeginStep()
+        {
+            RuntimeAnimatorController controller = Resources.Load<RuntimeAnimatorController>(
+                "HairibarStaggerTests/StepRecovery");
+            Assert.That(controller, Is.Not.Null);
+            rig = new StaggerPhysicalRig(footOffsetX: 0.5f, stepController: controller,
+                freezeBodies: false);
+            rig.RootBody.constraints = RigidbodyConstraints.FreezeRotation;
+            rig.Puppet.CanStagger = true;
+            rig.Puppet.MinimumRequiresStepDuration = 0f;
+            rig.Puppet.OnRequiresStep = new RagdollPuppetEvent
+            {
+                SwitchToBehaviour = typeof(RagdollBipedStaggerBehaviour).FullName
+            };
+
+            yield return new WaitForFixedUpdate();
+            // 4.4 N*s / 2 kg = 2.2 m/s: capture point leaves left edge of
+            // support by a small amount, producing RequiresStep, not knockout.
+            rig.RootBody.AddForce(Vector3.left * 4.4f, ForceMode.Impulse);
+
+            for (int frame = 0; frame < 12; frame++)
+            {
+                yield return new WaitForFixedUpdate();
+                if (rig.Controller.ActiveBehaviour is RagdollBipedStaggerBehaviour)
+                    yield break;
+            }
+
+            Assert.Fail("Physical push did not route RequiresStep through OnRequiresStep to Stagger.");
         }
 
         static IEnumerator RunUntilIdleOrTimeout(StaggerPhysicalRig rig)
@@ -139,6 +218,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
         readonly RagdollDefinition definition;
         readonly RagdollAnimationProfile profile;
         readonly bool ignoredBefore;
+        GameObject ground;
 
         internal RagdollSetupResult Result { get; }
         internal RagdollPuppetBehaviour Puppet => Result.PuppetBehaviour;
@@ -149,9 +229,10 @@ namespace Hairibar.Ragdoll.Animation.Tests
         internal Rigidbody RightFootBody { get; }
         internal Animator TargetAnimator { get; }
         internal Transform LeftTarget { get; }
+        internal Transform RightTarget { get; }
 
         internal StaggerPhysicalRig(float footOffsetX, float footCenterX = 0f,
-            RuntimeAnimatorController stepController = null)
+            RuntimeAnimatorController stepController = null, bool freezeBodies = true)
         {
             ignoredBefore = Physics.GetIgnoreLayerCollision(28, 29);
             BoneName rootName = new BoneName("Root");
@@ -169,15 +250,17 @@ namespace Hairibar.Ragdoll.Animation.Tests
 
             RootBody = puppetRoot.AddComponent<Rigidbody>();
             RootBody.useGravity = false;
-            RootBody.constraints = RigidbodyConstraints.FreezeAll;
+            RootBody.constraints = freezeBodies
+                ? RigidbodyConstraints.FreezeAll
+                : RigidbodyConstraints.FreezePosition | RigidbodyConstraints.FreezeRotation;
             RootBody.mass = 2f;
             ConfigurableJoint rootJoint = puppetRoot.AddComponent<ConfigurableJoint>();
             BoxCollider rootCollider = puppetRoot.AddComponent<BoxCollider>();
             rootCollider.size = Vector3.one * 0.75f;
 
-            ConfigurableJoint leftJoint = ConfigureFrozenFoot(leftFoot, RootBody);
+            ConfigurableJoint leftJoint = ConfigureFoot(leftFoot, RootBody, freezeBodies);
             LeftFootBody = leftFoot.GetComponent<Rigidbody>();
-            ConfigurableJoint rightJoint = ConfigureFrozenFoot(rightFoot, RootBody);
+            ConfigurableJoint rightJoint = ConfigureFoot(rightFoot, RootBody, freezeBodies);
             RightFootBody = rightFoot.GetComponent<Rigidbody>();
 
             definition = ScriptableObject.CreateInstance<RagdollDefinition>();
@@ -205,6 +288,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
             GameObject rightTarget = new GameObject("foot_r");
             rightTarget.transform.SetParent(target.transform, false);
             rightTarget.transform.localPosition = new Vector3(footCenterX + footOffsetX, -1f, 0f);
+            RightTarget = rightTarget.transform;
 
             profile = ScriptableObject.CreateInstance<RagdollAnimationProfile>();
             Result = RagdollRuntimeSetupService.ConfigureSeparated(
@@ -213,18 +297,38 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Result.PuppetBehaviour.CanStagger = true;
             Result.PuppetBehaviour.LoseBalanceOnTargetDrift = false;
 
+            if (!freezeBodies)
+            {
+                RootBody.isKinematic = false;
+                LeftFootBody.isKinematic = false;
+                RightFootBody.isKinematic = false;
+                LeftFootBody.useGravity = true;
+                RightFootBody.useGravity = true;
+                ground = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                ground.name = "Stagger Test Ground";
+                ground.transform.position = new Vector3(0f, -1.15f, 0f);
+                ground.transform.localScale = new Vector3(10f, 0.1f, 10f);
+                ground.layer = 0;
+            }
+
             Stagger = Result.PuppetBehaviour.gameObject
                 .AddComponent<RagdollBipedStaggerBehaviour>();
         }
 
-        static ConfigurableJoint ConfigureFrozenFoot(GameObject foot, Rigidbody root)
+        static ConfigurableJoint ConfigureFoot(GameObject foot, Rigidbody root, bool freeze)
         {
             Rigidbody body = foot.AddComponent<Rigidbody>();
             body.useGravity = false;
-            body.constraints = RigidbodyConstraints.FreezeAll;
+            body.constraints = freeze ? RigidbodyConstraints.FreezeAll : RigidbodyConstraints.FreezeRotation;
             body.mass = 0.5f;
             ConfigurableJoint joint = foot.AddComponent<ConfigurableJoint>();
             joint.connectedBody = root;
+            if (!freeze)
+            {
+                joint.xMotion = ConfigurableJointMotion.Free;
+                joint.yMotion = ConfigurableJointMotion.Free;
+                joint.zMotion = ConfigurableJointMotion.Free;
+            }
             BoxCollider collider = foot.AddComponent<BoxCollider>();
             collider.size = Vector3.one * 0.25f;
             return joint;
@@ -235,6 +339,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Physics.IgnoreLayerCollision(28, 29, ignoredBefore);
             if (Result != null && Result.Target)
                 UnityEngine.Object.DestroyImmediate(Result.Target.gameObject);
+            if (ground) UnityEngine.Object.DestroyImmediate(ground);
             if (puppetRoot) UnityEngine.Object.DestroyImmediate(puppetRoot);
             if (profile) UnityEngine.Object.DestroyImmediate(profile);
             if (definition) UnityEngine.Object.DestroyImmediate(definition);

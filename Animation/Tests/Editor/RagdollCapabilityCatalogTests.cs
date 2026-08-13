@@ -14,16 +14,17 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
         {
             var contracts = RagdollCapabilityCatalog.Contracts;
 
-            Assert.That(contracts, Has.Count.EqualTo(140));
+            Assert.That(contracts, Has.Count.EqualTo(RagdollCapabilityCatalog.ExpectedCount));
             Assert.That(contracts.Select(contract => contract.Id).Distinct().Count(),
-                Is.EqualTo(140));
+                Is.EqualTo(RagdollCapabilityCatalog.ExpectedCount));
             Assert.That(contracts.All(contract => ValidId.IsMatch(contract.Id)), Is.True);
-            Assert.That(contracts.Count(contract => contract.IsApplicable), Is.EqualTo(139));
+            Assert.That(contracts.Count(contract => contract.IsApplicable),
+                Is.EqualTo(RagdollCapabilityCatalog.ExpectedCount - 1));
 
             string[] expected =
                 Range("A", 12).Concat(Range("B", 30))
                 .Concat(Range("C", 7)).Concat(Range("D", 46))
-                .Concat(Range("E", 1)).Concat(Range("F", 14))
+                .Concat(Range("E", 3)).Concat(Range("F", 14))
                 .Concat(Range("G", 5)).Concat(Range("H", 8))
                 .Concat(Range("I", 10)).Concat(Range("J", 7))
                 .ToArray();
