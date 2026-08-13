@@ -135,6 +135,15 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Assert.That(second.Survivor.Owner, Is.SameAs(second));
             Assert.That(first.Failing, Is.Not.SameAs(second.Failing));
 
+            // RagdollAnimator's own FixedUpdate can legitimately call ModifyPose
+            // during the "yield return null" above if a real physics tick lands
+            // inside that frame (batchmode timing is not guaranteed). Assert on
+            // the delta from this baseline, not an absolute count, so the test
+            // stays deterministic regardless of any such incidental tick.
+            int failingBaseline = first.Failing.FixedUpdateCount;
+            int survivorBaseline = first.Survivor.FixedUpdateCount;
+            int ownerBaseline = first.OwnerFixedUpdateCount;
+
             first.Failing.ThrowOnFixedUpdate = true;
             LogAssert.Expect(
                 LogType.Exception,
@@ -142,10 +151,13 @@ namespace Hairibar.Ragdoll.Animation.Tests
             rig.Result.Behaviours.ModifyPose(
                 rig.Result.Behaviours.Context.Pairs);
 
-            Assert.That(first.Failing.FixedUpdateCount, Is.EqualTo(1));
-            Assert.That(first.Survivor.FixedUpdateCount, Is.EqualTo(1),
+            Assert.That(first.Failing.FixedUpdateCount - failingBaseline,
+                Is.EqualTo(1));
+            Assert.That(first.Survivor.FixedUpdateCount - survivorBaseline,
+                Is.EqualTo(1),
                 "A failed reusable module must not block the next module.");
-            Assert.That(first.OwnerFixedUpdateCount, Is.EqualTo(1));
+            Assert.That(first.OwnerFixedUpdateCount - ownerBaseline,
+                Is.EqualTo(1));
 
             Assert.That(second.Activate(), Is.True);
             Assert.That(first.Failing.IsActive, Is.False);

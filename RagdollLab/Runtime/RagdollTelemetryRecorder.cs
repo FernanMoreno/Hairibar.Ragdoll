@@ -195,6 +195,7 @@ namespace Hairibar.Ragdoll.RagdollLab
                 Vector3 renderedPosition = rendered ? rendered.position : target.position;
                 Quaternion renderedRotation = rendered ? rendered.rotation : target.rotation;
                 result.Add(new TargetPoseTelemetry { id = StableId(target, "Pose"), bone = bonesToCapture[i].ToString(),
+                    physicsBodyId = StableId(physics.transform, "Rigidbody"),
                     targetPosition = new(target.position), physicsPosition = new(physics.position), renderedPosition = new(renderedPosition),
                     targetRotation = new(target.rotation), physicsRotation = new(physics.rotation), renderedRotation = new(renderedRotation),
                     targetPhysicsDistance = Vector3.Distance(target.position, physics.position),
@@ -440,7 +441,7 @@ namespace Hairibar.Ragdoll.RagdollLab
                 startedUtc = DateTime.UtcNow.ToString("O") };
             var report = new EvaluationReport { metadata = metadata, frameCount = frames.Count,
                 bodyCount = bodies.Count, jointCount = joints.Count, completed = frames.Count > 0 };
-            report.scenarioReport = RagdollLabAnalyzer.Analyze(frames, metadata.characterHeight, metadata.totalMass, metadata.gravityMagnitude);
+            report.scenarioReport = RagdollLabAnalyzer.Analyze(frames, metadata.characterHeight, metadata.totalMass, metadata.gravityMagnitude, thresholds);
             report.scenarioReport.name = scenario;
             report.diagnostics = RagdollLabAnalyzer.Diagnose(report.scenarioReport, thresholds);
             ValidateFinite(report);
@@ -468,6 +469,20 @@ namespace Hairibar.Ragdoll.RagdollLab
                 summary.WriteLine($"Dominant frequency: {report.scenarioReport.dominantFrequencyHz:R} Hz");
                 summary.WriteLine($"Fallen frames: {report.scenarioReport.fallenFrameCount}; recovery: {report.scenarioReport.recoveryTimeSeconds:R} s");
                 if (report.scenarioReport.topOffenderIds != null) summary.WriteLine("Top offenders: " + string.Join(", ", report.scenarioReport.topOffenderIds));
+
+                bool wroteEventHeader = false;
+                if (report.scenarioReport.joints != null) foreach (JointReport joint in report.scenarioReport.joints)
+                {
+                    if (joint.anchorErrorEvents == null || joint.anchorErrorEvents.Length == 0) continue;
+                    if (!wroteEventHeader) { summary.WriteLine("\n## Anchor Drift Events"); wroteEventHeader = true; }
+                    foreach (AnchorDriftEventReport evt in joint.anchorErrorEvents)
+                    {
+                        summary.WriteLine($"- `{joint.name}` @ {evt.eventName} (frame {evt.eventFrameIndex}, t={evt.eventSimulationTime:R}s): "
+                            + $"baseline={evt.baseline:R}m peak={evt.peak:R}m (+{evt.peakOffsetSeconds:R}s) | "
+                            + $"+50/100/250/500/1000ms = {evt.sample50ms:R}/{evt.sample100ms:R}/{evt.sample250ms:R}/{evt.sample500ms:R}/{evt.sample1000ms:R} | "
+                            + $"settling={evt.settlingTimeSeconds:R}s | AUC={evt.aucError:R} m*s | timeAboveThreshold={evt.timeAboveThresholdSeconds:R}s");
+                    }
+                }
             }
             if (report.diagnostics != null && report.diagnostics.diagnostics.Count > 0)
             {

@@ -104,6 +104,34 @@ namespace Hairibar.Ragdoll.Animation
         [Tooltip("Character-root-space offset from the physical hip when starting supine GetUp.")]
         [SerializeField] Vector3 getUpOffsetSupine = Vector3.zero;
 
+        [Header("Props")]
+        [Tooltip("Whether a Prop-group muscle drifting from its target can knock out the whole puppet, the same way a body muscle does.")]
+        [SerializeField] RagdollPropDriftPolicy propDriftPolicy =
+            RagdollPropDriftPolicy.Ignore;
+
+        [Header("Balancer (SubBehaviourBalancer port)")]
+        [Tooltip("Root-bone-relative left calf/shin bone the reactive ankle torque is applied to. Distinct from the stagger foot bones.")]
+        [SerializeField] BoneName balancerLeftCalfBone = "calf_l";
+        [Tooltip("Root-bone-relative right calf/shin bone the reactive ankle torque is applied to. Distinct from the stagger foot bones.")]
+        [SerializeField] BoneName balancerRightCalfBone = "calf_r";
+        [Tooltip("Mirrors PuppetMaster's SubBehaviourBalancer.Settings. torqueMlp=0 by default -- opt-in, matching the official product.")]
+        [SerializeField] RagdollBipedBalancerSettings balancerSettings =
+            RagdollBipedBalancerSettings.Default;
+
+        [Header("Stagger")]
+        [Tooltip("When true, a sustained RequiresStep balance classification invokes OnRequiresStep instead of only relying on TargetDrift knockout.")]
+        [SerializeField] bool canStagger = false;
+        [Tooltip("Root-bone-relative left foot bone used for the capture-point support segment.")]
+        [SerializeField] BoneName staggerLeftFootBone = "foot_l";
+        [Tooltip("Root-bone-relative right foot bone used for the capture-point support segment.")]
+        [SerializeField] BoneName staggerRightFootBone = "foot_r";
+        [SerializeField, Min(0.01f)] float staggerPendulumLength = 0.9f;
+        [SerializeField, Min(0f)] float staggerSupportRadius = 0.15f;
+        [SerializeField, Min(0f)] float staggerStableMargin = 0.05f;
+        [SerializeField, Min(0f)] float staggerRequiresStepMargin = 0.25f;
+        [Tooltip("How long RequiresStep must be sustained before OnRequiresStep fires, avoiding single-frame noise.")]
+        [SerializeField, Min(0f)] float minimumRequiresStepDuration = 0.1f;
+
         [Header("Events")]
         [SerializeField] RagdollPuppetEvent onGetUpProne;
         [SerializeField] RagdollPuppetEvent onGetUpSupine;
@@ -111,10 +139,12 @@ namespace Hairibar.Ragdoll.Animation
         [SerializeField] RagdollPuppetEvent onLoseBalanceFromPuppet;
         [SerializeField] RagdollPuppetEvent onLoseBalanceFromGetUp;
         [SerializeField] RagdollPuppetEvent onRegainBalance;
+        [SerializeField] RagdollPuppetEvent onRequiresStep;
 
         RagdollPuppetStateMachine stateMachine;
         [SerializeField] RagdollCenterOfMassSubBehaviour centerOfMass =
             new RagdollCenterOfMassSubBehaviour();
+        readonly RagdollBipedBalanceTrigger balanceTrigger = new RagdollBipedBalanceTrigger();
         RagdollPuppetCollisionProcessor collisionProcessor;
         RagdollPuppetUnmappedContactTracker unmappedContactTracker;
         // Kinematic mode needs contact memory filtered by its own activation policy.
@@ -168,6 +198,16 @@ namespace Hairibar.Ragdoll.Animation
         {
             get => loseBalanceOnTargetDrift;
             set => loseBalanceOnTargetDrift = value;
+        }
+        public RagdollPropDriftPolicy PropDriftPolicy
+        {
+            get => propDriftPolicy;
+            set => propDriftPolicy = value;
+        }
+        public RagdollBipedBalancerSettings BalancerSettings
+        {
+            get => balancerSettings;
+            set => balancerSettings = value;
         }
         public float PinWeightThreshold
         {
@@ -565,6 +605,21 @@ namespace Hairibar.Ragdoll.Animation
         {
             get => onRegainBalance;
             set => onRegainBalance = value;
+        }
+        public RagdollPuppetEvent OnRequiresStep
+        {
+            get => onRequiresStep;
+            set => onRequiresStep = value;
+        }
+        public bool CanStagger
+        {
+            get => canStagger;
+            set => canStagger = value;
+        }
+        public float MinimumRequiresStepDuration
+        {
+            get => minimumRequiresStepDuration;
+            set => minimumRequiresStepDuration = SanitizeNonNegative(value);
         }
 
         /// <summary>
@@ -1305,6 +1360,7 @@ namespace Hairibar.Ragdoll.Animation
             ApplyPropDropPolicyForCurrentState();
             centerOfMass.SetActive(true);
             centerOfMass.Reset();
+            balanceTrigger.Reset();
             lastKnockOutBone = RagdollBoneHandle.Invalid;
             getUpOrientation = RagdollGetUpOrientation.Unknown;
             targetAlignmentPending = false;
@@ -1352,6 +1408,7 @@ namespace Hairibar.Ragdoll.Animation
             ApplyPropDropPolicyForCurrentState();
             centerOfMass.SetActive(true);
             centerOfMass.Reset();
+            balanceTrigger.Reset();
             lastKnockOutBone = RagdollBoneHandle.Invalid;
             preparedGroundNormal = GetWorldUp();
             unmappedContactTracker.Reset();
@@ -1648,6 +1705,15 @@ namespace Hairibar.Ragdoll.Animation
                 UpdateKinematicSimulationMode();
                 ApplySurfaceConfiguration(false);
                 return;
+            }
+
+            if (canStagger
+                && State == RagdollPuppetState.Puppet
+                && !targetAlignmentPending
+                && TryClassifyStaggerBalance(out RagdollBipedBalanceState staggerClassification))
+            {
+                ApplyReactiveBalancer(staggerClassification);
+                EvaluateStaggerTrigger(staggerClassification, deltaTime);
             }
 
             if (!loseBalanceOnTargetDrift
@@ -2352,6 +2418,15 @@ namespace Hairibar.Ragdoll.Animation
             for (int index = 0; index < Context.Pairs.Count; index++)
             {
                 RagdollAnimator.AnimatedPair pair = Context.Pairs[index];
+
+                RagdollMuscleGroup pairGroup;
+                if (Context.Muscles.TryGetMuscleGroup(pair.Handle, out pairGroup)
+                    && !RagdollPuppetBehaviourMath.ShouldCountTowardKnockout(
+                        pairGroup, propDriftPolicy))
+                {
+                    continue;
+                }
+
                 MuscleRuntimeState muscleState =
                     Context.Muscles.GetState(pair.Handle);
                 RagdollMuscleBehaviourSettings settings =
@@ -2648,6 +2723,98 @@ namespace Hairibar.Ragdoll.Animation
             {
                 UnityEngine.Debug.LogException(exception, this);
             }
+        }
+
+        /// <summary>
+        /// Hysteresis gate over the RequiresStep classification -- fires OnRequiresStep
+        /// exactly once per sustained episode. Classification is computed by the caller
+        /// (ClassifyStaggerBalance) so this method stays independently testable.
+        /// </summary>
+        bool EvaluateStaggerTrigger(RagdollBipedBalanceState classification, float deltaTime)
+        {
+            if (!canStagger)
+            {
+                return false;
+            }
+
+            bool fired = balanceTrigger.Evaluate(
+                classification, deltaTime, minimumRequiresStepDuration);
+            if (fired)
+            {
+                InvokePuppetEventSafely(onRequiresStep);
+            }
+            return fired;
+        }
+
+        bool TryClassifyStaggerBalance(out RagdollBipedBalanceState classification)
+        {
+            classification = RagdollBipedBalanceState.Stable;
+            if (!Context.Bindings.TryGetBone(staggerLeftFootBone, out RagdollBone leftFoot)
+                || !Context.Bindings.TryGetBone(staggerRightFootBone, out RagdollBone rightFoot)
+                || leftFoot.Rigidbody == null || rightFoot.Rigidbody == null)
+            {
+                return false;
+            }
+
+            RagdollGroundingSnapshot snapshot = centerOfMass.Snapshot;
+            float margin = RagdollBipedBalanceMath.SignedCaptureMargin(
+                snapshot.CenterOfMass,
+                snapshot.CenterOfMassVelocity,
+                leftFoot.Rigidbody.position,
+                rightFoot.Rigidbody.position,
+                staggerPendulumLength,
+                Physics.gravity.magnitude,
+                staggerSupportRadius);
+            classification = RagdollBipedBalanceMath.Classify(
+                margin, staggerStableMargin, staggerRequiresStepMargin);
+            return true;
+        }
+
+        /// <summary>
+        /// SubBehaviourBalancer port: continuous corrective ankle torque while the
+        /// capture point has drifted enough to need correction but not enough to
+        /// require a step (RecoverableWithoutStep) -- a damping zone *before*
+        /// RequiresStep would fire the stagger step. No-ops while torqueMlp==0
+        /// (the official product's own default), so this is inert unless opted in.
+        /// </summary>
+        void ApplyReactiveBalancer(RagdollBipedBalanceState classification)
+        {
+            if (balancerSettings.TorqueMlp <= 0f
+                || classification != RagdollBipedBalanceState.RecoverableWithoutStep)
+            {
+                return;
+            }
+
+            if (!Context.Bindings.TryGetBone(staggerLeftFootBone, out RagdollBone leftFoot)
+                || !Context.Bindings.TryGetBone(staggerRightFootBone, out RagdollBone rightFoot)
+                || !Context.Bindings.TryGetBone(balancerLeftCalfBone, out RagdollBone leftCalf)
+                || !Context.Bindings.TryGetBone(balancerRightCalfBone, out RagdollBone rightCalf)
+                || leftFoot.Rigidbody == null || rightFoot.Rigidbody == null
+                || leftCalf.Rigidbody == null || rightCalf.Rigidbody == null)
+            {
+                return;
+            }
+
+            RagdollGroundingSnapshot snapshot = centerOfMass.Snapshot;
+            Vector3 capturePoint = RagdollBipedBalanceMath.CapturePoint(
+                snapshot.CenterOfMass,
+                snapshot.CenterOfMassVelocity,
+                staggerPendulumLength,
+                Physics.gravity.magnitude);
+            Vector3 supportCenter =
+                (leftFoot.Rigidbody.position + rightFoot.Rigidbody.position) * 0.5f;
+            Vector3 centerOfPressureTarget = RagdollBipedBalancerMath.ResolveCenterOfPressureTarget(
+                supportCenter, balancerSettings.CopOffset);
+            Vector3 torque = RagdollBipedBalancerMath.ResolveReactiveTorque(
+                capturePoint,
+                snapshot.CenterOfMassVelocity,
+                centerOfPressureTarget,
+                centerOfMass.Up,
+                balancerSettings);
+            if (torque.sqrMagnitude <= Mathf.Epsilon) return;
+
+            leftCalf.Rigidbody.AddTorque(torque, ForceMode.Force);
+            rightCalf.Rigidbody.AddTorque(torque, ForceMode.Force);
         }
 
         sealed class CachedSubscribers<T> where T : Delegate

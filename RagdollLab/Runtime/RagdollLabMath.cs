@@ -141,6 +141,61 @@ namespace Hairibar.Ragdoll.RagdollLab
             return com.y < minHeight || (upright < 0.35f && supportContactCount == 0);
         }
 
+        /// Mean of the samples strictly before eventIndex, over up to lookbackFrames.
+        /// With no antecedent (eventIndex == 0) the event's own sample is returned.
+        public static float Baseline(IReadOnlyList<float> values, int eventIndex, int lookbackFrames)
+        {
+            if (values == null || values.Count == 0) return 0f;
+            int clampedEvent = Mathf.Clamp(eventIndex, 0, values.Count - 1);
+            int start = Mathf.Max(0, clampedEvent - Mathf.Max(1, lookbackFrames));
+            int end = Mathf.Max(start + 1, clampedEvent);
+            double sum = 0d; int count = 0;
+            for (int i = start; i < end; i++) { sum += values[i]; count++; }
+            return count > 0 ? (float)(sum / count) : values[clampedEvent];
+        }
+
+        /// The maximum value (and its index) within [startIndex, endIndexExclusive).
+        public static (int index, float value) PeakAfter(IReadOnlyList<float> values, int startIndex, int endIndexExclusive)
+        {
+            if (values == null || values.Count == 0) return (0, 0f);
+            int start = Mathf.Clamp(startIndex, 0, values.Count - 1);
+            int end = Mathf.Clamp(endIndexExclusive, start + 1, values.Count);
+            int bestIndex = start; float bestValue = values[start];
+            for (int i = start; i < end; i++) if (values[i] > bestValue) { bestValue = values[i]; bestIndex = i; }
+            return (bestIndex, bestValue);
+        }
+
+        /// The sample offsetSeconds after eventIndex, clamped to the available data.
+        public static float SampleAtOffset(IReadOnlyList<float> values, float dt, int eventIndex, float offsetSeconds)
+        {
+            if (values == null || values.Count == 0 || dt <= 0f) return 0f;
+            int index = eventIndex + Mathf.RoundToInt(offsetSeconds / dt);
+            index = Mathf.Clamp(index, 0, values.Count - 1);
+            return values[index];
+        }
+
+        /// Trapezoidal integral of values over [startIndex, endIndexExclusive).
+        public static float AreaUnderCurve(IReadOnlyList<float> values, float dt, int startIndex, int endIndexExclusive)
+        {
+            if (values == null || values.Count == 0) return 0f;
+            int start = Mathf.Clamp(startIndex, 0, values.Count);
+            int end = Mathf.Clamp(endIndexExclusive, start, values.Count);
+            double area = 0d;
+            for (int i = start; i < end - 1; i++) area += (values[i] + values[i + 1]) * 0.5d * dt;
+            return (float)area;
+        }
+
+        /// Total time, in seconds, that values exceed threshold within [startIndex, endIndexExclusive).
+        public static float TimeAboveThreshold(IReadOnlyList<float> values, float dt, int startIndex, int endIndexExclusive, float threshold)
+        {
+            if (values == null || values.Count == 0) return 0f;
+            int start = Mathf.Clamp(startIndex, 0, values.Count);
+            int end = Mathf.Clamp(endIndexExclusive, start, values.Count);
+            int count = 0;
+            for (int i = start; i < end; i++) if (values[i] > threshold) count++;
+            return count * dt;
+        }
+
         public static bool IsFinite(Vector3 value) => IsFinite(value.x) && IsFinite(value.y) && IsFinite(value.z);
         public static bool IsFinite(Quaternion value) => IsFinite(value.x) && IsFinite(value.y) && IsFinite(value.z) && IsFinite(value.w);
         public static bool IsFinite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);

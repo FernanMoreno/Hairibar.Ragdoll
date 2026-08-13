@@ -6,7 +6,10 @@ namespace Hairibar.Ragdoll.RagdollLab
 {
     public static class RagdollLabAnalyzer
     {
-        public static ScenarioReport Analyze(IReadOnlyList<PhysicsFrame> frames, float characterHeight, float totalMass, float gravity)
+        const float AnchorEventHorizonSeconds = 1.5f;
+        const int AnchorEventBaselineLookbackFrames = 5;
+
+        public static ScenarioReport Analyze(IReadOnlyList<PhysicsFrame> frames, float characterHeight, float totalMass, float gravity, RagdollLabThresholds thresholds = null)
         {
             var report = new ScenarioReport { name = "Captured", frameCount = frames?.Count ?? 0 };
             if (frames == null || frames.Count == 0) return report;
@@ -43,6 +46,14 @@ namespace Hairibar.Ragdoll.RagdollLab
             report.contactTransitionsPerSecond = contactTransitions / Mathf.Max(report.durationSeconds, frames[0].fixedDeltaTime);
             report.shortContactCount = shortContacts;
 
+            var eventFrames = new List<(string name, int frameIndex, float simulationTime)>();
+            for (int i = 0; i < frames.Count; i++)
+            {
+                if (frames[i].events == null) continue;
+                for (int e = 0; e < frames[i].events.Length; e++)
+                    eventFrames.Add((frames[i].events[e].name, i, frames[i].events[e].simulationTime));
+            }
+
             int jointCount = frames[0].joints?.Length ?? 0;
             var joints = new JointReport[jointCount];
             for (int j = 0; j < jointCount; j++)
@@ -52,7 +63,7 @@ namespace Hairibar.Ragdoll.RagdollLab
                 for (int i = 0; i < frames.Count; i++)
                 {
                     JointTelemetry sample = frames[i].joints[j]; anchors.Add(sample.anchorError); forces.Add(sample.currentForce.ToVector3().magnitude); torques.Add(sample.currentTorque.ToVector3().magnitude); signal.Add(sample.relativeAngularSpeed);
-                    if (frames[i].targetPoses != null) for (int p = 0; p < frames[i].targetPoses.Length; p++) tracking.Add(frames[i].targetPoses[p].targetPhysicsAngularError);
+                    if (frames[i].targetPoses != null) for (int p = 0; p < frames[i].targetPoses.Length; p++) if (frames[i].targetPoses[p].physicsBodyId == sample.bodyId) tracking.Add(frames[i].targetPoses[p].targetPhysicsAngularError);
                 }
                 float dt = frames[0].fixedDeltaTime, norm = Mathf.Max(totalMass * gravity, 0.001f);
                 joints[j] = new JointReport { id = first.id, name = first.name,
@@ -62,7 +73,8 @@ namespace Hairibar.Ragdoll.RagdollLab
                     angularTrackingError = Summary("AngularTrackingError", "deg", tracking, 1f, "Quaternion.Angle(target, physics)", "pose tracking"),
                     oscillationZeroCrossings = RagdollLabMath.ZeroCrossings(signal, 0.001f),
                     dominantFrequencyHz = RagdollLabMath.DominantFrequencyByZeroCrossings(signal, 1f / Mathf.Max(dt, 0.0001f), 0.001f),
-                    settlingTimeSeconds = RagdollLabMath.SettlingTime(signal, dt, 0f, 0.05f) };
+                    settlingTimeSeconds = RagdollLabMath.SettlingTime(signal, dt, 0f, 0.05f),
+                    anchorErrorEvents = BuildAnchorEventReports(anchors, dt, eventFrames, frames.Count, thresholds) };
             }
             report.joints = joints;
             var offenders = new List<JointReport>(joints);
@@ -90,6 +102,39 @@ namespace Hairibar.Ragdoll.RagdollLab
                     Add(result, "TrackingError", "medium", "0.65", joint.name, "mean target-to-physics angular error high", "insufficient drive, collision, or mapping mismatch", joint.angularTrackingError, joint.angularTrackingError.mean, 0, 0);
             }
             return result;
+        }
+
+        static AnchorDriftEventReport[] BuildAnchorEventReports(List<float> anchors, float dt, List<(string name, int frameIndex, float simulationTime)> eventFrames, int frameCount, RagdollLabThresholds thresholds)
+        {
+            if (eventFrames == null || eventFrames.Count == 0) return Array.Empty<AnchorDriftEventReport>();
+            thresholds ??= ScriptableObject.CreateInstance<RagdollLabThresholds>();
+            float safeDt = Mathf.Max(dt, 0.0001f);
+            int horizonFrames = Mathf.Max(1, Mathf.RoundToInt(AnchorEventHorizonSeconds / safeDt));
+            var reports = new AnchorDriftEventReport[eventFrames.Count];
+            for (int e = 0; e < eventFrames.Count; e++)
+            {
+                (string name, int frameIndex, float simulationTime) evt = eventFrames[e];
+                int windowEnd = Mathf.Min(frameCount, evt.frameIndex + horizonFrames);
+                if (e + 1 < eventFrames.Count) windowEnd = Mathf.Min(windowEnd, eventFrames[e + 1].frameIndex);
+                windowEnd = Mathf.Max(windowEnd, evt.frameIndex + 1);
+                List<float> window = anchors.GetRange(evt.frameIndex, windowEnd - evt.frameIndex);
+                float baseline = RagdollLabMath.Baseline(anchors, evt.frameIndex, AnchorEventBaselineLookbackFrames);
+                (int peakIndex, float peakValue) = RagdollLabMath.PeakAfter(window, 0, window.Count);
+                reports[e] = new AnchorDriftEventReport
+                {
+                    eventName = evt.name, eventFrameIndex = evt.frameIndex, eventSimulationTime = evt.simulationTime,
+                    baseline = baseline, peak = peakValue, peakOffsetSeconds = peakIndex * safeDt,
+                    sample50ms = RagdollLabMath.SampleAtOffset(window, safeDt, 0, 0.05f),
+                    sample100ms = RagdollLabMath.SampleAtOffset(window, safeDt, 0, 0.1f),
+                    sample250ms = RagdollLabMath.SampleAtOffset(window, safeDt, 0, 0.25f),
+                    sample500ms = RagdollLabMath.SampleAtOffset(window, safeDt, 0, 0.5f),
+                    sample1000ms = RagdollLabMath.SampleAtOffset(window, safeDt, 0, 1f),
+                    settlingTimeSeconds = RagdollLabMath.SettlingTime(window, safeDt, baseline, thresholds.anchorErrorWarningMeters),
+                    aucError = RagdollLabMath.AreaUnderCurve(window, safeDt, 0, window.Count),
+                    timeAboveThresholdSeconds = RagdollLabMath.TimeAboveThreshold(window, safeDt, 0, window.Count, thresholds.anchorErrorWarningMeters),
+                };
+            }
+            return reports;
         }
 
         static void Add(DiagnosticsReport report, string type, string severity, string confidence, string subject, string observation, string hypothesis, MetricSummary metric, float peak, int first, int count)

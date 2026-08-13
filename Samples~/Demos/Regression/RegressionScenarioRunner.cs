@@ -260,6 +260,7 @@ namespace Hairibar.Ragdoll.Demo
         {
             internal GameObject Owner;
             internal RagdollFallBehaviour Fall;
+            internal RagdollBipedStaggerBehaviour Stagger;
             internal RegressionDeterministicIKSolver IKSolver;
             internal RagdollIKScheduler IKScheduler;
             internal RagdollSetupResult Setup;
@@ -869,6 +870,25 @@ namespace Hairibar.Ragdoll.Demo
                 Require(result, integrationRig.Fall.CurrentBlend >= 0f
                         && IsFinite(integrationRig.Fall.CurrentBlend),
                     "BehaviourFall did not produce a finite runtime blend.");
+
+                Require(result, integrationRig.Stagger != null,
+                    "BehaviourBipedStagger was not attached to the real controller.");
+                Require(result,
+                    integrationRig.Setup.Behaviours
+                        .Activate<RagdollBipedStaggerBehaviour>(),
+                    "BehaviourBipedStagger could not become active.");
+                WaitForFixedUpdate staggerFixedUpdate = new WaitForFixedUpdate();
+                for (int frame = 0; frame < 30 && !(integrationRig.Setup.Behaviours
+                        .ActiveBehaviour is RagdollPuppetBehaviour); frame++)
+                    yield return staggerFixedUpdate;
+                bool staggerRecovered = integrationRig.Setup.Behaviours
+                    .ActiveBehaviour is RagdollPuppetBehaviour;
+                RequireSemantic(result, staggerRecovered,
+                    "humanoid.stagger-fail-safe-recovery",
+                    staggerRecovered ? 1d : 0d, 1d, "Equal",
+                    "BehaviourBipedStagger did not fail safe back to "
+                    + "BehaviourPuppet when its feet could not be resolved.");
+
                 if (clipRecorder.Clip) Destroy(clipRecorder.Clip);
                 result.succeeded = string.IsNullOrEmpty(result.error);
             }
@@ -1234,6 +1254,7 @@ namespace Hairibar.Ragdoll.Demo
                 return null;
             }
             RagdollFallBehaviour fall = null;
+            RagdollBipedStaggerBehaviour stagger = null;
             RegressionDeterministicIKSolver solver = null;
             RagdollIKScheduler scheduler = null;
             if (includeHumanoidSystems)
@@ -1250,6 +1271,13 @@ namespace Hairibar.Ragdoll.Demo
                 fall.BlendParameter = "FallBlend";
                 fall.CanEnd = false;
                 fall.enabled = false;
+                // The generated regression rig does not author foot_l/foot_r bones,
+                // so this exercises the actuator's fail-safe path: it must always
+                // hand control back to BehaviourPuppet even when its feet cannot be
+                // resolved, never leaving the controller stuck off BehaviourPuppet.
+                stagger = setup.PuppetBehaviour.gameObject
+                    .AddComponent<RagdollBipedStaggerBehaviour>();
+                stagger.enabled = false;
                 solver = target.gameObject
                     .AddComponent<RegressionDeterministicIKSolver>();
                 scheduler = target.gameObject.AddComponent<RagdollIKScheduler>();
@@ -1268,6 +1296,7 @@ namespace Hairibar.Ragdoll.Demo
                 Setup = setup,
                 Bindings = bindings,
                 Fall = fall,
+                Stagger = stagger,
                 IKSolver = solver,
                 IKScheduler = scheduler,
                 OriginalChildParent = physicalChild ? physicalChild.parent : null

@@ -123,6 +123,14 @@ namespace Hairibar.Ragdoll.Animation
                 : Vector3.up;
         }
 
+        internal static bool ShouldCountTowardKnockout(
+            RagdollMuscleGroup group,
+            RagdollPropDriftPolicy policy)
+        {
+            return policy != RagdollPropDriftPolicy.Ignore
+                || group != RagdollMuscleGroup.Prop;
+        }
+
         internal static bool IsGetUpReady(
             float unpinnedElapsedTime,
             float getUpDelay,

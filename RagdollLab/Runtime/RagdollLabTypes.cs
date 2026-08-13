@@ -91,6 +91,7 @@ namespace Hairibar.Ragdoll.RagdollLab
     {
         public string id;
         public string bone;
+        public string physicsBodyId;
         public Vector3Data targetPosition, physicsPosition, renderedPosition;
         public QuaternionData targetRotation, physicsRotation, renderedRotation;
         public float targetPhysicsDistance;
@@ -163,12 +164,23 @@ namespace Hairibar.Ragdoll.RagdollLab
         public int count;
     }
 
+    [Serializable] public sealed class AnchorDriftEventReport
+    {
+        public string eventName;
+        public int eventFrameIndex;
+        public float eventSimulationTime;
+        public float baseline, peak, peakOffsetSeconds;
+        public float sample50ms, sample100ms, sample250ms, sample500ms, sample1000ms;
+        public float settlingTimeSeconds, aucError, timeAboveThresholdSeconds;
+    }
+
     [Serializable] public sealed class JointReport
     {
         public string id, name;
         public MetricSummary anchorError, force, torque, angularTrackingError;
         public int oscillationZeroCrossings;
         public float dominantFrequencyHz, overshootPercent, settlingTimeSeconds;
+        public AnchorDriftEventReport[] anchorErrorEvents = Array.Empty<AnchorDriftEventReport>();
     }
 
     [Serializable] public sealed class ScenarioReport

@@ -271,6 +271,21 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Assert.That(transformed.magnitude, Is.EqualTo(1f).Within(0.0001f));
         }
 
+        [TestCase(RagdollMuscleGroup.Prop, RagdollPropDriftPolicy.Ignore, false)]
+        [TestCase(RagdollMuscleGroup.Prop, RagdollPropDriftPolicy.CountsTowardKnockout, true)]
+        [TestCase(RagdollMuscleGroup.Spine, RagdollPropDriftPolicy.Ignore, true)]
+        [TestCase(RagdollMuscleGroup.Hips, RagdollPropDriftPolicy.Ignore, true)]
+        public void ShouldCountTowardKnockout_OnlyExcludesPropGroupUnderIgnorePolicy(
+            RagdollMuscleGroup group,
+            RagdollPropDriftPolicy policy,
+            bool expected)
+        {
+            bool result = RagdollPuppetBehaviourMath.ShouldCountTowardKnockout(
+                group, policy);
+
+            Assert.That(result, Is.EqualTo(expected));
+        }
+
         [Test]
         public void TeleportDirection_UsesFallbackForMissingCachedDirection()
         {

@@ -1,0 +1,120 @@
+using NUnit.Framework;
+using UnityEngine;
+
+namespace Hairibar.Ragdoll.Animation.Tests
+{
+    public class RagdollBipedBalancerMathTests
+    {
+        static RagdollBipedBalancerSettings DefaultSettings(float torqueMlp = 1f)
+        {
+            RagdollBipedBalancerSettings settings = RagdollBipedBalancerSettings.Default;
+            settings.TorqueMlp = torqueMlp;
+            return settings;
+        }
+
+        [Test]
+        public void ResolveCenterOfPressureTarget_OffsetsSupportCenterInWorldSpace()
+        {
+            Vector3 target = RagdollBipedBalancerMath.ResolveCenterOfPressureTarget(
+                new Vector3(1f, 0f, 2f), new Vector3(0.1f, 0f, -0.2f));
+
+            Assert.That(target, Is.EqualTo(new Vector3(1.1f, 0f, 1.8f)));
+        }
+
+        [Test]
+        public void ResolveReactiveTorque_ZeroOffsetAndVelocity_IsZero()
+        {
+            Vector3 torque = RagdollBipedBalancerMath.ResolveReactiveTorque(
+                capturePoint: Vector3.zero,
+                captureVelocity: Vector3.zero,
+                centerOfPressureTarget: Vector3.zero,
+                up: Vector3.up,
+                settings: DefaultSettings());
+
+            Assert.That(torque, Is.EqualTo(Vector3.zero));
+        }
+
+        [Test]
+        public void ResolveReactiveTorque_TorqueMlpZero_IsAlwaysZero()
+        {
+            Vector3 torque = RagdollBipedBalancerMath.ResolveReactiveTorque(
+                capturePoint: new Vector3(0.5f, 0f, 0f),
+                captureVelocity: new Vector3(1f, 0f, 0f),
+                centerOfPressureTarget: Vector3.zero,
+                up: Vector3.up,
+                settings: DefaultSettings(torqueMlp: 0f));
+
+            Assert.That(torque, Is.EqualTo(Vector3.zero));
+        }
+
+        [Test]
+        public void ResolveReactiveTorque_ForwardOffset_ProducesHorizontalAxisTorque()
+        {
+            Vector3 torque = RagdollBipedBalancerMath.ResolveReactiveTorque(
+                capturePoint: new Vector3(0f, 0f, 0.5f),
+                captureVelocity: Vector3.zero,
+                centerOfPressureTarget: Vector3.zero,
+                up: Vector3.up,
+                settings: DefaultSettings());
+
+            Assert.That(torque.y, Is.EqualTo(0f).Within(0.0001f),
+                "A lean-correcting ankle torque rotates about a horizontal axis, not the up axis.");
+            Assert.That(torque.magnitude, Is.GreaterThan(0f));
+        }
+
+        [Test]
+        public void ResolveReactiveTorque_ScalesWithTorqueMlpAndIMlp()
+        {
+            RagdollBipedBalancerSettings baseline = DefaultSettings(torqueMlp: 1f);
+            RagdollBipedBalancerSettings doubled = baseline;
+            doubled.IMlp = 2f;
+
+            Vector3 offset = new Vector3(0f, 0f, 0.5f);
+            Vector3 baseTorque = RagdollBipedBalancerMath.ResolveReactiveTorque(
+                offset, Vector3.zero, Vector3.zero, Vector3.up, baseline);
+            Vector3 doubledTorque = RagdollBipedBalancerMath.ResolveReactiveTorque(
+                offset, Vector3.zero, Vector3.zero, Vector3.up, doubled);
+
+            Assert.That(doubledTorque.magnitude,
+                Is.EqualTo(baseTorque.magnitude * 2f).Within(0.001f));
+        }
+
+        [Test]
+        public void ResolveReactiveTorque_VelocityPredictsFurtherLean()
+        {
+            RagdollBipedBalancerSettings settings = DefaultSettings();
+            settings.VelocityF = 1f;
+
+            Vector3 withoutVelocity = RagdollBipedBalancerMath.ResolveReactiveTorque(
+                new Vector3(0f, 0f, 0.2f), Vector3.zero, Vector3.zero, Vector3.up, settings);
+            Vector3 withVelocity = RagdollBipedBalancerMath.ResolveReactiveTorque(
+                new Vector3(0f, 0f, 0.2f), new Vector3(0f, 0f, 0.3f), Vector3.zero, Vector3.up, settings);
+
+            Assert.That(withVelocity.magnitude, Is.GreaterThan(withoutVelocity.magnitude));
+        }
+
+        [Test]
+        public void ResolveReactiveTorque_ClampsToMaxTorqueMag()
+        {
+            RagdollBipedBalancerSettings settings = DefaultSettings(torqueMlp: 1000f);
+            settings.MaxTorqueMag = 5f;
+
+            Vector3 torque = RagdollBipedBalancerMath.ResolveReactiveTorque(
+                new Vector3(0f, 0f, 2f), Vector3.zero, Vector3.zero, Vector3.up, settings);
+
+            Assert.That(torque.magnitude, Is.EqualTo(5f).Within(0.001f));
+        }
+
+        [Test]
+        public void ResolveReactiveTorque_NegativeMaxTorqueMag_IsSanitizedToZero()
+        {
+            RagdollBipedBalancerSettings settings = DefaultSettings();
+            settings.MaxTorqueMag = -10f;
+
+            Vector3 torque = RagdollBipedBalancerMath.ResolveReactiveTorque(
+                new Vector3(0f, 0f, 0.5f), Vector3.zero, Vector3.zero, Vector3.up, settings);
+
+            Assert.That(torque, Is.EqualTo(Vector3.zero));
+        }
+    }
+}
