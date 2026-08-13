@@ -117,6 +117,25 @@ namespace Hairibar.Ragdoll.RagdollLab.Tests
                 Is.False);
         }
 
+        [Test]
+        public void Diagnose_PersistentEventBelowGlobalP95_IsStillFlagged()
+        {
+            // Thirty 20 ms samples above threshold are persistent evidence,
+            // but only 3% of this long capture: global p95 stays at baseline.
+            float[] anchorErrors = BuildSeries(frameCount: 1000, spikeFrame: 3, spikeValue: 0.05f,
+                baseline: 0.001f, settleAtFrame: 33);
+            ScenarioReport report = AnalyzeAnchorSeries(anchorErrors, spikeFrame: 3);
+            RagdollLabThresholds thresholds = RagdollLabThresholds();
+
+            Assert.That(report.joints[0].anchorError.p95,
+                Is.LessThanOrEqualTo(thresholds.anchorErrorWarningMeters));
+
+            DiagnosticsReport diagnostics = RagdollLabAnalyzer.Diagnose(report, thresholds);
+
+            Assert.That(diagnostics.diagnostics.Exists(d => d.type == "PersistentAnchorDrift"),
+                Is.True, "Event evidence must not be hidden by a low global p95.");
+        }
+
         static float[] BuildSeries(int frameCount, int spikeFrame, float spikeValue, float baseline, int settleAtFrame)
         {
             var series = new float[frameCount];

@@ -1,0 +1,50 @@
+using NUnit.Framework;
+using UnityEditor;
+using UnityEditor.Animations;
+using UnityEngine;
+
+namespace Hairibar.Ragdoll.Animation.Editor.Tests
+{
+    public sealed class RagdollBipedStaggerAnimatorLayerEditorTests
+    {
+        const string Folder = "Assets/__HairibarStaggerAnimatorLayerTests";
+        GameObject root;
+
+        [SetUp]
+        public void SetUp()
+        {
+            if (AssetDatabase.IsValidFolder(Folder)) AssetDatabase.DeleteAsset(Folder);
+            AssetDatabase.CreateFolder("Assets", "__HairibarStaggerAnimatorLayerTests");
+            root = new GameObject("Stagger Animator Layer Test");
+        }
+
+        [TearDown]
+        public void TearDown()
+        {
+            if (root) Object.DestroyImmediate(root);
+            if (AssetDatabase.IsValidFolder(Folder)) AssetDatabase.DeleteAsset(Folder);
+            AssetDatabase.Refresh();
+        }
+
+        [Test]
+        public void DefaultAnimatorLayer_ResolvesStateFromNonBaseLayer()
+        {
+            AnimatorController controller = AnimatorController.CreateAnimatorControllerAtPath(
+                Folder + "/Stagger.controller");
+            controller.AddLayer("StepLayer");
+            controller.layers[1].stateMachine.AddState("Forward");
+            AssetDatabase.SaveAssets();
+
+            Animator animator = root.AddComponent<Animator>();
+            animator.runtimeAnimatorController = controller;
+            animator.Rebind();
+            RagdollBipedStaggerBehaviour stagger =
+                root.AddComponent<RagdollBipedStaggerBehaviour>();
+
+            int layer = stagger.ResolveStepStateLayer(
+                animator, Animator.StringToHash("StepLayer.Forward"));
+
+            Assert.That(layer, Is.EqualTo(1));
+        }
+    }
+}

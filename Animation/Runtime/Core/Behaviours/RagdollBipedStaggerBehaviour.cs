@@ -278,10 +278,8 @@ namespace Hairibar.Ragdoll.Animation
 
             string stateName = ResolveStepStateName(direction);
             if (string.IsNullOrEmpty(stateName)) return false;
-            if (!animator.HasState(Mathf.Max(0, animatorLayer), Animator.StringToHash(stateName)))
-            {
-                return false;
-            }
+            int layer = ResolveStepStateLayer(animator, Animator.StringToHash(stateName));
+            if (layer < 0) return false;
 
             if (!string.IsNullOrEmpty(swingFootParameterName))
             {
@@ -289,8 +287,29 @@ namespace Hairibar.Ragdoll.Animation
                     swingFootParameterName, swingFoot == RagdollBipedStepFoot.Left ? 0 : 1);
             }
             animator.CrossFadeInFixedTime(
-                stateName, transitionDuration, animatorLayer);
+                stateName, transitionDuration, layer);
             return true;
+        }
+
+        // Animator.CrossFadeInFixedTime accepts -1 as its default layer, but
+        // Animator.HasState only queries one concrete layer. Resolve that
+        // default to the layer that actually owns the requested state so the
+        // validation and transition always use the same layer.
+        internal int ResolveStepStateLayer(Animator animator, int stateHash)
+        {
+            if (animatorLayer >= 0)
+            {
+                return animatorLayer < animator.layerCount
+                    && animator.HasState(animatorLayer, stateHash)
+                    ? animatorLayer
+                    : -1;
+            }
+
+            for (int layer = 0; layer < animator.layerCount; layer++)
+            {
+                if (animator.HasState(layer, stateHash)) return layer;
+            }
+            return -1;
         }
 
         string ResolveStepStateName(RagdollBipedStepDirection direction)

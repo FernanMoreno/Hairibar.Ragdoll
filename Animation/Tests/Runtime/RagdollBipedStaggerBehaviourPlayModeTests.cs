@@ -48,16 +48,13 @@ namespace Hairibar.Ragdoll.Animation.Tests
         [UnityTest]
         public IEnumerator UnrecoverableCaptureMargin_ExhaustsStepsAndUnpinsThePuppet()
         {
-            rig = new StaggerPhysicalRig(footOffsetX: 0.5f);
+            // Create feet offset before their joints are created. Teleporting
+            // constrained bodies after setup is reverted by PhysX and does
+            // not construct an Unrecoverable capture-margin scenario.
+            rig = new StaggerPhysicalRig(footOffsetX: 0.5f, footCenterX: 5f);
             yield return null;
-            // Move both feet far to one side while root (and therefore the
-            // mass-weighted center of mass) stays near the origin: the
-            // foot-to-foot support segment ends up far from the capture
-            // point -> Unrecoverable every frame, so the very first step
-            // must fail immediately regardless of remaining budget
-            // (RagdollBipedStaggerMath.ResolveOutcome).
-            rig.LeftFootBody.transform.position += Vector3.right * 5f;
-            rig.RightFootBody.transform.position += Vector3.right * 5f;
+            // Root remains near origin while authored foot support segment is
+            // far right: first classification must be Unrecoverable.
             rig.Stagger.StableMargin = 0.05f;
             rig.Stagger.RequiresStepMargin = 0.1f;
             rig.Stagger.MaxSteps = 1;
@@ -97,7 +94,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
         internal Rigidbody LeftFootBody { get; }
         internal Rigidbody RightFootBody { get; }
 
-        internal StaggerPhysicalRig(float footOffsetX)
+        internal StaggerPhysicalRig(float footOffsetX, float footCenterX = 0f)
         {
             ignoredBefore = Physics.GetIgnoreLayerCollision(28, 29);
             BoneName rootName = new BoneName("Root");
@@ -108,10 +105,10 @@ namespace Hairibar.Ragdoll.Animation.Tests
             puppetRoot.SetActive(false);
             GameObject leftFoot = new GameObject("foot_l");
             leftFoot.transform.SetParent(puppetRoot.transform, false);
-            leftFoot.transform.localPosition = new Vector3(-footOffsetX, -1f, 0f);
+            leftFoot.transform.localPosition = new Vector3(footCenterX - footOffsetX, -1f, 0f);
             GameObject rightFoot = new GameObject("foot_r");
             rightFoot.transform.SetParent(puppetRoot.transform, false);
-            rightFoot.transform.localPosition = new Vector3(footOffsetX, -1f, 0f);
+            rightFoot.transform.localPosition = new Vector3(footCenterX + footOffsetX, -1f, 0f);
 
             RootBody = puppetRoot.AddComponent<Rigidbody>();
             RootBody.useGravity = false;
@@ -144,10 +141,10 @@ namespace Hairibar.Ragdoll.Animation.Tests
             GameObject target = new GameObject("Stagger Puppet");
             GameObject leftTarget = new GameObject("foot_l");
             leftTarget.transform.SetParent(target.transform, false);
-            leftTarget.transform.localPosition = new Vector3(-footOffsetX, -1f, 0f);
+            leftTarget.transform.localPosition = new Vector3(footCenterX - footOffsetX, -1f, 0f);
             GameObject rightTarget = new GameObject("foot_r");
             rightTarget.transform.SetParent(target.transform, false);
-            rightTarget.transform.localPosition = new Vector3(footOffsetX, -1f, 0f);
+            rightTarget.transform.localPosition = new Vector3(footCenterX + footOffsetX, -1f, 0f);
 
             profile = ScriptableObject.CreateInstance<RagdollAnimationProfile>();
             Result = RagdollRuntimeSetupService.ConfigureSeparated(
