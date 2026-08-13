@@ -278,7 +278,8 @@ namespace Hairibar.Ragdoll.Animation
 
             string stateName = ResolveStepStateName(direction);
             if (string.IsNullOrEmpty(stateName)) return false;
-            int layer = ResolveStepStateLayer(animator, Animator.StringToHash(stateName));
+            int stateHash = Animator.StringToHash(stateName);
+            int layer = ResolveStepStateLayer(animator, stateHash);
             if (layer < 0) return false;
 
             if (!string.IsNullOrEmpty(swingFootParameterName))
@@ -286,9 +287,14 @@ namespace Hairibar.Ragdoll.Animation
                 animator.SetInteger(
                     swingFootParameterName, swingFoot == RagdollBipedStepFoot.Left ? 0 : 1);
             }
-            animator.CrossFadeInFixedTime(
-                stateName, transitionDuration, layer);
+            CrossFadeStepState(animator, stateHash, transitionDuration, layer);
             return true;
+        }
+
+        internal static void CrossFadeStepState(
+            Animator animator, int stateHash, float duration, int layer)
+        {
+            animator.CrossFadeInFixedTime(stateHash, duration, layer);
         }
 
         // Animator.CrossFadeInFixedTime accepts -1 as its default layer, but

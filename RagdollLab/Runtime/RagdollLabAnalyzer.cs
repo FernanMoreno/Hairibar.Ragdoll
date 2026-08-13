@@ -100,13 +100,7 @@ namespace Hairibar.Ragdoll.RagdollLab
             for (int i = 0; i < report.joints.Length; i++)
             {
                 JointReport joint = report.joints[i];
-                // Event reports preserve temporal evidence that p95 can hide
-                // in a long capture. If events exist, classify them even when
-                // their aggregate share is below the global p95 threshold.
-                if (joint.anchorErrorEvents != null && joint.anchorErrorEvents.Length > 0)
-                    AddAnchorDriftDiagnostic(result, joint);
-                else if (joint.anchorError.p95 > thresholds.anchorErrorWarningMeters)
-                    AddAnchorDriftDiagnostic(result, joint);
+                AddAnchorDriftDiagnostic(result, joint, thresholds);
                 if (joint.torque.p95 > thresholds.torqueSpikeWarning)
                     Add(result, "HighJointTorque", "medium", "0.70", joint.name, "torque p95 exceeds threshold", "overcontrol, collision load, or effective inertia", joint.torque, joint.torque.p95, 0, 0);
                 if (joint.oscillationZeroCrossings >= thresholds.oscillationWarningCrossings && joint.dominantFrequencyHz >= thresholds.oscillationWarningHz)
@@ -117,21 +111,29 @@ namespace Hairibar.Ragdoll.RagdollLab
             return result;
         }
 
-        static void AddAnchorDriftDiagnostic(DiagnosticsReport result, JointReport joint)
+        static void AddAnchorDriftDiagnostic(
+            DiagnosticsReport result, JointReport joint, RagdollLabThresholds thresholds)
         {
             bool hasEvents = joint.anchorErrorEvents != null && joint.anchorErrorEvents.Length > 0;
             if (!hasEvents)
             {
+                if (joint.anchorError.p95 <= thresholds.anchorErrorWarningMeters) return;
                 Add(result, "AnchorDrift", "high", "0.85", joint.name,
                     "anchor p95 exceeds threshold (no event markers captured to classify further)",
                     "constraint anchor or solver instability", joint.anchorError, joint.anchorError.p95, 0, 0);
                 return;
             }
 
+            bool qualifyingExcursion = false;
             bool persistent = false;
             for (int e = 0; e < joint.anchorErrorEvents.Length; e++)
             {
                 AnchorDriftEventReport evt = joint.anchorErrorEvents[e];
+                // EventMarker also records lifecycle events such as GetUp.
+                // It is only anchor-drift evidence once its actual peak crossed
+                // the configured anchor-error threshold.
+                if (evt.peak <= thresholds.anchorErrorWarningMeters) continue;
+                qualifyingExcursion = true;
                 if (evt.settlingTimeSeconds >= PersistentAnchorSettlingSeconds
                     || evt.timeAboveThresholdSeconds >= PersistentAnchorTimeAboveThresholdSeconds)
                 {
@@ -140,11 +142,21 @@ namespace Hairibar.Ragdoll.RagdollLab
                 }
             }
 
+            if (!qualifyingExcursion)
+            {
+                if (joint.anchorError.p95 > thresholds.anchorErrorWarningMeters)
+                    Add(result, "AnchorDrift", "high", "0.85", joint.name,
+                        "anchor p95 exceeds threshold but no event had a qualifying anchor excursion",
+                        "constraint anchor or solver instability", joint.anchorError,
+                        joint.anchorError.p95, 0, 0);
+                return;
+            }
+
             if (persistent)
             {
                 Add(result, "PersistentAnchorDrift", "high", "0.85", joint.name,
                     "anchor error has not settled within " + PersistentAnchorSettlingSeconds
-                    + "s of an impact event", "constraint anchor or solver instability",
+                    + "s of a qualifying event", "constraint anchor or solver instability",
                     joint.anchorError, joint.anchorError.p95, 0, 0);
             }
             else

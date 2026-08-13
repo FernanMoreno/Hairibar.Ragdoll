@@ -67,6 +67,44 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Assert.That(rig.Puppet.State, Is.EqualTo(RagdollPuppetState.Unpinned));
         }
 
+        [UnityTest]
+        public IEnumerator StepActuator_CrossFadesSelectedFootAndRunsStepPhases()
+        {
+            RuntimeAnimatorController controller = Resources.Load<RuntimeAnimatorController>(
+                "HairibarStaggerTests/StepRecovery");
+            Assert.That(controller, Is.Not.Null,
+                "Run Code Red/Ragdoll/Create Stagger Test Assets before PlayMode tests.");
+            rig = new StaggerPhysicalRig(footOffsetX: 0.5f,
+                stepController: controller);
+            yield return null;
+            rig.Stagger.StableMargin = 0.05f;
+            rig.Stagger.RequiresStepMargin = 0.25f;
+            StaggerPhysicalRig.SetField(rig.Stagger, "liftOffDuration", 0.04f);
+            StaggerPhysicalRig.SetField(rig.Stagger, "swingDuration", 0.08f);
+            StaggerPhysicalRig.SetField(rig.Stagger, "replantDuration", 0.04f);
+            StaggerPhysicalRig.SetField(rig.Stagger, "settlingDuration", 0.04f);
+            StaggerPhysicalRig.SetField(rig.Stagger, "transitionDuration", 0f);
+
+            Assert.That(rig.Controller.Activate<RagdollBipedStaggerBehaviour>(), Is.True);
+            // This lifecycle fixture intentionally freezes physics. Invoke the
+            // RequiresStep actuator with its real initialized context; physical
+            // push/lift/replant evidence requires a separate non-frozen rig.
+            SetProperty(rig.Stagger, "CurrentState", RagdollBipedBalanceState.RequiresStep);
+            InvokePrivate(rig.Stagger, "BeginStep");
+            Assert.That(rig.Stagger.CurrentState,
+                Is.EqualTo(RagdollBipedBalanceState.RequiresStep));
+            yield return null;
+
+            Assert.That(rig.TargetAnimator.GetInteger("StepSwingFoot"), Is.EqualTo(0),
+                "Capture point lies left of both feet, so left foot must swing.");
+            Assert.That(rig.TargetAnimator.GetCurrentAnimatorStateInfo(0).fullPathHash,
+                Is.EqualTo(Animator.StringToHash("Base Layer.StepLeft")));
+
+            yield return new WaitForSeconds(0.08f);
+            Assert.That(rig.LeftTarget.localPosition.x,
+                Is.LessThan(-0.5f), "StepLeft clip must move selected target foot.");
+        }
+
         static IEnumerator RunUntilIdleOrTimeout(StaggerPhysicalRig rig)
         {
             WaitForFixedUpdate fixedUpdate = new WaitForFixedUpdate();
@@ -76,6 +114,22 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 if (rig.Controller.ActiveBehaviour is RagdollPuppetBehaviour) yield break;
             }
             Assert.Fail("Stagger actuator never returned control to RagdollPuppetBehaviour.");
+        }
+
+        static void SetProperty(object owner, string name, object value)
+        {
+            PropertyInfo property = owner.GetType().GetProperty(name,
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            Assert.That(property, Is.Not.Null, name);
+            property.SetValue(owner, value);
+        }
+
+        static void InvokePrivate(object owner, string name)
+        {
+            MethodInfo method = owner.GetType().GetMethod(name,
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(method, Is.Not.Null, name);
+            method.Invoke(owner, null);
         }
     }
 
@@ -93,8 +147,11 @@ namespace Hairibar.Ragdoll.Animation.Tests
         internal Rigidbody RootBody { get; }
         internal Rigidbody LeftFootBody { get; }
         internal Rigidbody RightFootBody { get; }
+        internal Animator TargetAnimator { get; }
+        internal Transform LeftTarget { get; }
 
-        internal StaggerPhysicalRig(float footOffsetX, float footCenterX = 0f)
+        internal StaggerPhysicalRig(float footOffsetX, float footCenterX = 0f,
+            RuntimeAnimatorController stepController = null)
         {
             ignoredBefore = Physics.GetIgnoreLayerCollision(28, 29);
             BoneName rootName = new BoneName("Root");
@@ -139,9 +196,12 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Assert.That(bindings.IsInitialized, Is.True);
 
             GameObject target = new GameObject("Stagger Puppet");
+            TargetAnimator = target.AddComponent<Animator>();
+            TargetAnimator.runtimeAnimatorController = stepController;
             GameObject leftTarget = new GameObject("foot_l");
             leftTarget.transform.SetParent(target.transform, false);
             leftTarget.transform.localPosition = new Vector3(footCenterX - footOffsetX, -1f, 0f);
+            LeftTarget = leftTarget.transform;
             GameObject rightTarget = new GameObject("foot_r");
             rightTarget.transform.SetParent(target.transform, false);
             rightTarget.transform.localPosition = new Vector3(footCenterX + footOffsetX, -1f, 0f);
@@ -201,7 +261,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
             return dictionary;
         }
 
-        static void SetField(object owner, string name, object value)
+        internal static void SetField(object owner, string name, object value)
         {
             FieldInfo field = owner.GetType().GetField(
                 name,

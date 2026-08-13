@@ -5,6 +5,20 @@ namespace Hairibar.Ragdoll.Animation.Tests
 {
     public class RagdollBipedBalancerMathTests
     {
+        [Test]
+        public void DefaultSettings_MatchDocumentedSubBehaviourBalancerDefaults()
+        {
+            RagdollBipedBalancerSettings settings = RagdollBipedBalancerSettings.Default;
+
+            Assert.That(settings.DamperForSpring, Is.EqualTo(1f));
+            Assert.That(settings.MaxForceMlp, Is.EqualTo(0.05f));
+            Assert.That(settings.IMlp, Is.EqualTo(1f));
+            Assert.That(settings.VelocityF, Is.EqualTo(0.5f));
+            Assert.That(settings.CopOffset, Is.EqualTo(Vector3.zero));
+            Assert.That(settings.TorqueMlp, Is.Zero);
+            Assert.That(settings.MaxTorqueMag, Is.EqualTo(45f));
+        }
+
         static RagdollBipedBalancerSettings DefaultSettings(float torqueMlp = 1f)
         {
             RagdollBipedBalancerSettings settings = RagdollBipedBalancerSettings.Default;

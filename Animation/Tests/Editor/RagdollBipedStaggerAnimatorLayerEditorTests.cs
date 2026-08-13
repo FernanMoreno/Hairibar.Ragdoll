@@ -32,6 +32,7 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
             AnimatorController controller = AnimatorController.CreateAnimatorControllerAtPath(
                 Folder + "/Stagger.controller");
             controller.AddLayer("StepLayer");
+            controller.layers[1].stateMachine.AddState("Idle");
             controller.layers[1].stateMachine.AddState("Forward");
             AssetDatabase.SaveAssets();
 
@@ -45,6 +46,14 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
                 animator, Animator.StringToHash("StepLayer.Forward"));
 
             Assert.That(layer, Is.EqualTo(1));
+
+            int stateHash = Animator.StringToHash("StepLayer.Forward");
+            RagdollBipedStaggerBehaviour.CrossFadeStepState(
+                animator, stateHash, 0f, layer);
+            animator.Update(0f);
+
+            Assert.That(animator.GetCurrentAnimatorStateInfo(layer).fullPathHash,
+                Is.EqualTo(stateHash));
         }
     }
 }

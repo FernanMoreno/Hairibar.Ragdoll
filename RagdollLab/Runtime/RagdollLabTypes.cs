@@ -6,7 +6,7 @@ namespace Hairibar.Ragdoll.RagdollLab
 {
     public static class RagdollLabSchema
     {
-        public const string Version = "1.0.0";
+        public const string Version = "1.1.0";
     }
 
     [Serializable] public struct Vector3Data

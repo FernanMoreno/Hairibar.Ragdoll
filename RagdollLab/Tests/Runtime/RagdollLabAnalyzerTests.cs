@@ -136,6 +136,22 @@ namespace Hairibar.Ragdoll.RagdollLab.Tests
                 Is.True, "Event evidence must not be hidden by a low global p95.");
         }
 
+        [Test]
+        public void Diagnose_EventWithoutAnchorExcursion_ProducesNoAnchorDiagnostic()
+        {
+            float[] anchorErrors = BuildSeries(frameCount: 40, spikeFrame: 3, spikeValue: 0.001f,
+                baseline: 0.001f, settleAtFrame: -1);
+            ScenarioReport report = AnalyzeAnchorSeries(anchorErrors, spikeFrame: 3);
+
+            DiagnosticsReport diagnostics = RagdollLabAnalyzer.Diagnose(
+                report, RagdollLabThresholds());
+
+            Assert.That(diagnostics.diagnostics.Exists(d =>
+                    d.type == "AnchorDrift"
+                    || d.type == "TransientAnchorExcursion"
+                    || d.type == "PersistentAnchorDrift"), Is.False);
+        }
+
         static float[] BuildSeries(int frameCount, int spikeFrame, float spikeValue, float baseline, int settleAtFrame)
         {
             var series = new float[frameCount];

@@ -73,7 +73,7 @@ namespace Hairibar.Ragdoll.Animation
         public static RagdollBipedBalancerSettings Default => new RagdollBipedBalancerSettings
         {
             damperForSpring = 1f,
-            maxForceMlp = 1f,
+            maxForceMlp = 0.05f,
             iMlp = 1f,
             velocityF = 0.5f,
             copOffset = Vector3.zero,
