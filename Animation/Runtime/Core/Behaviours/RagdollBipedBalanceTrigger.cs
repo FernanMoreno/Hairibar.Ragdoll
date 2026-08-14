@@ -12,6 +12,9 @@ namespace Hairibar.Ragdoll.Animation
         float requiresStepElapsed;
         bool firedThisEpisode;
 
+        internal float RequiresStepElapsed => requiresStepElapsed;
+        internal bool FiredThisEpisode => firedThisEpisode;
+
         internal void Reset()
         {
             requiresStepElapsed = 0f;

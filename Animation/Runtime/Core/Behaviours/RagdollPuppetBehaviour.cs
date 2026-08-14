@@ -145,6 +145,14 @@ namespace Hairibar.Ragdoll.Animation
         [SerializeField] RagdollCenterOfMassSubBehaviour centerOfMass =
             new RagdollCenterOfMassSubBehaviour();
         readonly RagdollBipedBalanceTrigger balanceTrigger = new RagdollBipedBalanceTrigger();
+        RagdollBipedBalanceState lastStaggerClassification =
+            RagdollBipedBalanceState.Stable;
+        RagdollGroundingSnapshot lastStaggerSnapshot =
+            RagdollGroundingSnapshot.Empty;
+        RagdollGroundingSnapshot pendingStaggerSnapshot =
+            RagdollGroundingSnapshot.Empty;
+        bool hasLastStaggerSnapshot;
+        bool hasPendingStaggerSnapshot;
         RagdollPuppetCollisionProcessor collisionProcessor;
         RagdollPuppetUnmappedContactTracker unmappedContactTracker;
         // Kinematic mode needs contact memory filtered by its own activation policy.
@@ -621,6 +629,18 @@ namespace Hairibar.Ragdoll.Animation
             get => minimumRequiresStepDuration;
             set => minimumRequiresStepDuration = SanitizeNonNegative(value);
         }
+
+        // Read-only diagnostics for the physical stagger contract. These retain
+        // the outgoing Puppet classification when OnRequiresStep switches to the
+        // incoming Stagger behaviour, so a benchmark can prove the duration gate
+        // without sampling an already-reset COM sub-behaviour.
+        internal RagdollBipedBalanceState LastStaggerClassification =>
+            lastStaggerClassification;
+        internal float StaggerRequiresStepElapsed =>
+            balanceTrigger.RequiresStepElapsed;
+        internal bool StaggerTriggerFired => balanceTrigger.FiredThisEpisode;
+        internal RagdollGroundingSnapshot LastStaggerSnapshot =>
+            lastStaggerSnapshot;
 
         /// <summary>
         /// Raised immediately for each Enter/Stay collision accepted by the layer,
@@ -1361,6 +1381,11 @@ namespace Hairibar.Ragdoll.Animation
             centerOfMass.SetActive(true);
             centerOfMass.Reset();
             balanceTrigger.Reset();
+            lastStaggerClassification = RagdollBipedBalanceState.Stable;
+            hasLastStaggerSnapshot = false;
+            hasPendingStaggerSnapshot = false;
+            lastStaggerSnapshot = RagdollGroundingSnapshot.Empty;
+            pendingStaggerSnapshot = RagdollGroundingSnapshot.Empty;
             lastKnockOutBone = RagdollBoneHandle.Invalid;
             getUpOrientation = RagdollGetUpOrientation.Unknown;
             targetAlignmentPending = false;
@@ -1409,6 +1434,11 @@ namespace Hairibar.Ragdoll.Animation
             centerOfMass.SetActive(true);
             centerOfMass.Reset();
             balanceTrigger.Reset();
+            lastStaggerClassification = RagdollBipedBalanceState.Stable;
+            hasLastStaggerSnapshot = false;
+            hasPendingStaggerSnapshot = false;
+            lastStaggerSnapshot = RagdollGroundingSnapshot.Empty;
+            pendingStaggerSnapshot = RagdollGroundingSnapshot.Empty;
             lastKnockOutBone = RagdollBoneHandle.Invalid;
             preparedGroundNormal = GetWorldUp();
             unmappedContactTracker.Reset();
@@ -2746,9 +2776,33 @@ namespace Hairibar.Ragdoll.Animation
                 classification, deltaTime, minimumRequiresStepDuration);
             if (fired)
             {
+                // Activate() can switch behaviours while Puppet is dispatching
+                // this fixed update. Puppet's COM sub-behaviour is reset during
+                // deactivation, so preserve the exact snapshot that caused the
+                // event for the incoming Stagger behaviour.
+                if (hasLastStaggerSnapshot)
+                {
+                    pendingStaggerSnapshot = lastStaggerSnapshot;
+                    hasPendingStaggerSnapshot = true;
+                }
                 InvokePuppetEventSafely(onRequiresStep);
             }
             return fired;
+        }
+
+        internal bool TryConsumeStaggerSnapshot(
+            out RagdollGroundingSnapshot snapshot)
+        {
+            if (!hasPendingStaggerSnapshot)
+            {
+                snapshot = RagdollGroundingSnapshot.Empty;
+                return false;
+            }
+
+            snapshot = pendingStaggerSnapshot;
+            pendingStaggerSnapshot = RagdollGroundingSnapshot.Empty;
+            hasPendingStaggerSnapshot = false;
+            return snapshot.TotalMass > Mathf.Epsilon;
         }
 
         bool TryClassifyStaggerBalance(out RagdollBipedBalanceState classification)
@@ -2762,6 +2816,13 @@ namespace Hairibar.Ragdoll.Animation
             }
 
             RagdollGroundingSnapshot snapshot = centerOfMass.Snapshot;
+            if (snapshot.TotalMass <= Mathf.Epsilon)
+            {
+                return false;
+            }
+
+            lastStaggerSnapshot = snapshot;
+            hasLastStaggerSnapshot = true;
             float margin = RagdollBipedBalanceMath.SignedCaptureMargin(
                 snapshot.CenterOfMass,
                 snapshot.CenterOfMassVelocity,
@@ -2772,6 +2833,7 @@ namespace Hairibar.Ragdoll.Animation
                 staggerSupportRadius);
             classification = RagdollBipedBalanceMath.Classify(
                 margin, staggerStableMargin, staggerRequiresStepMargin);
+            lastStaggerClassification = classification;
             return true;
         }
 

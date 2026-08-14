@@ -1,3 +1,17 @@
 .vscode/
 PublishUPM.bat
 PublishUPM.bat.meta
+
+.agents/
+.claude/
+.specify/
+graphify-out/
+obsidian-save-draft/
+specs/
+AGENTS.md*
+AI_WORKFLOW.md*
+CLAUDE.md*
+graphify-out.meta
+obsidian-save-draft.meta
+skills-lock.json*
+specs.meta

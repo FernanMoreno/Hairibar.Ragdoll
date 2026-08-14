@@ -156,6 +156,41 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 Is.EqualTo(baseline.magnitude - 2f).Within(0.001f));
         }
 
+        // Contract evidence for E03. Keep the focused unit tests above: this
+        // single stable-ID test proves the public settings together, matching
+        // the catalog claim rather than certifying it from damping alone.
+        [Test]
+        public void E03_PublicSettingsHaveObservableEffects()
+        {
+            RagdollBipedBalancerSettings lowForce = DefaultSettings(torqueMlp: 100f);
+            lowForce.MaxTorqueMag = 10f;
+            lowForce.MaxForceMlp = 0.1f;
+            RagdollBipedBalancerSettings highForce = lowForce;
+            highForce.MaxForceMlp = 0.5f;
+
+            Vector3 lowTorque = RagdollBipedBalancerMath.ResolveReactiveTorque(
+                new Vector3(0f, 0f, 2f), Vector3.zero, Vector3.zero,
+                Vector3.up, lowForce);
+            Vector3 highTorque = RagdollBipedBalancerMath.ResolveReactiveTorque(
+                new Vector3(0f, 0f, 2f), Vector3.zero, Vector3.zero,
+                Vector3.up, highForce);
+            Assert.That(highTorque.magnitude, Is.GreaterThan(lowTorque.magnitude),
+                "MaxForceMlp must scale the effective correction limit.");
+
+            RagdollBipedBalancerSettings damping = DefaultSettings(torqueMlp: 10f);
+            damping.MaxForceMlp = 1f;
+            damping.MaxTorqueMag = 10f;
+            damping.DamperForSpring = 1f;
+            Vector3 undamped = RagdollBipedBalancerMath.ResolveReactiveTorque(
+                new Vector3(0f, 0f, 0.5f), Vector3.zero, Vector3.zero,
+                Vector3.up, damping);
+            Vector3 damped = RagdollBipedBalancerMath.ResolveReactiveTorque(
+                new Vector3(0f, 0f, 0.5f), Vector3.zero, Vector3.zero,
+                Vector3.up, undamped.normalized * 2f, damping);
+            Assert.That(damped.magnitude, Is.LessThan(undamped.magnitude),
+                "DamperForSpring must attenuate matching angular velocity.");
+        }
+
         [Test]
         public void ResolveReactiveTorque_NegativeMaxTorqueMag_IsSanitizedToZero()
         {

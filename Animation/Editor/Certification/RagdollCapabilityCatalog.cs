@@ -234,10 +234,10 @@ namespace Hairibar.Ragdoll.Animation.Editor
             }, UnityAnimator);
             RequireExactNUnitTest(result, "E02", RagdollEvidenceKind.NUnitPlayMode,
                 "Hairibar.Ragdoll.Animation.Tests.RagdollBipedStaggerBehaviourPlayModeTests." +
-                "PhysicalPush_RequiresStepEventActivatesStaggerWithoutManualBeginStep");
+                "E02_PhysicalPush_StaggerRecoveryBenchmarkProvesCompleteEpisode");
             RequireExactNUnitTest(result, "E03", RagdollEvidenceKind.NUnitPlayMode,
                 "Hairibar.Ragdoll.Animation.Tests.RagdollBipedBalancerMathTests." +
-                "ResolveReactiveTorque_DamperForSpringAttenuatesMatchingAngularVelocity");
+                "E03_PublicSettingsHaveObservableEffects");
 
             Add(result, "F", Props, RagdollEvidenceKind.NUnitPlayMode, new[]
             {

@@ -107,7 +107,7 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
 
             Assert.That(validation.succeeded, Is.False);
             Assert.That(validation.errors,
-                Does.Contain("ProvisionalCountsMustBe138Verified1Open1NA"));
+                Does.Contain("ProvisionalCountsMustMatchCatalog"));
         }
 
         [Test]

@@ -53,6 +53,8 @@ namespace Hairibar.Ragdoll.Animation
         [SerializeField] string rightStateName = "StepRight";
         [SerializeField, Min(0f)] float transitionDuration = 0.1f;
         [SerializeField] int animatorLayer = -1;
+        [Tooltip("Optional suffix for an explicit right-foot branch, appended to the directional state name when that state exists (for example StepLeftRightFoot). If absent, StepSwingFoot parameter branching remains the fallback.")]
+        [SerializeField] string rightFootStateSuffix = "RightFoot";
         [Tooltip("Animator int parameter set to 0 (left) or 1 (right) right before the crossfade, so the controller can mirror/branch the clip to the physically-selected swing foot. Leave empty to skip -- the 4 clips above must then already commit to one leading foot.")]
         [SerializeField] string swingFootParameterName = "StepSwingFoot";
 
@@ -66,11 +68,19 @@ namespace Hairibar.Ragdoll.Animation
             new RagdollBipedStaggerStateMachine();
         RagdollBipedStepFoot swingFoot;
         BoneName swingFootBone;
+        RagdollGroundingSnapshot activationSnapshot =
+            RagdollGroundingSnapshot.Empty;
+        RagdollGroundingSnapshot lastClassificationSnapshot =
+            RagdollGroundingSnapshot.Empty;
+        bool hasActivationSnapshot;
+        bool hasClassificationSnapshot;
         bool pendingFirstClassification;
 
         public RagdollBipedBalanceState CurrentState { get; private set; } =
             RagdollBipedBalanceState.Stable;
         public float LastSignedSupportMargin { get; private set; }
+        internal RagdollGroundingSnapshot LastClassificationSnapshot =>
+            lastClassificationSnapshot;
         public event Action<RagdollBipedBalanceState, RagdollBipedBalanceState> BalanceStateChanged;
 
         public float PendulumLength
@@ -114,6 +124,10 @@ namespace Hairibar.Ragdoll.Animation
             CurrentState = RagdollBipedBalanceState.Stable;
             LastSignedSupportMargin = 0f;
             stepMachine.Reset();
+            hasActivationSnapshot = puppet != null
+                && puppet.TryConsumeStaggerSnapshot(out activationSnapshot);
+            hasClassificationSnapshot = false;
+            lastClassificationSnapshot = RagdollGroundingSnapshot.Empty;
             // Do not classify/BeginStep here: centerOfMass has not run a single
             // FixedUpdate yet, so its Snapshot is still Empty (zero COM/velocity).
             // Deciding a step from that would pick a foot/direction blind. Defer
@@ -125,6 +139,8 @@ namespace Hairibar.Ragdoll.Animation
         protected override void OnBehaviourDeactivated()
         {
             centerOfMass.SetActive(false);
+            hasActivationSnapshot = false;
+            hasClassificationSnapshot = false;
         }
 
         protected override void OnBehaviourShutdown()
@@ -135,7 +151,7 @@ namespace Hairibar.Ragdoll.Animation
         protected override void OnBehaviourFixedUpdate(float deltaTime)
         {
             centerOfMass.FixedUpdate(deltaTime);
-            UpdateBalanceClassification();
+            if (!UpdateBalanceClassification()) return;
 
             // Unrecoverable aborts the moment it is observed, mid-cycle or not --
             // finishing a visual LiftOff/Swing/Replant/Settling the physics has
@@ -200,16 +216,29 @@ namespace Hairibar.Ragdoll.Animation
             }
         }
 
-        void UpdateBalanceClassification()
+        bool UpdateBalanceClassification()
         {
             if (!Context.Bindings.TryGetBone(leftFootBone, out RagdollBone leftFoot)
                 || !Context.Bindings.TryGetBone(rightFootBone, out RagdollBone rightFoot)
                 || leftFoot.Rigidbody == null || rightFoot.Rigidbody == null)
             {
-                return;
+                return false;
             }
 
-            RagdollGroundingSnapshot grounding = centerOfMass.Snapshot;
+            RagdollGroundingSnapshot grounding;
+            if (hasActivationSnapshot)
+            {
+                grounding = activationSnapshot;
+                hasActivationSnapshot = false;
+            }
+            else
+            {
+                grounding = centerOfMass.Snapshot;
+            }
+            if (grounding.TotalMass <= Mathf.Epsilon) return false;
+
+            lastClassificationSnapshot = grounding;
+            hasClassificationSnapshot = true;
             float margin = RagdollBipedBalanceMath.SignedCaptureMargin(
                 grounding.CenterOfMass,
                 grounding.CenterOfMassVelocity,
@@ -222,11 +251,12 @@ namespace Hairibar.Ragdoll.Animation
 
             RagdollBipedBalanceState nextState = RagdollBipedBalanceMath.Classify(
                 margin, stableMargin, requiresStepMargin);
-            if (nextState == CurrentState) return;
+            if (nextState == CurrentState) return true;
 
             RagdollBipedBalanceState previous = CurrentState;
             CurrentState = nextState;
             BalanceStateChanged?.Invoke(previous, nextState);
+            return true;
         }
 
         void BeginStep()
@@ -241,7 +271,14 @@ namespace Hairibar.Ragdoll.Animation
                 return;
             }
 
-            RagdollGroundingSnapshot grounding = centerOfMass.Snapshot;
+            RagdollGroundingSnapshot grounding = hasClassificationSnapshot
+                ? lastClassificationSnapshot
+                : centerOfMass.Snapshot;
+            if (grounding.TotalMass <= Mathf.Epsilon)
+            {
+                stepMachine.RegisterStepFailed();
+                return;
+            }
             Vector3 capturePoint = RagdollBipedBalanceMath.CapturePoint(
                 grounding.CenterOfMass,
                 grounding.CenterOfMassVelocity,
@@ -288,8 +325,62 @@ namespace Hairibar.Ragdoll.Animation
                 animator.SetInteger(
                     swingFootParameterName, swingFoot == RagdollBipedStepFoot.Left ? 0 : 1);
             }
-            CrossFadeStepState(animator, stateHash, transitionDuration, layer);
+
+            // A parameter-driven transition can be evaluated from the previous
+            // Animator state during the same fixed tick as CrossFade. When an
+            // explicit right-foot branch exists, target it directly so the
+            // physical selection and the clip branch cannot diverge. Controllers
+            // without this naming convention retain the StepSwingFoot fallback.
+            if (swingFoot == RagdollBipedStepFoot.Right
+                && !string.IsNullOrEmpty(rightFootStateSuffix))
+            {
+                string explicitRightState = stateName + rightFootStateSuffix;
+                int explicitRightHash = Animator.StringToHash(explicitRightState);
+                int explicitRightLayer = ResolveStepStateLayer(
+                    animator, explicitRightHash);
+                if (explicitRightLayer < 0)
+                {
+                    for (int candidateLayer = 0;
+                        candidateLayer < animator.layerCount;
+                        candidateLayer++)
+                    {
+                        int fullPathHash = Animator.StringToHash(
+                            animator.GetLayerName(candidateLayer) + "." +
+                            explicitRightState);
+                        if (!animator.HasState(candidateLayer, fullPathHash))
+                            continue;
+
+                        explicitRightHash = fullPathHash;
+                        explicitRightLayer = candidateLayer;
+                        break;
+                    }
+                }
+                if (explicitRightLayer >= 0)
+                {
+                    stateName = explicitRightState;
+                    stateHash = explicitRightHash;
+                    layer = explicitRightLayer;
+                }
+            }
+            CrossFadeStepState(animator, stateName, transitionDuration, layer);
             return true;
+        }
+
+        internal static void CrossFadeStepState(
+            Animator animator, string stateName, float duration, int layer)
+        {
+            string fullPath = animator.GetLayerName(layer) + "." + stateName;
+            int fullPathHash = Animator.StringToHash(fullPath);
+            if (animator.HasState(layer, fullPathHash))
+            {
+                animator.CrossFadeInFixedTime(fullPath, duration, layer);
+                return;
+            }
+
+            // Some imported controllers expose only the short state name.
+            // Preserve that documented overload as a compatibility fallback,
+            // but prefer the layer-qualified path whenever HasState confirms it.
+            animator.CrossFadeInFixedTime(stateName, duration, layer);
         }
 
         internal static void CrossFadeStepState(

@@ -89,6 +89,34 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
                     "RealtimeSamplesAtMostOncePerRenderedFrame"));
         }
 
+        [Test]
+        public void StaggerAndBalancerEvidenceMatchTheirClaims()
+        {
+            RagdollCapabilityContract stagger =
+                RagdollCapabilityCatalog.Get("E02");
+            Assert.That(stagger.ExactNUnitEvidenceTests,
+                Has.Count.EqualTo(1));
+            Assert.That(
+                stagger.ExactNUnitEvidenceTests[
+                    RagdollEvidenceKind.NUnitPlayMode],
+                Is.EqualTo(
+                    "Hairibar.Ragdoll.Animation.Tests." +
+                    "RagdollBipedStaggerBehaviourPlayModeTests." +
+                    "E02_PhysicalPush_StaggerRecoveryBenchmarkProvesCompleteEpisode"));
+
+            RagdollCapabilityContract balancer =
+                RagdollCapabilityCatalog.Get("E03");
+            Assert.That(balancer.ExactNUnitEvidenceTests,
+                Has.Count.EqualTo(1));
+            Assert.That(
+                balancer.ExactNUnitEvidenceTests[
+                    RagdollEvidenceKind.NUnitPlayMode],
+                Is.EqualTo(
+                    "Hairibar.Ragdoll.Animation.Tests." +
+                    "RagdollBipedBalancerMathTests." +
+                    "E03_PublicSettingsHaveObservableEffects"));
+        }
+
         static string[] Range(string prefix, int count)
         {
             return Enumerable.Range(1, count)
