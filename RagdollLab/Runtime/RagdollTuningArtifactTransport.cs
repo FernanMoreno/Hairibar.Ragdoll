@@ -50,7 +50,7 @@ namespace Hairibar.Ragdoll.RagdollLab
                 if (!File.Exists(comparisonPath)) return Fail("comparison_artifact_missing", out reason);
 
                 EvaluationReport persisted = JsonUtility.FromJson<EvaluationReport>(File.ReadAllText(evaluationPath));
-                reason = ValidateDecisionArtifacts(directory, persisted, binding);
+                reason = ValidateDecisionArtifacts(directory, persisted, binding, out _);
                 if (reason != null) return false;
 
                 manifest = CreateManifest(binding, evaluationPath, normativePath, balancePath, comparisonPath);
@@ -125,12 +125,13 @@ namespace Hairibar.Ragdoll.RagdollLab
                     report = null;
                     return false;
                 }
-                reason = ValidateDecisionArtifacts(directory, report, expected);
+                reason = ValidateDecisionArtifacts(directory, report, expected, out ScenarioComparisonReport normative);
                 if (reason != null)
                 {
                     report = null;
                     return false;
                 }
+                report.balanceComparison = normative.balanceComparison;
                 reason = null;
                 return true;
             }
@@ -206,8 +207,10 @@ namespace Hairibar.Ragdoll.RagdollLab
         static string ValidateDecisionArtifacts(
             string directory,
             EvaluationReport report,
-            RagdollTuningRunBinding expected)
+            RagdollTuningRunBinding expected,
+            out ScenarioComparisonReport normative)
         {
+            normative = null;
             string metadataReason = MetadataMismatch(report?.metadata, expected);
             if (metadataReason != null) return metadataReason;
             if (report.balanceComparison == null) return "evaluation_normative_comparison_missing";
@@ -219,7 +222,6 @@ namespace Hairibar.Ragdoll.RagdollLab
             if (!File.Exists(balancePath)) return "balance_comparison_artifact_missing";
             if (!File.Exists(comparisonPath)) return "comparison_artifact_missing";
 
-            ScenarioComparisonReport normative;
             BalanceComparisonReport balanceView;
             ComparisonReport legacy;
             try
