@@ -66,13 +66,18 @@ namespace Hairibar.Ragdoll.RagdollLab.Tests
 
                 string path = recorder.OutputPath;
                 string evaluation = File.ReadAllText(Path.Combine(path, "evaluation.json"));
-                string comparison = File.ReadAllText(Path.Combine(path, "comparison.json"));
-                string balanceComparison = File.ReadAllText(Path.Combine(path, "balance-comparison.json"));
+                string comparison = File.ReadAllText(Path.Combine(path, RagdollTuningArtifactSchema.ComparisonFileName));
+                string normativeComparison = File.ReadAllText(Path.Combine(path, RagdollTuningArtifactSchema.ScenarioComparisonFileName));
+                string balanceComparison = File.ReadAllText(Path.Combine(path, RagdollTuningArtifactSchema.BalanceComparisonFileName));
                 string diagnostics = File.ReadAllText(Path.Combine(path, "diagnostics.json"));
                 string summary = File.ReadAllText(Path.Combine(path, "summary.md"));
 
                 Assert.That(evaluation, Does.Contain("\"scenarioProfile\": \"Push\""));
                 Assert.That(comparison, Does.Contain("\"decision\""));
+                Assert.That(comparison, Does.Contain("\"decisionAuthority\": \"scenario-comparison.json\""));
+                Assert.That(normativeComparison, Does.Contain("\"decisionAuthority\": \"scenario-comparison.json\""));
+                Assert.That(normativeComparison, Does.Contain("\"comparisonKind\": \"balance\""));
+                Assert.That(balanceComparison, Does.Contain("\"viewKind\": \"balance-specialized\""));
                 Assert.That(balanceComparison, Does.Contain("\"invalidReason\""));
                 Assert.That(diagnostics, Does.Contain("\"profileAvailable\""));
                 Assert.That(summary, Does.Contain("Scenario profile: `Push`"));
@@ -125,7 +130,10 @@ namespace Hairibar.Ragdoll.RagdollLab.Tests
                 Assert.That(evaluation, Does.Contain("\"treatmentParameter\": \"pin\""));
                 Assert.That(manifest, Does.Contain("\"runId\": \"candidate-run\""));
                 Assert.That(manifest, Does.Contain("\"evaluationSha256\""));
+                Assert.That(manifest, Does.Contain("\"normativeDecisionFile\": \"scenario-comparison.json\""));
+                Assert.That(manifest, Does.Contain("\"normativeDecisionSha256\""));
                 Assert.That(manifest, Does.Contain("\"balanceComparisonSha256\""));
+                Assert.That(manifest, Does.Contain("\"comparisonSha256\""));
             }
             finally
             {

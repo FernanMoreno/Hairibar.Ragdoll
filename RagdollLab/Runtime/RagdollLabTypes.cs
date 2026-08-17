@@ -68,12 +68,15 @@ namespace Hairibar.Ragdoll.RagdollLab
 
     public static class RagdollTuningArtifactSchema
     {
-        public const string Version = "1.0.0";
+        public const string Version = "1.1.0";
+        public const string NormativeDecisionVersion = "1.0.0";
         public const string SessionVersion = "1.0.0";
         public const string SessionFileName = "tuning-session.json";
         public const string ManifestFileName = "tuning-manifest.json";
         public const string EvaluationFileName = "evaluation.json";
+        public const string ScenarioComparisonFileName = "scenario-comparison.json";
         public const string BalanceComparisonFileName = "balance-comparison.json";
+        public const string ComparisonFileName = "comparison.json";
     }
 
     [Serializable] public sealed class RagdollTuningArtifactManifest
@@ -90,8 +93,13 @@ namespace Hairibar.Ragdoll.RagdollLab
         public float treatmentValue;
         public string evaluationFile = RagdollTuningArtifactSchema.EvaluationFileName;
         public string evaluationSha256;
+        public string normativeDecisionFile = RagdollTuningArtifactSchema.ScenarioComparisonFileName;
+        public string normativeDecisionSha256;
+        public string normativeDecisionSchemaVersion = RagdollTuningArtifactSchema.NormativeDecisionVersion;
         public string balanceComparisonFile = RagdollTuningArtifactSchema.BalanceComparisonFileName;
         public string balanceComparisonSha256;
+        public string comparisonFile = RagdollTuningArtifactSchema.ComparisonFileName;
+        public string comparisonSha256;
         public string publishedUtc;
     }
 
@@ -471,6 +479,10 @@ namespace Hairibar.Ragdoll.RagdollLab
         public string scenarioProfile = RagdollLabScenarioProfiles.UnavailableId;
         public bool profileAvailable;
         public List<string> rejectionReasons = new();
+        public string decisionAuthority;
+        public string normativeDecision;
+        public string normativeDecisionFile;
+        public string normativeDecisionSchemaVersion;
     }
 
     [Serializable] public sealed class BalanceComparisonReport
@@ -494,6 +506,40 @@ namespace Hairibar.Ragdoll.RagdollLab
         public List<ComparisonMetric> safetyMetrics = new();
         public List<string> safetyGuards = new();
         public List<string> rejectionReasons = new();
+        public string decisionAuthority;
+        public string viewKind = "normative";
+        public string normativeDecision;
+        public string normativeDecisionFile;
+        public string normativeDecisionSchemaVersion;
+    }
+
+    /// <summary>
+    /// The versioned, scenario-level decision envelope. Its nested payload is
+    /// currently the balance comparator, but the envelope is the stable
+    /// authority boundary for future GetUp, locomotion and prop comparators.
+    /// </summary>
+    [Serializable] public sealed class ScenarioComparisonReport
+    {
+        public string schemaVersion = RagdollTuningArtifactSchema.NormativeDecisionVersion;
+        public string decisionAuthority = RagdollTuningArtifactSchema.ScenarioComparisonFileName;
+        public string comparisonKind = "balance";
+        public string scenarioProfile = RagdollLabScenarioProfiles.UnavailableId;
+        public string decision = "invalid";
+        public string invalidReason;
+        public bool profileAvailable;
+        public bool setupMatched;
+        public bool safetyGuardsPassed;
+        public string tuningSessionId;
+        public string experimentId;
+        public string baselineRunId;
+        public string candidateRunId;
+        public string baselineConfigurationFingerprint;
+        public string candidateConfigurationFingerprint;
+        public string treatmentParameter;
+        public bool treatmentValueAvailable;
+        public float treatmentValue;
+        public List<string> rejectionReasons = new();
+        public BalanceComparisonReport balanceComparison;
     }
 
     [Serializable] public sealed class EvaluationReport

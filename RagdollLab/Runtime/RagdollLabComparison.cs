@@ -6,6 +6,80 @@ namespace Hairibar.Ragdoll.RagdollLab
 {
     public static class RagdollLabComparison
     {
+        public static ScenarioComparisonReport BuildNormativeScenarioComparison(
+            BalanceComparisonReport balance)
+        {
+            if (balance == null)
+            {
+                balance = new BalanceComparisonReport
+                {
+                    decision = "invalid",
+                    invalidReason = "balance_comparison_missing"
+                };
+            }
+            StampNormative(balance);
+            return new ScenarioComparisonReport
+            {
+                scenarioProfile = balance.scenarioProfile,
+                decision = balance.decision,
+                invalidReason = balance.invalidReason,
+                profileAvailable = balance.profileAvailable,
+                setupMatched = balance.setupMatched,
+                safetyGuardsPassed = balance.safetyGuardsPassed,
+                tuningSessionId = balance.tuningSessionId,
+                experimentId = balance.experimentId,
+                baselineRunId = balance.baselineRunId,
+                candidateRunId = balance.candidateRunId,
+                baselineConfigurationFingerprint = balance.baselineConfigurationFingerprint,
+                candidateConfigurationFingerprint = balance.candidateConfigurationFingerprint,
+                treatmentParameter = balance.treatmentParameter,
+                treatmentValueAvailable = balance.treatmentValueAvailable,
+                treatmentValue = balance.treatmentValue,
+                rejectionReasons = balance.rejectionReasons == null
+                    ? new List<string>()
+                    : new List<string>(balance.rejectionReasons),
+                balanceComparison = balance
+            };
+        }
+
+        public static BalanceComparisonReport CreateBalanceSpecializedView(
+            BalanceComparisonReport normative)
+        {
+            if (normative == null) return null;
+            BalanceComparisonReport view = JsonUtility.FromJson<BalanceComparisonReport>(
+                JsonUtility.ToJson(normative));
+            view.viewKind = "balance-specialized";
+            view.decisionAuthority = RagdollTuningArtifactSchema.ScenarioComparisonFileName;
+            view.normativeDecision = normative.decision;
+            view.normativeDecisionFile = RagdollTuningArtifactSchema.ScenarioComparisonFileName;
+            view.normativeDecisionSchemaVersion = RagdollTuningArtifactSchema.NormativeDecisionVersion;
+            return view;
+        }
+
+        public static void StampNormative(BalanceComparisonReport balance)
+        {
+            if (balance == null) return;
+            balance.decisionAuthority = RagdollTuningArtifactSchema.ScenarioComparisonFileName;
+            balance.viewKind = "normative";
+            balance.normativeDecision = balance.decision;
+            balance.normativeDecisionFile = RagdollTuningArtifactSchema.ScenarioComparisonFileName;
+            balance.normativeDecisionSchemaVersion = RagdollTuningArtifactSchema.NormativeDecisionVersion;
+        }
+
+        public static void StampLegacySummary(
+            ComparisonReport summary,
+            ScenarioComparisonReport normative)
+        {
+            if (summary == null || normative == null) return;
+            summary.decision = normative.decision;
+            summary.invalidReason = normative.invalidReason;
+            summary.safetyGuardsPassed = normative.safetyGuardsPassed;
+            summary.decisionAuthority = RagdollTuningArtifactSchema.ScenarioComparisonFileName;
+            summary.normativeDecision = normative.decision;
+            summary.normativeDecisionFile = RagdollTuningArtifactSchema.ScenarioComparisonFileName;
+            summary.normativeDecisionSchemaVersion = RagdollTuningArtifactSchema.NormativeDecisionVersion;
+        }
+
         public static ComparisonReport Build(EvaluationReport current, EvaluationReport baseline)
         {
             ScenarioProfile profile = RagdollLabScenarioProfiles.Resolve(current?.metadata?.scenario ?? current?.scenarioReport?.name);

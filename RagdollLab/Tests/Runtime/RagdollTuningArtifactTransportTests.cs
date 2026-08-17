@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Security.Cryptography;
 using NUnit.Framework;
 using UnityEngine;
 
@@ -37,7 +38,9 @@ namespace Hairibar.Ragdoll.RagdollLab.Tests
             Assert.That(transport.TryRead(directory, binding, out EvaluationReport read, out RagdollTuningArtifactManifest manifest, out string readReason), Is.True, readReason);
             Assert.That(read.metadata.runId, Is.EqualTo("candidate-run"));
             Assert.That(manifest.evaluationSha256, Is.EqualTo(written.evaluationSha256));
+            Assert.That(manifest.normativeDecisionSha256, Is.EqualTo(written.normativeDecisionSha256));
             Assert.That(manifest.balanceComparisonSha256, Is.EqualTo(written.balanceComparisonSha256));
+            Assert.That(manifest.comparisonSha256, Is.EqualTo(written.comparisonSha256));
         }
 
         [Test]
@@ -74,6 +77,42 @@ namespace Hairibar.Ragdoll.RagdollLab.Tests
 
             Assert.That(transport.TryRead(directory, binding, out _, out _, out string unsafePath), Is.False);
             Assert.That(unsafePath, Is.EqualTo("evaluation_file_unsafe"));
+        }
+
+        [Test]
+        public void MissingNormativeDecisionFailsClosedEvenWhenLegacyViewsExist()
+        {
+            RagdollTuningRunBinding binding = Binding();
+            WritePayloads(Report(binding));
+            var transport = new RagdollTuningFileArtifactTransport();
+            Assert.That(transport.TryWriteManifest(directory, binding, Report(binding), out _, out string writeReason), Is.True, writeReason);
+
+            File.Delete(Path.Combine(directory, RagdollTuningArtifactSchema.ScenarioComparisonFileName));
+
+            Assert.That(transport.TryRead(directory, binding, out _, out _, out string reason), Is.False);
+            Assert.That(reason, Is.EqualTo("normative_decision_artifact_missing"));
+        }
+
+        [Test]
+        public void ContradictorySpecializedDecisionFailsClosed()
+        {
+            RagdollTuningRunBinding binding = Binding();
+            WritePayloads(Report(binding));
+            var transport = new RagdollTuningFileArtifactTransport();
+            Assert.That(transport.TryWriteManifest(directory, binding, Report(binding), out _, out string writeReason), Is.True, writeReason);
+
+            BalanceComparisonReport contradiction = JsonUtility.FromJson<BalanceComparisonReport>(
+                File.ReadAllText(Path.Combine(directory, RagdollTuningArtifactSchema.BalanceComparisonFileName)));
+            contradiction.decision = "accept";
+            string balancePath = Path.Combine(directory, RagdollTuningArtifactSchema.BalanceComparisonFileName);
+            File.WriteAllText(balancePath, JsonUtility.ToJson(contradiction, true));
+            RagdollTuningArtifactManifest manifest = JsonUtility.FromJson<RagdollTuningArtifactManifest>(
+                File.ReadAllText(Path.Combine(directory, RagdollTuningArtifactSchema.ManifestFileName)));
+            manifest.balanceComparisonSha256 = Sha256(balancePath);
+            File.WriteAllText(Path.Combine(directory, RagdollTuningArtifactSchema.ManifestFileName), JsonUtility.ToJson(manifest, true));
+
+            Assert.That(transport.TryRead(directory, binding, out _, out _, out string reason), Is.False);
+            Assert.That(reason, Is.EqualTo("balance_comparison_decision_contradiction"));
         }
 
         [Test]
@@ -133,7 +172,7 @@ namespace Hairibar.Ragdoll.RagdollLab.Tests
 
         static EvaluationReport Report(RagdollTuningRunBinding binding)
         {
-            return new EvaluationReport
+            var report = new EvaluationReport
             {
                 metadata = new RagdollLabMetadata
                 {
@@ -150,12 +189,32 @@ namespace Hairibar.Ragdoll.RagdollLab.Tests
                 completed = true,
                 finiteData = true
             };
+            report.balanceComparison = new BalanceComparisonReport
+            {
+                scenarioProfile = "Balancer",
+                decision = "invalid",
+                invalidReason = "test_report"
+            };
+            RagdollLabComparison.StampNormative(report.balanceComparison);
+            return report;
         }
 
         void WritePayloads(EvaluationReport report)
         {
             File.WriteAllText(Path.Combine(directory, RagdollTuningArtifactSchema.EvaluationFileName), JsonUtility.ToJson(report, true));
-            File.WriteAllText(Path.Combine(directory, RagdollTuningArtifactSchema.BalanceComparisonFileName), JsonUtility.ToJson(new BalanceComparisonReport(), true));
+            ScenarioComparisonReport normative = RagdollLabComparison.BuildNormativeScenarioComparison(report.balanceComparison);
+            BalanceComparisonReport balanceView = RagdollLabComparison.CreateBalanceSpecializedView(report.balanceComparison);
+            ComparisonReport legacy = new ComparisonReport();
+            RagdollLabComparison.StampLegacySummary(legacy, normative);
+            File.WriteAllText(Path.Combine(directory, RagdollTuningArtifactSchema.ScenarioComparisonFileName), JsonUtility.ToJson(normative, true));
+            File.WriteAllText(Path.Combine(directory, RagdollTuningArtifactSchema.BalanceComparisonFileName), JsonUtility.ToJson(balanceView, true));
+            File.WriteAllText(Path.Combine(directory, RagdollTuningArtifactSchema.ComparisonFileName), JsonUtility.ToJson(legacy, true));
+        }
+
+        static string Sha256(string path)
+        {
+            using SHA256 sha = SHA256.Create();
+            return BitConverter.ToString(sha.ComputeHash(File.ReadAllBytes(path))).Replace("-", string.Empty).ToLowerInvariant();
         }
     }
 }

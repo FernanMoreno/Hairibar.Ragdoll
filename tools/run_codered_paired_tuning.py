@@ -4,7 +4,9 @@
 The Unity project owns capture and manifest publication. This launcher owns the
 asynchronous process boundary: it starts two isolated PlayMode runs, stages the
 baseline evaluation for the candidate comparison, and fails closed unless both
-run directories prove the requested binding and SHA-256 payloads.
+run directories prove the requested binding and SHA-256 payloads. The
+scenario-comparison.json envelope is the only decision authority; balance and
+legacy comparison files are verified views.
 
 It then invokes the package planner through a third Unity Editor process and
 persists the formal decision. Planner promotion remains a separate operation
@@ -277,14 +279,16 @@ def verify_run(root: Path, args: argparse.Namespace, spec: RunSpec) -> dict[str,
     directory = run_directory(root, spec.run_id)
     manifest_path = directory / "tuning-manifest.json"
     evaluation_path = directory / "evaluation.json"
+    normative_path = directory / "scenario-comparison.json"
     balance_path = directory / "balance-comparison.json"
-    for path in (manifest_path, evaluation_path, balance_path):
+    comparison_path = directory / "comparison.json"
+    for path in (manifest_path, evaluation_path, normative_path, balance_path, comparison_path):
         if not path.is_file():
             raise EvidenceError(f"required artifact missing: {path}")
 
     manifest = load_json(manifest_path)
     expected = {
-        "schemaVersion": "1.0.0",
+        "schemaVersion": "1.1.0",
         "sessionId": args.session_id,
         "experimentId": args.experiment_id,
         "runId": spec.run_id,
@@ -306,12 +310,20 @@ def verify_run(root: Path, args: argparse.Namespace, spec: RunSpec) -> dict[str,
         raise EvidenceError(f"manifest treatment value mismatch: {spec.run_id}")
     if manifest.get("evaluationFile") != "evaluation.json":
         raise EvidenceError(f"unsafe evaluation filename: {spec.run_id}")
+    if manifest.get("normativeDecisionFile") != "scenario-comparison.json":
+        raise EvidenceError(f"unsafe normative decision filename: {spec.run_id}")
     if manifest.get("balanceComparisonFile") != "balance-comparison.json":
         raise EvidenceError(f"unsafe comparison filename: {spec.run_id}")
+    if manifest.get("comparisonFile") != "comparison.json":
+        raise EvidenceError(f"unsafe legacy comparison filename: {spec.run_id}")
     if manifest.get("evaluationSha256") != sha256(evaluation_path):
         raise EvidenceError(f"evaluation hash mismatch: {spec.run_id}")
+    if manifest.get("normativeDecisionSha256") != sha256(normative_path):
+        raise EvidenceError(f"normative decision hash mismatch: {spec.run_id}")
     if manifest.get("balanceComparisonSha256") != sha256(balance_path):
         raise EvidenceError(f"balance comparison hash mismatch: {spec.run_id}")
+    if manifest.get("comparisonSha256") != sha256(comparison_path):
+        raise EvidenceError(f"legacy comparison hash mismatch: {spec.run_id}")
 
     evaluation = load_json(evaluation_path)
     metadata = evaluation.get("metadata")
@@ -342,7 +354,28 @@ def verify_run(root: Path, args: argparse.Namespace, spec: RunSpec) -> dict[str,
             f"{metadata.get('scenarioProfile')!r}"
         )
 
-    balance = load_json(balance_path)
+    normative = load_json(normative_path)
+    if normative.get("schemaVersion") != "1.0.0":
+        raise EvidenceError(f"normative decision schema mismatch: {spec.run_id}")
+    if normative.get("decisionAuthority") != "scenario-comparison.json":
+        raise EvidenceError(f"normative decision authority mismatch: {spec.run_id}")
+    balance = normative.get("balanceComparison")
+    if not isinstance(balance, dict):
+        raise EvidenceError(f"normative balance comparison missing: {spec.run_id}")
+    if normative.get("decision") != balance.get("decision"):
+        raise EvidenceError(f"normative decision contradiction: {spec.run_id}")
+    specialized = load_json(balance_path)
+    if specialized.get("viewKind") != "balance-specialized":
+        raise EvidenceError(f"specialized balance view is not marked: {spec.run_id}")
+    if specialized.get("decisionAuthority") != "scenario-comparison.json":
+        raise EvidenceError(f"specialized balance authority mismatch: {spec.run_id}")
+    if specialized.get("decision") != normative.get("decision"):
+        raise EvidenceError(f"specialized balance decision contradiction: {spec.run_id}")
+    legacy = load_json(comparison_path)
+    if legacy.get("decisionAuthority") != "scenario-comparison.json":
+        raise EvidenceError(f"legacy comparison authority mismatch: {spec.run_id}")
+    if legacy.get("normativeDecision") != normative.get("decision") or legacy.get("decision") != normative.get("decision"):
+        raise EvidenceError(f"legacy comparison decision contradiction: {spec.run_id}")
     if spec.role == "candidate" and balance.get("setupMatched") is not True:
         raise EvidenceError(
             f"candidate comparison is not paired/setup-matched: {balance.get('invalidReason')!r}"
@@ -352,7 +385,9 @@ def verify_run(root: Path, args: argparse.Namespace, spec: RunSpec) -> dict[str,
         "runRole": spec.role,
         "directory": str(directory),
         "evaluationSha256": sha256(evaluation_path),
+        "normativeDecisionSha256": sha256(normative_path),
         "balanceComparisonSha256": sha256(balance_path),
+        "comparisonSha256": sha256(comparison_path),
         "scenarioProfile": metadata.get("scenarioProfile"),
         "frameCount": evaluation.get("frameCount"),
         "balanceDecision": balance.get("decision"),

@@ -15,7 +15,7 @@ Laboratorio determinista de telemetría/análisis para ragdolls basados en `Rigi
 - `RagdollLabTypes`: esquema serializable (`PhysicsFrame`, `ScenarioReport`, `DiagnosticsReport`, …) y provenance de tuning.
 - `RagdollTuningPlanner`: protocolo puro de baseline, evidencia emparejada, registry, promoción y rollback.
 - `RagdollTuningExecutor`: orquestación mediante adapters inyectados de store/runner; verifica readback, consume artifacts persistidos cuando se inyecta transporte y restaura o promociona explícitamente.
-- `RagdollTuningFileArtifactTransport`: manifiesto versionado `tuning-manifest.json` con binding completo y SHA-256 de `evaluation.json`/`balance-comparison.json`; lectura fail-closed.
+- `RagdollTuningFileArtifactTransport`: manifiesto versionado `tuning-manifest.json` con binding completo y SHA-256 de `evaluation.json`, `scenario-comparison.json`, `balance-comparison.json` y `comparison.json`; lectura fail-closed.
 - `RagdollSupportGeometry`: soporte finito 0/1/2/3+ puntos proyectado sobre el `supportUp` efectivo (disco, cápsula y hull).
 
 El driver de escenarios (Idle/Push/JointImpulse/Fall) y el batch runner son
@@ -24,7 +24,7 @@ no forman parte de la certificación de este paquete.
 
 ## Artifacts
 
-`evaluation.json`, `frames.json`, `frames.csv`, `comparison.json`, `balance-comparison.json`, `diagnostics.json`, `summary.md`; una corrida de tuning añade `tuning-manifest.json`.
+`evaluation.json`, `frames.json`, `frames.csv`, `comparison.json`, `scenario-comparison.json`, `balance-comparison.json`, `diagnostics.json`, `summary.md`; una corrida de tuning añade `tuning-manifest.json`.
 
 Todos contienen `schemaVersion` donde aplica. El esquema actual es `1.6.0`; artifacts `1.5.0`, `1.4.0`, `1.3.0` y anteriores siguen siendo legibles y exponen los campos nuevos como ausentes, `false`, `0` o `Unavailable`. IDs usan ruta jerárquica estable, no InstanceID.
 
@@ -45,7 +45,18 @@ Props seguirán siendo explícitamente no evaluables hasta que su productor
 publique completion/tracking/replant/lifecycle, mientras Idle/Push/Balancer
 pueden usar las fuentes que ya existen.
 
-`balance-comparison.json` devuelve exactamente `accept`, `neutral`, `reject` o `invalid`. La comparación exige el setup emparejado y aplica primero las guardas de seguridad; una caída, `Unpinned`, datos no finitos, penetración, slip, energía o torque excesivo no puede ser compensado por una mejora de margen. La eficacia del Balancer sólo se concluye desde una pareja baseline/candidate.
+`scenario-comparison.json` es la única autoridad normativa de decisión. Su
+envoltorio versionado contiene actualmente la comparación de balance y devuelve
+exactamente `accept`, `neutral`, `reject` o `invalid`. La comparación exige el
+setup emparejado y aplica primero las guardas de seguridad; una caída,
+`Unpinned`, datos no finitos, penetración, slip, energía o torque excesivo no
+puede ser compensado por una mejora de margen. La eficacia del Balancer sólo se
+concluye desde una pareja baseline/candidate.
+
+`balance-comparison.json` es una vista especializada no normativa y
+`comparison.json` es un resumen humano compatible. Ambos contienen un puntero
+explícito a `scenario-comparison.json` y su decisión debe coincidir; el
+transport fail-closed rechaza artifacts ausentes, mezclados o contradictorios.
 
 ## Métricas implementadas
 
@@ -73,11 +84,11 @@ CODE RED. Para consumir artifacts, el consumidor proporciona `artifactRoot` en
 la sesión y un `IRagdollTuningArtifactTransport`; el executor usa el
 `EvaluationReport` leído y verificado desde el directorio de cada run, no sólo
 el objeto devuelto en memoria por el runner. El recorder publica el manifiesto
-al final de `WriteArtifacts`, después de escribir los dos JSON normativos.
+al final de `WriteArtifacts`, después de escribir los tres payloads de decisión.
 
 CODE RED aporta `tools/run_codered_paired_tuning.py` como runner externo: lanza
 dos procesos PlayMode, enlaza cada corrida con su binding, prepara la evaluación
-baseline para que Unity produzca el `balance-comparison.json` paired del
+baseline para que Unity produzca el `scenario-comparison.json` paired del
 candidato y verifica manifest/metadata/SHA-256. Después invoca el entry point
 Editor `RagdollLabBatch.RunTuningDecision`, que consume esos artifacts mediante
 `RagdollTuningExecutor.EvaluatePersistedPair` y escribe `tuning-decision.json`.
