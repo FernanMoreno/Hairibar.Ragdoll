@@ -486,6 +486,7 @@ namespace Hairibar.Ragdoll.RagdollLab.Tests
                     name = "Balancer",
                     frameCount = 1,
                     durationSeconds = 1f,
+                    capturePointSampleCount = 1,
                     balanceTelemetryAvailable = true,
                     signedSupportMarginAvailable = true,
                     minimumSignedSupportMargin = margin,

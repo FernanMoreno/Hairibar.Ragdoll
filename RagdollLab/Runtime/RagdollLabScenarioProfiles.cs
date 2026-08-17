@@ -142,6 +142,28 @@ namespace Hairibar.Ragdoll.RagdollLab
             return missing;
         }
 
+        public static List<string> MissingRequiredSignals(
+            ScenarioEvaluationContract contract,
+            ScenarioReport report,
+            string role)
+        {
+            var missing = new List<string>();
+            if (contract == null || !contract.available)
+            {
+                missing.Add("required_signal_missing:" + (role ?? "report") + ":contract_unavailable");
+                return missing;
+            }
+
+            string prefix = "required_signal_missing:" + (role ?? "report") + ":";
+            for (int i = 0; i < contract.requiredSignals.Length; i++)
+            {
+                string signalId = contract.requiredSignals[i];
+                string reason = AvailabilityReason(signalId, report);
+                if (reason != null) missing.Add(prefix + signalId + ":" + reason);
+            }
+            return missing;
+        }
+
         public static bool IsAvailable(string signalId, ScenarioReport report)
         {
             return AvailabilityReason(signalId, report) == null;

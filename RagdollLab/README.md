@@ -11,11 +11,12 @@ Laboratorio determinista de telemetría/análisis para ragdolls basados en `Rigi
 - `RagdollLabThresholds`: thresholds serializables (`ScriptableObject`).
 - `RagdollLabComparison`: comparación A/B scenario-aware y safety-first contra ejecución previa.
 - `RagdollLabScenarioProfiles`: perfiles explícitos de `Idle`, `Push`, `GetUp`, `Locomotion`, `Stagger` y `Balancer`; nombres desconocidos quedan `Unavailable`.
+- `RagdollLabScenarioEvaluationCatalog`: contratos ejecutables de `PhysicalIntegrity`, `Tracking`, `GetUp`, `Balance`, `Stagger`, `Props` y `Locomotion`, con métricas de tarea y guardas de seguridad separadas.
 - `RagdollLabScenarioSignalCatalog`: contrato ejecutable de `requiredSignals`; cada ID canónico declara fuente, tipo/unidad, disponibilidad mínima, regla de finitud y falsificador.
 - `RagdollLabTypes`: esquema serializable (`PhysicsFrame`, `ScenarioReport`, `DiagnosticsReport`, …) y provenance de tuning.
 - `RagdollTuningPlanner`: protocolo puro de baseline, evidencia emparejada, registry, promoción y rollback.
 - `RagdollTuningExecutor`: orquestación mediante adapters inyectados de store/runner; verifica readback, consume artifacts persistidos cuando se inyecta transporte y restaura o promociona explícitamente.
-- `RagdollTuningFileArtifactTransport`: manifiesto versionado `tuning-manifest.json` con binding completo y SHA-256 de `evaluation.json`, `scenario-comparison.json`, `balance-comparison.json` y `comparison.json`; lectura fail-closed.
+- `RagdollTuningFileArtifactTransport`: manifiesto versionado `tuning-manifest.json` con binding completo y SHA-256 de `evaluation.json`, `scenario-comparison.json` y `comparison.json`; la vista especializada `balance-comparison.json` se hashea sólo cuando el contrato de balance la produce; lectura fail-closed.
 - `RagdollSupportGeometry`: soporte finito 0/1/2/3+ puntos proyectado sobre el `supportUp` efectivo (disco, cápsula y hull).
 
 El driver de escenarios (Idle/Push/JointImpulse/Fall) y el batch runner son
@@ -24,7 +25,7 @@ no forman parte de la certificación de este paquete.
 
 ## Artifacts
 
-`evaluation.json`, `frames.json`, `frames.csv`, `comparison.json`, `scenario-comparison.json`, `balance-comparison.json`, `diagnostics.json`, `summary.md`; una corrida de tuning añade `tuning-manifest.json`.
+`evaluation.json`, `frames.json`, `frames.csv`, `comparison.json`, `scenario-comparison.json`, `diagnostics.json`, `summary.md`; una corrida de balance añade además `balance-comparison.json` y una corrida de tuning añade `tuning-manifest.json`.
 
 Todos contienen `schemaVersion` donde aplica. El esquema actual es `1.6.0`; artifacts `1.5.0`, `1.4.0`, `1.3.0` y anteriores siguen siendo legibles y exponen los campos nuevos como ausentes, `false`, `0` o `Unavailable`. IDs usan ruta jerárquica estable, no InstanceID.
 
@@ -46,12 +47,14 @@ publique completion/tracking/replant/lifecycle, mientras Idle/Push/Balancer
 pueden usar las fuentes que ya existen.
 
 `scenario-comparison.json` es la única autoridad normativa de decisión. Su
-envoltorio versionado contiene actualmente la comparación de balance y devuelve
-exactamente `accept`, `neutral`, `reject` o `invalid`. La comparación exige el
-setup emparejado y aplica primero las guardas de seguridad; una caída,
-`Unpinned`, datos no finitos, penetración, slip, energía o torque excesivo no
-puede ser compensado por una mejora de margen. La eficacia del Balancer sólo se
-concluye desde una pareja baseline/candidate.
+envoltorio versionado selecciona el contrato del escenario. Balance conserva
+`accept`, `neutral`, `reject` o `invalid` para compatibilidad; los contratos
+genéricos usan `accepted`, `neutral`, `rejected` o `unavailable`. Cada contrato
+separa métricas de tarea de guardas de seguridad y no reutiliza balance para
+rellenar señales ausentes. La comparación exige el setup emparejado y aplica
+primero las guardas de seguridad; una caída, `Unpinned`, datos no finitos,
+penetración, slip, energía o torque excesivo no puede ser compensado por una
+mejora de la tarea.
 
 `balance-comparison.json` es una vista especializada no normativa y
 `comparison.json` es un resumen humano compatible. Ambos contienen un puntero

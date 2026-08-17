@@ -261,6 +261,425 @@ namespace Hairibar.Ragdoll.RagdollLab
             return result;
         }
 
+        /// <summary>
+        /// Evaluates the scenario contract selected by the artifact metadata.
+        /// Balance remains a specialized view; non-balance scenarios never fall
+        /// back to its metrics silently.
+        /// </summary>
+        public static ScenarioComparisonReport BuildScenarioComparison(
+            EvaluationReport baseline,
+            EvaluationReport candidate,
+            RagdollLabThresholds thresholds = null)
+        {
+            thresholds ??= ScriptableObject.CreateInstance<RagdollLabThresholds>();
+            var result = new ScenarioComparisonReport
+            {
+                comparisonKind = "scenario",
+                baselineRunId = baseline?.metadata?.runId,
+                candidateRunId = candidate?.metadata?.runId
+            };
+
+            string scenario = candidate?.metadata?.scenario
+                ?? candidate?.scenarioReport?.name
+                ?? baseline?.metadata?.scenario
+                ?? baseline?.scenarioReport?.name;
+            ScenarioEvaluationContract contract = RagdollLabScenarioEvaluationCatalog.Resolve(scenario);
+            result.contractId = contract.id;
+            result.contractVersion = contract.version;
+            result.scenarioProfile = contract.id;
+
+            if (!contract.available)
+                return UnavailableScenario(result, contract, contract.unavailableReason);
+            if (candidate == null || candidate.metadata == null)
+                return UnavailableScenario(result, contract, candidate == null ? "baseline_or_candidate_missing" : "metadata_missing");
+
+            if (contract.balanceFamily && baseline == null)
+            {
+                BalanceComparisonReport balanceWithoutBaseline = BuildBalanceComparison(null, candidate, thresholds);
+                result.balanceComparison = balanceWithoutBaseline;
+                result.scenarioEvaluation = FromBalanceComparison(balanceWithoutBaseline, contract);
+                CopyScenarioEvaluationToEnvelope(result, result.scenarioEvaluation);
+                result.decision = balanceWithoutBaseline.decision;
+                result.invalidReason = balanceWithoutBaseline.invalidReason;
+                result.rejectionReasons = new List<string>(balanceWithoutBaseline.rejectionReasons);
+                return result;
+            }
+            if (baseline == null || baseline.metadata == null)
+                return UnavailableScenario(result, contract, baseline == null ? "baseline_or_candidate_missing" : "metadata_missing");
+
+            ScenarioEvaluationContract baselineContract = RagdollLabScenarioEvaluationCatalog.Resolve(
+                baseline.metadata.scenario ?? baseline.scenarioReport?.name);
+            ScenarioEvaluationContract candidateContract = RagdollLabScenarioEvaluationCatalog.Resolve(
+                candidate.metadata.scenario ?? candidate.scenarioReport?.name);
+            if (!baselineContract.available || !candidateContract.available
+                || !string.Equals(baselineContract.id, contract.id, System.StringComparison.Ordinal)
+                || !string.Equals(candidateContract.id, contract.id, System.StringComparison.Ordinal))
+                return UnavailableScenario(result, contract, "scenario_contract_mismatch");
+
+            if (contract.balanceFamily)
+            {
+                BalanceComparisonReport balance = BuildBalanceComparison(baseline, candidate, thresholds);
+                result.balanceComparison = balance;
+                result.scenarioEvaluation = FromBalanceComparison(balance, contract);
+                CopyScenarioEvaluationToEnvelope(result, result.scenarioEvaluation);
+                result.decision = balance.decision;
+                result.invalidReason = balance.invalidReason;
+                result.rejectionReasons = balance.rejectionReasons == null
+                    ? new List<string>()
+                    : new List<string>(balance.rejectionReasons);
+                return result;
+            }
+
+            return BuildNonBalanceScenarioComparison(result, contract, baseline, candidate, thresholds);
+        }
+
+        static ScenarioComparisonReport BuildNonBalanceScenarioComparison(
+            ScenarioComparisonReport result,
+            ScenarioEvaluationContract contract,
+            EvaluationReport baseline,
+            EvaluationReport candidate,
+            RagdollLabThresholds thresholds)
+        {
+            ScenarioEvaluationReport evaluation = result.scenarioEvaluation ?? new ScenarioEvaluationReport();
+            result.scenarioEvaluation = evaluation;
+            evaluation.contractId = contract.id;
+            evaluation.contractVersion = contract.version;
+            evaluation.scenarioProfile = contract.id;
+            evaluation.baselineRunId = baseline.metadata.runId;
+            evaluation.candidateRunId = candidate.metadata.runId;
+            result.baselineRunId = baseline.metadata.runId;
+            result.candidateRunId = candidate.metadata.runId;
+
+            if (!PopulateScenarioProvenance(evaluation, baseline.metadata, candidate.metadata))
+                return UnavailableScenario(result, contract, "provenance_mismatch");
+            CopyScenarioEvaluationToEnvelope(result, evaluation);
+
+            if (!string.Equals(baseline.metadata.scenario, candidate.metadata.scenario, System.StringComparison.OrdinalIgnoreCase))
+                return UnavailableScenario(result, contract, "scenario_mismatch");
+            if (!SetupsMatch(baseline.metadata, candidate.metadata))
+                return UnavailableScenario(result, contract, "paired_setup_mismatch");
+            if (!baseline.completed || !candidate.completed)
+                return UnavailableScenario(result, contract, "run_incomplete");
+            if (!baseline.finiteData || !candidate.finiteData)
+                return UnavailableScenario(result, contract, "non_finite_run");
+            if (baseline.scenarioReport == null || candidate.scenarioReport == null)
+                return UnavailableScenario(result, contract, "scenario_report_missing");
+            if (!Approximately(baseline.scenarioReport.durationSeconds, candidate.scenarioReport.durationSeconds, 0.0001f))
+                return UnavailableScenario(result, contract, "duration_mismatch");
+
+            AddRequiredSignalStatuses(evaluation, contract, baseline.scenarioReport, "baseline");
+            AddRequiredSignalStatuses(evaluation, contract, candidate.scenarioReport, "candidate");
+            List<string> missing = RagdollLabScenarioSignalCatalog.MissingRequiredSignals(
+                contract, baseline.scenarioReport, "baseline");
+            missing.AddRange(RagdollLabScenarioSignalCatalog.MissingRequiredSignals(
+                contract, candidate.scenarioReport, "candidate"));
+            if (missing.Count > 0)
+                return UnavailableScenario(result, contract, "required_signals_missing", missing, evaluation);
+
+            if (string.Equals(contract.id, "PhysicalIntegrity", System.StringComparison.Ordinal))
+            {
+                AddScenarioMetric(evaluation.taskMetrics, "KineticEnergy.mean", "J",
+                    candidate.scenarioReport.kineticEnergy.mean, baseline.scenarioReport.kineticEnergy.mean, "lower", thresholds);
+            }
+            else if (string.Equals(contract.id, "Tracking", System.StringComparison.Ordinal))
+            {
+                AddScenarioMetric(evaluation.taskMetrics, "TrackingPoseError.mean", "m",
+                    PairMetricMean(candidate.scenarioReport, true, false),
+                    PairMetricMean(baseline.scenarioReport, true, false), "lower", thresholds);
+                AddScenarioMetric(evaluation.taskMetrics, "TrackingVelocityError.mean", "m/s",
+                    PairMetricMean(candidate.scenarioReport, false, true),
+                    PairMetricMean(baseline.scenarioReport, false, true), "lower", thresholds);
+            }
+            else
+            {
+                return UnavailableScenario(result, contract, "scenario_evaluator_unavailable", null, evaluation);
+            }
+
+            AddScenarioMetric(evaluation.safetyMetrics, "PenetrationDepth.max", "m",
+                candidate.scenarioReport.penetration.max, baseline.scenarioReport.penetration.max, "lower", thresholds);
+            AddScenarioMetric(evaluation.safetyMetrics, "FootSlipSpeed.mean", "m/s",
+                candidate.scenarioReport.footSlipSpeed.mean, baseline.scenarioReport.footSlipSpeed.mean, "lower", thresholds);
+            AddScenarioSafetyGate(evaluation, "finite_data", true, "both reports are finite", 1f, 1f);
+            AddScenarioSafetyGate(evaluation, "penetration",
+                candidate.scenarioReport.penetration.max <= SafetyLimit(baseline.scenarioReport.penetration.max, thresholds),
+                "candidate penetration is within the paired safety limit",
+                candidate.scenarioReport.penetration.max, baseline.scenarioReport.penetration.max);
+            AddScenarioSafetyGate(evaluation, "foot_slip",
+                candidate.scenarioReport.footSlipSpeed.mean <= SafetyLimit(baseline.scenarioReport.footSlipSpeed.mean, thresholds),
+                "candidate foot slip is within the paired safety limit",
+                candidate.scenarioReport.footSlipSpeed.mean, baseline.scenarioReport.footSlipSpeed.mean);
+            if (string.Equals(contract.id, "PhysicalIntegrity", System.StringComparison.Ordinal))
+            {
+                AddScenarioMetric(evaluation.safetyMetrics, "KineticEnergy.max", "J",
+                    candidate.scenarioReport.kineticEnergy.max, baseline.scenarioReport.kineticEnergy.max, "lower", thresholds);
+                AddScenarioSafetyGate(evaluation, "energy",
+                    candidate.scenarioReport.kineticEnergy.max <= SafetyLimit(baseline.scenarioReport.kineticEnergy.max, thresholds),
+                    "candidate energy is within the paired safety limit",
+                    candidate.scenarioReport.kineticEnergy.max, baseline.scenarioReport.kineticEnergy.max);
+            }
+
+            evaluation.taskDecision = DecideScenarioTask(evaluation.taskMetrics);
+            evaluation.safetyGuardsPassed = evaluation.safetyGates.TrueForAll(gate => gate.passed);
+            evaluation.safetyDecision = evaluation.safetyGuardsPassed ? "accepted" : "rejected";
+            evaluation.decision = evaluation.safetyGuardsPassed
+                ? evaluation.taskDecision
+                : "rejected";
+            evaluation.available = true;
+            evaluation.setupMatched = true;
+            evaluation.provenanceAvailable = HasScenarioProvenance(baseline.metadata, candidate.metadata);
+            evaluation.safetyGuardsPassed = evaluation.safetyGates.TrueForAll(gate => gate.passed);
+            CopyScenarioEvaluationToEnvelope(result, evaluation);
+            result.decision = evaluation.decision;
+            result.invalidReason = evaluation.invalidReason;
+            result.rejectionReasons = new List<string>(evaluation.rejectionReasons);
+            return result;
+        }
+
+        static ScenarioEvaluationReport FromBalanceComparison(
+            BalanceComparisonReport balance,
+            ScenarioEvaluationContract contract)
+        {
+            var evaluation = new ScenarioEvaluationReport
+            {
+                schemaVersion = RagdollLabSchema.Version,
+                scenarioProfile = contract.id,
+                contractId = contract.id,
+                contractVersion = contract.version,
+                decision = MapDecision(balance?.decision),
+                taskDecision = MapDecision(balance?.decision),
+                safetyDecision = balance != null && balance.safetyGuardsPassed ? "accepted" : "rejected",
+                invalidReason = balance?.invalidReason,
+                available = balance != null && balance.profileAvailable,
+                setupMatched = balance != null && balance.setupMatched,
+                provenanceAvailable = balance != null && balance.provenanceAvailable,
+                safetyGuardsPassed = balance != null && balance.safetyGuardsPassed,
+                balanceFallbackUsed = true,
+                tuningSessionId = balance?.tuningSessionId,
+                experimentId = balance?.experimentId,
+                baselineRunId = balance?.baselineRunId,
+                candidateRunId = balance?.candidateRunId,
+                baselineConfigurationFingerprint = balance?.baselineConfigurationFingerprint,
+                candidateConfigurationFingerprint = balance?.candidateConfigurationFingerprint,
+                treatmentParameter = balance?.treatmentParameter,
+                treatmentValueAvailable = balance != null && balance.treatmentValueAvailable,
+                treatmentValue = balance?.treatmentValue ?? 0f,
+                rejectionReasons = balance?.rejectionReasons == null
+                    ? new List<string>()
+                    : new List<string>(balance.rejectionReasons)
+            };
+            return evaluation;
+        }
+
+        static string MapDecision(string decision)
+        {
+            switch (decision)
+            {
+                case "accept": return "accepted";
+                case "reject": return "rejected";
+                default: return decision ?? "unavailable";
+            }
+        }
+
+        static void CopyScenarioEvaluationToEnvelope(
+            ScenarioComparisonReport result,
+            ScenarioEvaluationReport evaluation)
+        {
+            if (result == null || evaluation == null) return;
+            result.scenarioProfile = evaluation.scenarioProfile;
+            result.decision = evaluation.decision;
+            result.invalidReason = evaluation.invalidReason;
+            result.profileAvailable = evaluation.available;
+            result.setupMatched = evaluation.setupMatched;
+            result.safetyGuardsPassed = evaluation.safetyGuardsPassed;
+            result.tuningSessionId = evaluation.tuningSessionId;
+            result.experimentId = evaluation.experimentId;
+            result.baselineRunId = evaluation.baselineRunId;
+            result.candidateRunId = evaluation.candidateRunId;
+            result.baselineConfigurationFingerprint = evaluation.baselineConfigurationFingerprint;
+            result.candidateConfigurationFingerprint = evaluation.candidateConfigurationFingerprint;
+            result.treatmentParameter = evaluation.treatmentParameter;
+            result.treatmentValueAvailable = evaluation.treatmentValueAvailable;
+            result.treatmentValue = evaluation.treatmentValue;
+        }
+
+        static ScenarioComparisonReport UnavailableScenario(
+            ScenarioComparisonReport result,
+            ScenarioEvaluationContract contract,
+            string reason,
+            List<string> details = null,
+            ScenarioEvaluationReport existing = null)
+        {
+            ScenarioEvaluationReport evaluation = existing ?? new ScenarioEvaluationReport();
+            evaluation.schemaVersion = RagdollLabSchema.Version;
+            evaluation.scenarioProfile = contract?.id ?? RagdollLabScenarioProfiles.UnavailableId;
+            evaluation.contractId = contract?.id;
+            evaluation.contractVersion = contract?.version;
+            evaluation.available = false;
+            evaluation.decision = "unavailable";
+            evaluation.taskDecision = "unavailable";
+            evaluation.safetyDecision = "unavailable";
+            evaluation.safetyGuardsPassed = false;
+            evaluation.invalidReason = reason;
+            if (evaluation.rejectionReasons == null) evaluation.rejectionReasons = new List<string>();
+            if (!evaluation.rejectionReasons.Contains(reason)) evaluation.rejectionReasons.Add(reason);
+            if (details != null)
+            {
+                for (int i = 0; i < details.Count; i++)
+                {
+                    if (!evaluation.rejectionReasons.Contains(details[i])) evaluation.rejectionReasons.Add(details[i]);
+                    AddRequiredSignalStatusFromMissing(evaluation, details[i]);
+                }
+            }
+            result.contractId = evaluation.contractId;
+            result.contractVersion = evaluation.contractVersion;
+            result.scenarioEvaluation = evaluation;
+            CopyScenarioEvaluationToEnvelope(result, evaluation);
+            result.rejectionReasons = new List<string>(evaluation.rejectionReasons);
+            return result;
+        }
+
+        static void AddRequiredSignalStatuses(
+            ScenarioEvaluationReport evaluation,
+            ScenarioEvaluationContract contract,
+            ScenarioReport report,
+            string role)
+        {
+            for (int i = 0; i < contract.requiredSignals.Length; i++)
+            {
+                string signalId = contract.requiredSignals[i];
+                bool available = RagdollLabScenarioSignalCatalog.IsAvailable(signalId, report);
+                evaluation.requiredSignalStatuses.Add(new RequiredSignalStatus
+                {
+                    signalId = signalId,
+                    role = role,
+                    available = available,
+                    finite = available,
+                    reason = available ? null : "required_signal_unavailable"
+                });
+            }
+        }
+
+        static void AddRequiredSignalStatusFromMissing(ScenarioEvaluationReport evaluation, string missing)
+        {
+            if (string.IsNullOrEmpty(missing) || !missing.StartsWith("required_signal_missing:", System.StringComparison.Ordinal)) return;
+            string[] parts = missing.Split(new[] { ':' }, 4);
+            if (parts.Length < 4) return;
+            for (int i = 0; i < evaluation.requiredSignalStatuses.Count; i++)
+                if (evaluation.requiredSignalStatuses[i].signalId == parts[2] && evaluation.requiredSignalStatuses[i].role == parts[1]) return;
+            evaluation.requiredSignalStatuses.Add(new RequiredSignalStatus
+            {
+                signalId = parts[2],
+                role = parts[1],
+                available = false,
+                finite = false,
+                reason = parts[3]
+            });
+        }
+
+        static void AddScenarioMetric(
+            List<ScenarioMetric> metrics,
+            string name,
+            string unit,
+            float current,
+            float baseline,
+            string expectation,
+            RagdollLabThresholds thresholds)
+        {
+            float delta = current - baseline;
+            float relative = Mathf.Abs(baseline) > 0.000001f ? delta / Mathf.Abs(baseline) : 0f;
+            float tolerance = Mathf.Max(
+                Mathf.Abs(baseline) * thresholds.comparisonImprovementToleranceRatio,
+                thresholds.comparisonSafetyToleranceAbsolute);
+            metrics.Add(new ScenarioMetric
+            {
+                name = name,
+                unit = unit,
+                expectation = expectation,
+                current = current,
+                baseline = baseline,
+                delta = delta,
+                relativeDelta = relative,
+                regression = expectation == "lower" ? delta > tolerance : expectation == "higher" && delta < -tolerance
+            });
+        }
+
+        static void AddScenarioSafetyGate(
+            ScenarioEvaluationReport evaluation,
+            string id,
+            bool passed,
+            string reason,
+            float observed,
+            float baseline)
+        {
+            evaluation.safetyGates.Add(new SafetyGateResult
+            {
+                id = id,
+                passed = passed,
+                reason = passed ? reason : "safety_gate_failed:" + id,
+                observed = observed,
+                baseline = baseline
+            });
+            if (!passed) evaluation.rejectionReasons.Add("safety_gate_failed:" + id);
+        }
+
+        static string DecideScenarioTask(List<ScenarioMetric> metrics)
+        {
+            int improvements = 0;
+            int regressions = 0;
+            for (int i = 0; i < metrics.Count; i++)
+            {
+                ScenarioMetric metric = metrics[i];
+                if (Mathf.Abs(metric.delta) <= 0.000001f) continue;
+                if (metric.regression) regressions++; else improvements++;
+            }
+            return improvements > regressions ? "accepted" : regressions > 0 ? "rejected" : "neutral";
+        }
+
+        static float PairMetricMean(ScenarioReport report, bool pose, bool velocity)
+        {
+            float total = 0f;
+            int count = 0;
+            if (report?.pairTracking == null) return 0f;
+            for (int i = 0; i < report.pairTracking.Length; i++)
+            {
+                PairTrackingReport pair = report.pairTracking[i];
+                if (pair == null || !pair.targetAvailable || !pair.physicsAvailable || pair.sampleCount <= 0) continue;
+                MetricSummary metric = velocity
+                    ? pair.targetPhysicsVelocityError
+                    : pose ? pair.targetPhysicsDistance : pair.targetPhysicsAngularError;
+                if (metric == null || !RagdollLabMath.IsFinite(metric.mean)) continue;
+                total += metric.mean;
+                count++;
+            }
+            return count > 0 ? total / count : 0f;
+        }
+
+        static bool PopulateScenarioProvenance(
+            ScenarioEvaluationReport result,
+            RagdollLabMetadata baseline,
+            RagdollLabMetadata candidate)
+        {
+            if (!HasScenarioProvenance(baseline, candidate)) return true;
+            var balance = new BalanceComparisonReport();
+            if (!PopulateProvenance(balance, baseline, candidate)) return false;
+            result.tuningSessionId = balance.tuningSessionId;
+            result.experimentId = balance.experimentId;
+            result.baselineRunId = balance.baselineRunId;
+            result.candidateRunId = balance.candidateRunId;
+            result.baselineConfigurationFingerprint = balance.baselineConfigurationFingerprint;
+            result.candidateConfigurationFingerprint = balance.candidateConfigurationFingerprint;
+            result.treatmentParameter = balance.treatmentParameter;
+            result.treatmentValueAvailable = balance.treatmentValueAvailable;
+            result.treatmentValue = balance.treatmentValue;
+            result.provenanceAvailable = true;
+            return true;
+        }
+
+        static bool HasScenarioProvenance(RagdollLabMetadata baseline, RagdollLabMetadata candidate)
+        {
+            return (baseline != null && HasProvenance(baseline)) || (candidate != null && HasProvenance(candidate));
+        }
+
         static void ApplyScenarioExpectations(List<ComparisonMetric> metrics, ScenarioProfile profile, RagdollLabThresholds thresholds)
         {
             if (metrics == null || profile == null) return;

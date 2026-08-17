@@ -76,7 +76,7 @@ namespace Hairibar.Ragdoll.RagdollLab.Tests
                 Assert.That(comparison, Does.Contain("\"decision\""));
                 Assert.That(comparison, Does.Contain("\"decisionAuthority\": \"scenario-comparison.json\""));
                 Assert.That(normativeComparison, Does.Contain("\"decisionAuthority\": \"scenario-comparison.json\""));
-                Assert.That(normativeComparison, Does.Contain("\"comparisonKind\": \"balance\""));
+                Assert.That(normativeComparison, Does.Contain("\"comparisonKind\": \"scenario\""));
                 Assert.That(balanceComparison, Does.Contain("\"viewKind\": \"balance-specialized\""));
                 Assert.That(balanceComparison, Does.Contain("\"invalidReason\""));
                 Assert.That(diagnostics, Does.Contain("\"profileAvailable\""));

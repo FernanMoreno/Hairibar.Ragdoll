@@ -44,16 +44,17 @@ namespace Hairibar.Ragdoll.RagdollLab
                 string normativePath = Path.Combine(directory, RagdollTuningArtifactSchema.ScenarioComparisonFileName);
                 string balancePath = Path.Combine(directory, RagdollTuningArtifactSchema.BalanceComparisonFileName);
                 string comparisonPath = Path.Combine(directory, RagdollTuningArtifactSchema.ComparisonFileName);
+                bool specializedAvailable = HasBalanceSpecializedView(report);
                 if (!File.Exists(evaluationPath)) return Fail("evaluation_artifact_missing", out reason);
                 if (!File.Exists(normativePath)) return Fail("normative_decision_artifact_missing", out reason);
-                if (!File.Exists(balancePath)) return Fail("balance_comparison_artifact_missing", out reason);
+                if (specializedAvailable && !File.Exists(balancePath)) return Fail("balance_comparison_artifact_missing", out reason);
                 if (!File.Exists(comparisonPath)) return Fail("comparison_artifact_missing", out reason);
 
                 EvaluationReport persisted = JsonUtility.FromJson<EvaluationReport>(File.ReadAllText(evaluationPath));
                 reason = ValidateDecisionArtifacts(directory, persisted, binding, out _);
                 if (reason != null) return false;
 
-                manifest = CreateManifest(binding, evaluationPath, normativePath, balancePath, comparisonPath);
+                manifest = CreateManifest(binding, report, evaluationPath, normativePath, balancePath, comparisonPath);
                 string manifestPath = Path.Combine(directory, RagdollTuningArtifactSchema.ManifestFileName);
                 File.WriteAllText(manifestPath, JsonUtility.ToJson(manifest, true), Encoding.UTF8);
                 reason = null;
@@ -94,8 +95,9 @@ namespace Hairibar.Ragdoll.RagdollLab
                 if (!SafeFileName(manifest.normativeDecisionFile)
                     || !string.Equals(manifest.normativeDecisionFile, RagdollTuningArtifactSchema.ScenarioComparisonFileName, StringComparison.Ordinal))
                     return Fail("normative_decision_file_unsafe", out reason);
-                if (!SafeFileName(manifest.balanceComparisonFile)
-                    || !string.Equals(manifest.balanceComparisonFile, RagdollTuningArtifactSchema.BalanceComparisonFileName, StringComparison.Ordinal))
+                if (manifest.specializedComparisonAvailable
+                    && (!SafeFileName(manifest.balanceComparisonFile)
+                        || !string.Equals(manifest.balanceComparisonFile, RagdollTuningArtifactSchema.BalanceComparisonFileName, StringComparison.Ordinal)))
                     return Fail("balance_comparison_file_unsafe", out reason);
                 if (!SafeFileName(manifest.comparisonFile)
                     || !string.Equals(manifest.comparisonFile, RagdollTuningArtifactSchema.ComparisonFileName, StringComparison.Ordinal))
@@ -103,17 +105,20 @@ namespace Hairibar.Ragdoll.RagdollLab
 
                 string evaluationPath = Path.Combine(directory, manifest.evaluationFile);
                 string normativePath = Path.Combine(directory, manifest.normativeDecisionFile);
-                string balancePath = Path.Combine(directory, manifest.balanceComparisonFile);
+                string balancePath = manifest.specializedComparisonAvailable
+                    ? Path.Combine(directory, manifest.balanceComparisonFile)
+                    : null;
                 string comparisonPath = Path.Combine(directory, manifest.comparisonFile);
                 if (!File.Exists(evaluationPath)) return Fail("evaluation_artifact_missing", out reason);
                 if (!File.Exists(normativePath)) return Fail("normative_decision_artifact_missing", out reason);
-                if (!File.Exists(balancePath)) return Fail("balance_comparison_artifact_missing", out reason);
+                if (manifest.specializedComparisonAvailable && !File.Exists(balancePath)) return Fail("balance_comparison_artifact_missing", out reason);
                 if (!File.Exists(comparisonPath)) return Fail("comparison_artifact_missing", out reason);
                 if (!string.Equals(Sha256(evaluationPath), manifest.evaluationSha256, StringComparison.Ordinal))
                     return Fail("evaluation_hash_mismatch", out reason);
                 if (!string.Equals(Sha256(normativePath), manifest.normativeDecisionSha256, StringComparison.Ordinal))
                     return Fail("normative_decision_hash_mismatch", out reason);
-                if (!string.Equals(Sha256(balancePath), manifest.balanceComparisonSha256, StringComparison.Ordinal))
+                if (manifest.specializedComparisonAvailable
+                    && !string.Equals(Sha256(balancePath), manifest.balanceComparisonSha256, StringComparison.Ordinal))
                     return Fail("balance_comparison_hash_mismatch", out reason);
                 if (!string.Equals(Sha256(comparisonPath), manifest.comparisonSha256, StringComparison.Ordinal))
                     return Fail("comparison_hash_mismatch", out reason);
@@ -131,6 +136,7 @@ namespace Hairibar.Ragdoll.RagdollLab
                     report = null;
                     return false;
                 }
+                report.scenarioComparison = normative;
                 report.balanceComparison = normative.balanceComparison;
                 reason = null;
                 return true;
@@ -151,11 +157,14 @@ namespace Hairibar.Ragdoll.RagdollLab
 
         static RagdollTuningArtifactManifest CreateManifest(
             RagdollTuningRunBinding binding,
+            EvaluationReport report,
             string evaluationPath,
             string normativePath,
             string balancePath,
             string comparisonPath)
         {
+            bool specializedAvailable = HasBalanceSpecializedView(report);
+            ScenarioComparisonReport scenario = report?.scenarioComparison;
             return new RagdollTuningArtifactManifest
             {
                 sessionId = binding.sessionId,
@@ -169,10 +178,20 @@ namespace Hairibar.Ragdoll.RagdollLab
                 treatmentValue = binding.treatmentValue,
                 evaluationSha256 = Sha256(evaluationPath),
                 normativeDecisionSha256 = Sha256(normativePath),
-                balanceComparisonSha256 = Sha256(balancePath),
+                balanceComparisonFile = specializedAvailable ? RagdollTuningArtifactSchema.BalanceComparisonFileName : null,
+                balanceComparisonSha256 = specializedAvailable ? Sha256(balancePath) : null,
                 comparisonSha256 = Sha256(comparisonPath),
+                scenarioContractId = scenario?.contractId ?? report?.metadata?.scenarioContractId,
+                scenarioContractVersion = scenario?.contractVersion ?? report?.metadata?.scenarioContractVersion,
+                specializedComparisonKind = specializedAvailable ? "balance" : null,
+                specializedComparisonAvailable = specializedAvailable,
                 publishedUtc = DateTime.UtcNow.ToString("O")
             };
+        }
+
+        static bool HasBalanceSpecializedView(EvaluationReport report)
+        {
+            return report?.scenarioComparison?.balanceComparison != null || report?.balanceComparison != null;
         }
 
         static string ValidateBinding(RagdollTuningRunBinding binding)
@@ -213,13 +232,15 @@ namespace Hairibar.Ragdoll.RagdollLab
             normative = null;
             string metadataReason = MetadataMismatch(report?.metadata, expected);
             if (metadataReason != null) return metadataReason;
-            if (report.balanceComparison == null) return "evaluation_normative_comparison_missing";
+            bool genericScenario = report?.scenarioComparison != null
+                && string.Equals(report.scenarioComparison.comparisonKind, "scenario", StringComparison.Ordinal);
+            if (!genericScenario && report.balanceComparison == null) return "evaluation_normative_comparison_missing";
 
             string normativePath = Path.Combine(directory, RagdollTuningArtifactSchema.ScenarioComparisonFileName);
             string balancePath = Path.Combine(directory, RagdollTuningArtifactSchema.BalanceComparisonFileName);
             string comparisonPath = Path.Combine(directory, RagdollTuningArtifactSchema.ComparisonFileName);
             if (!File.Exists(normativePath)) return "normative_decision_artifact_missing";
-            if (!File.Exists(balancePath)) return "balance_comparison_artifact_missing";
+            if (HasBalanceSpecializedView(report) && !File.Exists(balancePath)) return "balance_comparison_artifact_missing";
             if (!File.Exists(comparisonPath)) return "comparison_artifact_missing";
 
             BalanceComparisonReport balanceView;
@@ -227,7 +248,9 @@ namespace Hairibar.Ragdoll.RagdollLab
             try
             {
                 normative = JsonUtility.FromJson<ScenarioComparisonReport>(File.ReadAllText(normativePath));
-                balanceView = JsonUtility.FromJson<BalanceComparisonReport>(File.ReadAllText(balancePath));
+                balanceView = File.Exists(balancePath)
+                    ? JsonUtility.FromJson<BalanceComparisonReport>(File.ReadAllText(balancePath))
+                    : null;
                 legacy = JsonUtility.FromJson<ComparisonReport>(File.ReadAllText(comparisonPath));
             }
             catch (Exception exception)
@@ -235,14 +258,55 @@ namespace Hairibar.Ragdoll.RagdollLab
                 return "decision_artifact_invalid:" + exception.GetType().Name;
             }
 
-            string normativeReason = ValidateNormative(normative);
+            string normativeReason = genericScenario
+                ? ValidateScenarioNormative(normative)
+                : ValidateNormative(normative);
             if (normativeReason != null) return normativeReason;
-            string embeddedReason = DecisionIdentityMismatch(
-                normative.balanceComparison, report.balanceComparison, "evaluation_normative_comparison");
+            string embeddedReason = genericScenario
+                ? ScenarioDecisionIdentityMismatch(normative, report.scenarioComparison, "evaluation_normative_comparison")
+                : DecisionIdentityMismatch(normative.balanceComparison, report.balanceComparison, "evaluation_normative_comparison");
             if (embeddedReason != null) return embeddedReason;
-            string balanceReason = ValidateSpecializedView(normative, balanceView);
-            if (balanceReason != null) return balanceReason;
+            if (HasBalanceSpecializedView(report))
+            {
+                string balanceReason = ValidateSpecializedView(normative, balanceView);
+                if (balanceReason != null) return balanceReason;
+            }
             return ValidateLegacySummary(normative, legacy);
+        }
+
+        static string ValidateScenarioNormative(ScenarioComparisonReport normative)
+        {
+            if (normative == null) return "normative_decision_invalid";
+            if (!string.Equals(normative.schemaVersion, RagdollTuningArtifactSchema.NormativeDecisionVersion, StringComparison.Ordinal))
+                return "normative_decision_schema_mismatch";
+            if (!string.Equals(normative.decisionAuthority, RagdollTuningArtifactSchema.ScenarioComparisonFileName, StringComparison.Ordinal))
+                return "normative_decision_authority_mismatch";
+            if (!string.Equals(normative.comparisonKind, "scenario", StringComparison.Ordinal))
+                return "normative_comparison_kind_unsupported";
+            if (normative.scenarioEvaluation == null) return "normative_scenario_evaluation_missing";
+            if (!string.Equals(normative.decision, normative.scenarioEvaluation.decision, StringComparison.Ordinal))
+                return "normative_decision_contradiction";
+            if (!string.Equals(normative.contractId, normative.scenarioEvaluation.contractId, StringComparison.Ordinal))
+                return "normative_contract_id_contradiction";
+            if (!string.Equals(normative.contractVersion, normative.scenarioEvaluation.contractVersion, StringComparison.Ordinal))
+                return "normative_contract_version_contradiction";
+            return null;
+        }
+
+        static string ScenarioDecisionIdentityMismatch(
+            ScenarioComparisonReport expected,
+            ScenarioComparisonReport actual,
+            string prefix)
+        {
+            if (expected == null || actual == null) return prefix + "_missing";
+            if (!string.Equals(expected.decision, actual.decision, StringComparison.Ordinal)) return prefix + "_decision_mismatch";
+            if (!string.Equals(expected.invalidReason, actual.invalidReason, StringComparison.Ordinal)) return prefix + "_invalid_reason_mismatch";
+            if (!string.Equals(expected.contractId, actual.contractId, StringComparison.Ordinal)) return prefix + "_contract_id_mismatch";
+            if (!string.Equals(expected.contractVersion, actual.contractVersion, StringComparison.Ordinal)) return prefix + "_contract_version_mismatch";
+            if (!string.Equals(expected.scenarioProfile, actual.scenarioProfile, StringComparison.Ordinal)) return prefix + "_profile_mismatch";
+            if (expected.setupMatched != actual.setupMatched) return prefix + "_setup_mismatch";
+            if (expected.safetyGuardsPassed != actual.safetyGuardsPassed) return prefix + "_safety_mismatch";
+            return null;
         }
 
         static string ValidateNormative(ScenarioComparisonReport normative)

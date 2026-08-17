@@ -141,6 +141,7 @@ namespace Hairibar.Ragdoll.RagdollLab
         public RagdollTuningArtifactManifest baselineArtifact;
         public RagdollTuningArtifactManifest candidateArtifact;
         public BalanceComparisonReport comparison;
+        public ScenarioComparisonReport scenarioComparison;
     }
 
     [Serializable]
@@ -179,6 +180,10 @@ namespace Hairibar.Ragdoll.RagdollLab
         public bool rollbackRequired;
         public bool candidateActive = true;
         public BalanceComparisonReport comparison;
+        public ScenarioComparisonReport scenarioComparison;
+        public ScenarioEvaluationReport scenarioEvaluation;
+        public string contractId;
+        public string contractVersion;
     }
 
     [Serializable]
@@ -351,7 +356,9 @@ namespace Hairibar.Ragdoll.RagdollLab
                 candidateRunId = candidateRunId,
                 baselineConfigurationFingerprint = session.baselineFingerprint,
                 candidateConfigurationFingerprint = Fingerprint(candidateByName),
-                scenarioProfile = session.scenarioProfile
+                scenarioProfile = session.scenarioProfile,
+                contractId = RagdollLabScenarioEvaluationCatalog.Resolve(session.scenarioProfile).id,
+                contractVersion = RagdollLabScenarioEvaluationCatalog.Resolve(session.scenarioProfile).version
             };
             if (session.experiments == null)
                 session.experiments = new List<RagdollTuningExperiment>();
@@ -409,7 +416,58 @@ namespace Hairibar.Ragdoll.RagdollLab
             EvaluationReport candidate,
             RagdollLabThresholds thresholds = null)
         {
-            BalanceComparisonReport comparison = RagdollLabComparison.BuildBalanceComparison(baseline, candidate, thresholds);
+            ScenarioComparisonReport scenarioComparison = RagdollLabComparison.BuildScenarioComparison(baseline, candidate, thresholds);
+            if (scenarioComparison?.balanceComparison != null)
+                return EvaluateBalanceWithScenario(session, experiment, scenarioComparison.balanceComparison, scenarioComparison);
+            return EvaluateScenario(session, experiment, scenarioComparison);
+        }
+
+        public static RagdollTuningDecision EvaluateScenario(
+            RagdollTuningSession session,
+            RagdollTuningExperiment experiment,
+            ScenarioComparisonReport comparison)
+        {
+            if (session == null || experiment == null)
+                return Invalid(session, "experiment_missing", experiment?.experimentId);
+            if (!Contains(session, experiment))
+                return Invalid(session, "experiment_not_in_session", experiment.experimentId);
+            if (!string.Equals(experiment.state, "active", StringComparison.Ordinal))
+                return ExistingDecision(session, experiment);
+
+            experiment.scenarioComparison = comparison;
+            experiment.scenarioEvaluation = comparison?.scenarioEvaluation;
+            if (!StructuralScenarioEvidenceIsValid(session, experiment, comparison))
+                return FinalizeRejected(session, experiment, "invalid", "structural", StructuralScenarioReason(session, experiment, comparison));
+
+            ScenarioEvaluationReport evaluation = comparison.scenarioEvaluation;
+            if (!evaluation.safetyGuardsPassed || !string.Equals(evaluation.safetyDecision, "accepted", StringComparison.Ordinal))
+                return FinalizeRejected(session, experiment, "rejected", "safety", "safety_gates_failed");
+            if (string.Equals(evaluation.decision, "accepted", StringComparison.Ordinal))
+            {
+                experiment.state = "accepted";
+                experiment.decision = "accepted";
+                experiment.decisionStage = "task";
+                experiment.decisionReason = "explicit_task_improvement";
+                experiment.promotionEligible = true;
+                experiment.rollbackRequired = false;
+                experiment.candidateActive = true;
+                session.lastDecision = experiment.decision;
+                session.lastReason = experiment.decisionReason;
+                return Decision(experiment, experiment.decision, experiment.decisionStage, experiment.decisionReason, true, false, true);
+            }
+            if (string.Equals(evaluation.decision, "neutral", StringComparison.Ordinal))
+                return FinalizeRejected(session, experiment, "neutral", "task", "no_explicit_task_improvement");
+            return FinalizeRejected(session, experiment, "rejected", "task", "task_regression");
+        }
+
+        static RagdollTuningDecision EvaluateBalanceWithScenario(
+            RagdollTuningSession session,
+            RagdollTuningExperiment experiment,
+            BalanceComparisonReport comparison,
+            ScenarioComparisonReport scenarioComparison)
+        {
+            experiment.scenarioComparison = scenarioComparison;
+            experiment.scenarioEvaluation = scenarioComparison?.scenarioEvaluation;
             return Evaluate(session, experiment, comparison);
         }
 
@@ -526,6 +584,83 @@ namespace Hairibar.Ragdoll.RagdollLab
             if (!string.Equals(session.scenarioProfile, comparison.scenarioProfile, StringComparison.Ordinal)) return "scenario_profile_mismatch";
             if (!AreFinite(comparison.stabilityMetrics) || !AreFinite(comparison.safetyMetrics)) return "comparison_non_finite";
             return "comparison_decision_invalid";
+        }
+
+        static bool StructuralScenarioEvidenceIsValid(
+            RagdollTuningSession session,
+            RagdollTuningExperiment experiment,
+            ScenarioComparisonReport comparison)
+        {
+            ScenarioEvaluationReport evaluation = comparison?.scenarioEvaluation;
+            ScenarioEvaluationContract contract = RagdollLabScenarioEvaluationCatalog.Resolve(session?.scenarioProfile);
+            return comparison != null
+                && evaluation != null
+                && evaluation.available
+                && evaluation.setupMatched
+                && evaluation.provenanceAvailable
+                && string.Equals(comparison.comparisonKind, "scenario", StringComparison.Ordinal)
+                && string.Equals(evaluation.contractId, contract.id, StringComparison.Ordinal)
+                && string.Equals(evaluation.contractVersion, contract.version, StringComparison.Ordinal)
+                && string.Equals(evaluation.tuningSessionId, experiment.tuningSessionId, StringComparison.Ordinal)
+                && string.Equals(evaluation.experimentId, experiment.experimentId, StringComparison.Ordinal)
+                && string.Equals(evaluation.baselineRunId, experiment.baselineRunId, StringComparison.Ordinal)
+                && string.Equals(evaluation.candidateRunId, experiment.candidateRunId, StringComparison.Ordinal)
+                && string.Equals(evaluation.baselineConfigurationFingerprint, experiment.baselineConfigurationFingerprint, StringComparison.Ordinal)
+                && string.Equals(evaluation.candidateConfigurationFingerprint, experiment.candidateConfigurationFingerprint, StringComparison.Ordinal)
+                && string.Equals(evaluation.treatmentParameter, experiment.parameterName, StringComparison.Ordinal)
+                && evaluation.treatmentValueAvailable
+                && Approximately(evaluation.treatmentValue, experiment.candidateValue)
+                && (string.Equals(evaluation.decision, "accepted", StringComparison.Ordinal)
+                    || string.Equals(evaluation.decision, "rejected", StringComparison.Ordinal)
+                    || string.Equals(evaluation.decision, "neutral", StringComparison.Ordinal))
+                && RequiredSignalsAvailable(evaluation.requiredSignalStatuses)
+                && AreFinite(evaluation.taskMetrics)
+                && AreFinite(evaluation.safetyMetrics);
+        }
+
+        static string StructuralScenarioReason(
+            RagdollTuningSession session,
+            RagdollTuningExperiment experiment,
+            ScenarioComparisonReport comparison)
+        {
+            ScenarioEvaluationReport evaluation = comparison?.scenarioEvaluation;
+            if (comparison == null) return "scenario_comparison_missing";
+            if (evaluation == null) return "scenario_evaluation_missing";
+            if (!evaluation.available) return evaluation.invalidReason ?? "scenario_unavailable";
+            if (!evaluation.provenanceAvailable) return "comparison_provenance_missing";
+            if (!string.Equals(evaluation.tuningSessionId, experiment.tuningSessionId, StringComparison.Ordinal)) return "tuning_session_id_mismatch";
+            if (!string.Equals(evaluation.experimentId, experiment.experimentId, StringComparison.Ordinal)) return "experiment_id_mismatch";
+            if (!string.Equals(evaluation.baselineRunId, experiment.baselineRunId, StringComparison.Ordinal)) return "baseline_run_id_mismatch";
+            if (!string.Equals(evaluation.candidateRunId, experiment.candidateRunId, StringComparison.Ordinal)) return "candidate_run_id_mismatch";
+            if (!string.Equals(evaluation.baselineConfigurationFingerprint, experiment.baselineConfigurationFingerprint, StringComparison.Ordinal)) return "baseline_configuration_fingerprint_mismatch";
+            if (!string.Equals(evaluation.candidateConfigurationFingerprint, experiment.candidateConfigurationFingerprint, StringComparison.Ordinal)) return "candidate_configuration_fingerprint_mismatch";
+            if (!string.Equals(evaluation.treatmentParameter, experiment.parameterName, StringComparison.Ordinal)) return "treatment_parameter_mismatch";
+            if (!evaluation.treatmentValueAvailable || !Approximately(evaluation.treatmentValue, experiment.candidateValue)) return "treatment_value_mismatch";
+            if (!string.Equals(evaluation.contractId, RagdollLabScenarioEvaluationCatalog.Resolve(session.scenarioProfile).id, StringComparison.Ordinal)) return "scenario_contract_mismatch";
+            if (!evaluation.setupMatched) return "paired_setup_mismatch";
+            if (!RequiredSignalsAvailable(evaluation.requiredSignalStatuses)) return "required_signal_unavailable";
+            if (!AreFinite(evaluation.taskMetrics) || !AreFinite(evaluation.safetyMetrics)) return "comparison_non_finite";
+            return "scenario_decision_invalid";
+        }
+
+        static bool RequiredSignalsAvailable(List<RequiredSignalStatus> statuses)
+        {
+            if (statuses == null || statuses.Count == 0) return false;
+            for (int i = 0; i < statuses.Count; i++)
+                if (statuses[i] == null || !statuses[i].available || !statuses[i].finite) return false;
+            return true;
+        }
+
+        static bool AreFinite(List<ScenarioMetric> metrics)
+        {
+            if (metrics == null) return false;
+            for (int i = 0; i < metrics.Count; i++)
+            {
+                ScenarioMetric metric = metrics[i];
+                if (metric == null || !IsFinite(metric.current) || !IsFinite(metric.baseline)
+                    || !IsFinite(metric.delta) || !IsFinite(metric.relativeDelta)) return false;
+            }
+            return true;
         }
 
         static RagdollTuningDecision FinalizeRejected(
@@ -709,6 +844,7 @@ namespace Hairibar.Ragdoll.RagdollLab
             result.decision = RagdollTuningPlanner.Evaluate(
                 session, experiment, result.baselineReport, result.candidateReport, thresholds);
             result.comparison = experiment.comparison;
+            result.scenarioComparison = experiment.scenarioComparison;
             result.valid = result.decision != null && result.decision.valid;
             result.reason = result.decision?.reason ?? "decision_missing";
             return result;
@@ -771,6 +907,7 @@ namespace Hairibar.Ragdoll.RagdollLab
                 result.decision = RagdollTuningPlanner.Evaluate(
                     session, experiment, result.baselineReport, result.candidateReport, thresholds);
                 result.comparison = experiment.comparison;
+                result.scenarioComparison = experiment.scenarioComparison;
                 if (string.Equals(result.decision.decision, "accepted", StringComparison.Ordinal)
                     && promoteAcceptedCandidate)
                 {

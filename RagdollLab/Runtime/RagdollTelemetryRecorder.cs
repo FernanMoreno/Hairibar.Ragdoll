@@ -1169,8 +1169,11 @@ namespace Hairibar.Ragdoll.RagdollLab
             string directory = OutputPath;
             Directory.CreateDirectory(directory);
             EvaluationReport previous = RagdollLabComparison.Read(Path.Combine(directory, "evaluation.json"));
+            ScenarioEvaluationContract scenarioContract = RagdollLabScenarioEvaluationCatalog.Resolve(scenario);
             var metadata = new RagdollLabMetadata { runId = runId, scenario = scenario, seed = seed,
                 scenarioProfile = RagdollLabScenarioProfiles.Resolve(scenario).id,
+                scenarioContractId = scenarioContract.id,
+                scenarioContractVersion = scenarioContract.version,
                 unityVersion = Application.unityVersion, physicsScene = gameObject.scene.name,
                 fixedDeltaTime = Time.fixedDeltaTime, gravityMagnitude = Physics.gravity.magnitude,
                 characterHeight = CalculateHeight(), totalMass = CalculateMass(), captureRoot = trackedRoot.name,
@@ -1188,8 +1191,9 @@ namespace Hairibar.Ragdoll.RagdollLab
             report.scenarioReport = RagdollLabAnalyzer.Analyze(frames, metadata.characterHeight, metadata.totalMass, metadata.gravityMagnitude, thresholds);
             report.scenarioReport.name = scenario;
             ValidateFinite(report);
-            report.balanceComparison = RagdollLabComparison.BuildBalanceComparison(previous, report, thresholds);
-            RagdollLabComparison.StampNormative(report.balanceComparison);
+            report.scenarioComparison = RagdollLabComparison.BuildScenarioComparison(previous, report, thresholds);
+            report.balanceComparison = report.scenarioComparison.balanceComparison;
+            if (report.balanceComparison != null) RagdollLabComparison.StampNormative(report.balanceComparison);
             report.diagnostics = RagdollLabAnalyzer.Diagnose(report, thresholds);
             string json = JsonUtility.ToJson(report, true);
             File.WriteAllText(Path.Combine(directory, "evaluation.json"), json, Encoding.UTF8);
@@ -1198,12 +1202,13 @@ namespace Hairibar.Ragdoll.RagdollLab
             csv.WriteLine("frameIndex,physicsStepIndex,simulationTime,fixedDeltaTime,bodyCount,jointCount");
             for (int i = 0; i < frames.Count; i++) { PhysicsFrame f = frames[i]; csv.WriteLine($"{f.frameIndex},{f.physicsStepIndex},{f.simulationTime:R},{f.fixedDeltaTime:R},{f.bodies.Length},{f.joints.Length}"); }
             ComparisonReport comparison = RagdollLabComparison.Build(report, previous);
-            ScenarioComparisonReport normative = RagdollLabComparison.BuildNormativeScenarioComparison(report.balanceComparison);
+            ScenarioComparisonReport normative = report.scenarioComparison;
             RagdollLabComparison.StampLegacySummary(comparison, normative);
             BalanceComparisonReport balanceView = RagdollLabComparison.CreateBalanceSpecializedView(report.balanceComparison);
             File.WriteAllText(Path.Combine(directory, RagdollTuningArtifactSchema.ComparisonFileName), JsonUtility.ToJson(comparison, true), Encoding.UTF8);
             File.WriteAllText(Path.Combine(directory, RagdollTuningArtifactSchema.ScenarioComparisonFileName), JsonUtility.ToJson(normative, true), Encoding.UTF8);
-            File.WriteAllText(Path.Combine(directory, RagdollTuningArtifactSchema.BalanceComparisonFileName), JsonUtility.ToJson(balanceView, true), Encoding.UTF8);
+            if (balanceView != null)
+                File.WriteAllText(Path.Combine(directory, RagdollTuningArtifactSchema.BalanceComparisonFileName), JsonUtility.ToJson(balanceView, true), Encoding.UTF8);
             File.WriteAllText(Path.Combine(directory, "diagnostics.json"), JsonUtility.ToJson(report.diagnostics, true), Encoding.UTF8);
             WriteSummary(directory, report, comparison);
             if (!string.IsNullOrWhiteSpace(tuningSessionId))

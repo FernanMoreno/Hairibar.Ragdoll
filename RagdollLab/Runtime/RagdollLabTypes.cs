@@ -50,6 +50,8 @@ namespace Hairibar.Ragdoll.RagdollLab
         public string treatmentParameter;
         public bool treatmentValueAvailable;
         public float treatmentValue;
+        public string scenarioContractId;
+        public string scenarioContractVersion;
     }
 
     [Serializable] public sealed class RagdollTuningRunBinding
@@ -100,6 +102,10 @@ namespace Hairibar.Ragdoll.RagdollLab
         public string balanceComparisonSha256;
         public string comparisonFile = RagdollTuningArtifactSchema.ComparisonFileName;
         public string comparisonSha256;
+        public string scenarioContractId;
+        public string scenarioContractVersion;
+        public string specializedComparisonKind = "balance";
+        public bool specializedComparisonAvailable = true;
         public string publishedUtc;
     }
 
@@ -461,6 +467,63 @@ namespace Hairibar.Ragdoll.RagdollLab
         public bool regression;
     }
 
+    [Serializable] public sealed class ScenarioMetric
+    {
+        public string name, unit;
+        public string expectation = "neutral";
+        public float current, baseline, delta, relativeDelta;
+        public bool regression;
+    }
+
+    [Serializable] public sealed class RequiredSignalStatus
+    {
+        public string signalId;
+        public string role;
+        public bool available;
+        public bool finite;
+        public string reason;
+    }
+
+    [Serializable] public sealed class SafetyGateResult
+    {
+        public string id;
+        public bool passed;
+        public string reason;
+        public float observed;
+        public float baseline;
+    }
+
+    [Serializable] public sealed class ScenarioEvaluationReport
+    {
+        public string schemaVersion = RagdollLabSchema.Version;
+        public string scenarioProfile = RagdollLabScenarioProfiles.UnavailableId;
+        public string contractId;
+        public string contractVersion;
+        public string decision = "unavailable";
+        public string taskDecision = "unavailable";
+        public string safetyDecision = "unavailable";
+        public string invalidReason;
+        public bool available;
+        public bool setupMatched;
+        public bool provenanceAvailable;
+        public bool safetyGuardsPassed;
+        public bool balanceFallbackUsed;
+        public string tuningSessionId;
+        public string experimentId;
+        public string baselineRunId;
+        public string candidateRunId;
+        public string baselineConfigurationFingerprint;
+        public string candidateConfigurationFingerprint;
+        public string treatmentParameter;
+        public bool treatmentValueAvailable;
+        public float treatmentValue;
+        public List<ScenarioMetric> taskMetrics = new();
+        public List<ScenarioMetric> safetyMetrics = new();
+        public List<SafetyGateResult> safetyGates = new();
+        public List<RequiredSignalStatus> requiredSignalStatuses = new();
+        public List<string> rejectionReasons = new();
+    }
+
     [Serializable] public sealed class ComparisonReport
     {
         public string schemaVersion = RagdollLabSchema.Version;
@@ -523,6 +586,8 @@ namespace Hairibar.Ragdoll.RagdollLab
         public string schemaVersion = RagdollTuningArtifactSchema.NormativeDecisionVersion;
         public string decisionAuthority = RagdollTuningArtifactSchema.ScenarioComparisonFileName;
         public string comparisonKind = "balance";
+        public string contractId;
+        public string contractVersion;
         public string scenarioProfile = RagdollLabScenarioProfiles.UnavailableId;
         public string decision = "invalid";
         public string invalidReason;
@@ -539,6 +604,7 @@ namespace Hairibar.Ragdoll.RagdollLab
         public bool treatmentValueAvailable;
         public float treatmentValue;
         public List<string> rejectionReasons = new();
+        public ScenarioEvaluationReport scenarioEvaluation;
         public BalanceComparisonReport balanceComparison;
     }
 
@@ -555,6 +621,7 @@ namespace Hairibar.Ragdoll.RagdollLab
         public List<string> warnings = new();
         public ScenarioReport scenarioReport;
         public DiagnosticsReport diagnostics;
+        public ScenarioComparisonReport scenarioComparison;
         public BalanceComparisonReport balanceComparison;
     }
 }
