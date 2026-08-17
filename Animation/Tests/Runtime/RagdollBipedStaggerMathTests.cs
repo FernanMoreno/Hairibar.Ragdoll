@@ -53,6 +53,34 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [Test]
+        public void SelectStepFoot_OneSupportedFootAlwaysSelectsTheAirborneFoot()
+        {
+            RagdollBipedStepFoot foot = RagdollBipedStaggerMath.SelectStepFoot(
+                capturePoint: new Vector3(20f, 0f, 0f),
+                hasLeftFootSupport: true,
+                leftFoot: Vector3.zero,
+                hasRightFootSupport: false,
+                rightFoot: new Vector3(100f, 0f, 0f),
+                supportUp: Vector3.up);
+
+            Assert.That(foot, Is.EqualTo(RagdollBipedStepFoot.Right));
+        }
+
+        [Test]
+        public void SelectStepFoot_RightSupportedFootAlwaysSelectsTheAirborneFoot()
+        {
+            RagdollBipedStepFoot foot = RagdollBipedStaggerMath.SelectStepFoot(
+                capturePoint: new Vector3(-20f, 0f, 0f),
+                hasLeftFootSupport: false,
+                leftFoot: new Vector3(-100f, 0f, 0f),
+                hasRightFootSupport: true,
+                rightFoot: Vector3.zero,
+                supportUp: Vector3.up);
+
+            Assert.That(foot, Is.EqualTo(RagdollBipedStepFoot.Left));
+        }
+
+        [Test]
         public void ClampStepLength_WithinRange_ReturnsTargetUnchanged()
         {
             Vector3 clamped = RagdollBipedStaggerMath.ClampStepLength(

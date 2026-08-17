@@ -46,7 +46,11 @@ namespace Hairibar.Ragdoll.Animation
             int supportColliderId = 0,
             int supportRigidbodyId = 0,
             bool hasSupportPlatform = false,
-            Vector3 supportVelocity = default(Vector3))
+            Vector3 supportVelocity = default(Vector3),
+            bool hasLeftFootSupport = false,
+            Vector3 leftFootSupportPoint = default(Vector3),
+            bool hasRightFootSupport = false,
+            Vector3 rightFootSupportPoint = default(Vector3))
         {
             Vector3 resolvedUp = IsFinite(up) && up.sqrMagnitude > Mathf.Epsilon
                 ? up.normalized
@@ -87,7 +91,11 @@ namespace Hairibar.Ragdoll.Animation
                 sourceAvailable,
                 supportVelocity,
                 hasRelativeMotion,
-                continuityReset);
+                continuityReset,
+                hasLeftFootSupport,
+                leftFootSupportPoint,
+                hasRightFootSupport,
+                rightFootSupportPoint);
 
             hasPreviousFrame = true;
             previousGrounded = grounded;

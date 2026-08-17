@@ -625,6 +625,13 @@ namespace Hairibar.Ragdoll.RagdollLab.Tests
                 recoveryTimeSeconds = 2f,
                 recoveryOvershootMeters = 0.2f,
                 firstRequiresStepSimulationTime = 0.02f,
+                firstRequiresStepFrame = 1,
+                perturbationEventAvailable = true,
+                firstPerturbationEventName = "PushApplied",
+                firstPerturbationFrame = 0,
+                firstPerturbationSimulationTime = 0f,
+                requiresStepLatencyAvailable = true,
+                requiresStepLatencySeconds = 0.02f,
                 minimumSignedSupportMargin = 0.01f,
                 finalSignedSupportMargin = 0.1f
             };
@@ -634,6 +641,70 @@ namespace Hairibar.Ragdoll.RagdollLab.Tests
             Assert.That(diagnostics.diagnostics.Exists(d => d.type == "RECOVERY_TOO_SLOW"), Is.True);
             Assert.That(diagnostics.diagnostics.Exists(d => d.type == "RECOVERY_OVERSHOOT"), Is.True);
             Assert.That(diagnostics.diagnostics.Exists(d => d.type == "STEP_REQUIRED_TOO_EARLY"), Is.True);
+        }
+
+        [Test]
+        public void EarlyStepDiagnosticUsesPerturbationLatencyAfterPreRoll()
+        {
+            var frames = new List<PhysicsFrame>
+            {
+                new()
+                {
+                    frameIndex = 0,
+                    fixedDeltaTime = 0.02f,
+                    simulationTime = 2f,
+                    events = new[] { new EventMarker { name = "PushApplied", frameIndex = 0, simulationTime = 2f } },
+                    balance = new BalanceFrameTelemetry
+                    {
+                        sourceAvailable = true,
+                        state = "Stable",
+                        hasSignedSupportMargin = true,
+                        signedSupportMargin = 0.1f
+                    }
+                },
+                new()
+                {
+                    frameIndex = 1,
+                    fixedDeltaTime = 0.02f,
+                    simulationTime = 2.02f,
+                    balance = new BalanceFrameTelemetry
+                    {
+                        sourceAvailable = true,
+                        state = "RequiresStep",
+                        hasSignedSupportMargin = true,
+                        signedSupportMargin = -0.05f
+                    }
+                }
+            };
+
+            ScenarioReport report = RagdollLabAnalyzer.Analyze(frames, 1.8f, 70f, 9.81f);
+            report.name = "Stagger";
+            DiagnosticsReport diagnostics = RagdollLabAnalyzer.Diagnose(report);
+
+            Assert.That(report.perturbationEventAvailable, Is.True);
+            Assert.That(report.firstPerturbationEventName, Is.EqualTo("PushApplied"));
+            Assert.That(report.requiresStepLatencyAvailable, Is.True);
+            Assert.That(report.requiresStepLatencySeconds, Is.EqualTo(0.02f).Within(0.0001f));
+            Assert.That(diagnostics.diagnostics.Exists(d => d.type == "STEP_REQUIRED_TOO_EARLY"), Is.True);
+        }
+
+        [Test]
+        public void EarlyStepDiagnosticFailsClosedWithoutPerturbationMarker()
+        {
+            ScenarioReport report = new()
+            {
+                name = "Stagger",
+                balanceTelemetryAvailable = true,
+                signedSupportMarginAvailable = true,
+                balanceSampleCount = 1,
+                firstRequiresStepSimulationTime = 0.02f
+            };
+
+            DiagnosticsReport diagnostics = RagdollLabAnalyzer.Diagnose(report);
+
+            Assert.That(diagnostics.diagnostics.Exists(d => d.type == "STEP_REQUIRED_TOO_EARLY"), Is.False);
+            Assert.That(diagnostics.unavailableReasons,
+                Does.Contain("requires_step_perturbation_marker_unavailable"));
         }
 
         [Test]

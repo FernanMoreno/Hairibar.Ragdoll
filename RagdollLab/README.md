@@ -27,7 +27,9 @@ no forman parte de la certificación de este paquete.
 
 `evaluation.json`, `frames.json`, `frames.csv`, `comparison.json`, `scenario-comparison.json`, `diagnostics.json`, `summary.md`; una corrida de balance añade además `balance-comparison.json` y una corrida de tuning añade `tuning-manifest.json`.
 
-Todos contienen `schemaVersion` donde aplica. El esquema actual es `1.6.0`; artifacts `1.5.0`, `1.4.0`, `1.3.0` y anteriores siguen siendo legibles y exponen los campos nuevos como ausentes, `false`, `0` o `Unavailable`. IDs usan ruta jerárquica estable, no InstanceID.
+Todos contienen `schemaVersion` donde aplica. El esquema actual es `1.7.0`; artifacts `1.6.0`, `1.5.0`, `1.4.0`, `1.3.0` y anteriores siguen siendo legibles y exponen los campos nuevos como ausentes, `false`, `0` o `Unavailable`. IDs usan ruta jerárquica estable, no InstanceID.
+
+`ScenarioReport` conserva la primera transición a `RequiresStep` y, cuando existe un `PushApplied`, `Impact`, `EventApplied` o marker equivalente de push/impact, registra el evento de perturbación y la latencia causal hasta `RequiresStep`. `STEP_REQUIRED_TOO_EARLY` sólo se emite con esa latencia disponible; sin marker válido el diagnóstico queda no disponible para evitar falsos positivos por pre-roll.
 
 Feature 007 añade `PhysicsFrame.animatedPairs`, una muestra por cada `RagdollAnimator.AnimatedPair`, con identidad exacta target/physics, velocidad, aceleración y jerk lineal/angular de ambos lados y pesos de mapping authored/effective. Los derivados de target usan el tiempo real de muestreo de Animator; los derivados físicos usan el intervalo de FixedUpdate. Un reset, teleport o timestamp inválido marca la muestra como no disponible, sin convertirla en cero válido. `animatedPairCaptureAttempted` distingue capturas actuales sin fuente de artifacts antiguos, que conservan el fallback legacy. `MAPPING_INTEGRITY` sólo se emite con warnings explícitos de identidad/disponibilidad del recorder.
 

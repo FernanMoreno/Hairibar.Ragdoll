@@ -9,8 +9,8 @@ namespace Hairibar.Ragdoll.Animation
     /// concept for in-place balance recovery. The recovered Doxygen corpus does
     /// not establish a detail-level RootMotion BehaviourBipedStagger contract.
     /// It classifies whether the capture point (center of mass projected along its
-    /// own velocity, inverted-pendulum approximation) has left the foot-to-foot
-    /// support base, using its own RagdollCenterOfMassSubBehaviour instance --
+    /// own velocity, inverted-pendulum approximation) has left the current
+    /// contact-backed support base, using its own RagdollCenterOfMassSubBehaviour instance --
     /// the same reusable module RagdollPuppetBehaviour already uses for
     /// grounding/COM.
     /// </summary>
@@ -30,7 +30,7 @@ namespace Hairibar.Ragdoll.Animation
         [Header("Capture Point")]
         [Tooltip("Effective inverted-pendulum height used by the capture-point projection.")]
         [SerializeField, Min(0.01f)] float pendulumLength = 0.9f;
-        [Tooltip("Radius around the foot-to-foot segment still considered supported.")]
+        [Tooltip("Radius around the contact-backed support region still considered supported.")]
         [SerializeField, Min(0f)] float supportRadius = 0.15f;
         [Tooltip("Signed margin above which balance is Stable (comfortably inside support).")]
         [SerializeField, Min(0f)] float stableMargin = 0.05f;
@@ -54,6 +54,10 @@ namespace Hairibar.Ragdoll.Animation
         [SerializeField] string rightStateName = "StepRight";
         [SerializeField, Min(0f)] float transitionDuration = 0.1f;
         [SerializeField] int animatorLayer = -1;
+        [Tooltip("Normalized progress at which the selected step Animator may hand off Swing to Replant when contact has not arrived yet.")]
+        [SerializeField, Range(0f, 1f)] float swingAnimatorReplantProgress = 0.75f;
+        [Tooltip("Continuous Stable/RecoverableWithoutStep window required during Settling before normal completion.")]
+        [SerializeField, Min(0f)] float minimumSettlingStableDuration = 0.04f;
         [Tooltip("Optional suffix for an explicit right-foot branch, appended to the directional state name when that state exists (for example StepLeftRightFoot). If absent, StepSwingFoot parameter branching remains the fallback.")]
         [SerializeField] string rightFootStateSuffix = "RightFoot";
         [Tooltip("Animator int parameter set to 0 (left) or 1 (right) right before the crossfade, so the controller can mirror/branch the clip to the physically-selected swing foot. Leave empty to skip -- the 4 clips above must then already commit to one leading foot.")]
@@ -76,6 +80,9 @@ namespace Hairibar.Ragdoll.Animation
         bool hasActivationSnapshot;
         bool hasClassificationSnapshot;
         bool pendingFirstClassification;
+        bool stepBalanceLatched;
+        int stepAnimatorLayer = -1;
+        int stepAnimatorStateHash;
 
         public RagdollBipedBalanceState CurrentState { get; private set; } =
             RagdollBipedBalanceState.Stable;
@@ -120,7 +127,14 @@ namespace Hairibar.Ragdoll.Animation
             centerOfMass.Configure(
                 groundLayers, probeStartOffset, probeDistance, maximumGroundAngle);
             centerOfMass.Initialize(this);
+            centerOfMass.ConfigureSupportFeet(leftFootBone, rightFootBone);
             if (!puppet) puppet = GetComponent<RagdollPuppetBehaviour>();
+        }
+
+        protected override void OnBehaviourCollision(
+            RagdollCollisionEvent collisionEvent)
+        {
+            centerOfMass.RegisterCollision(collisionEvent);
         }
 
         protected override void OnBehaviourActivated()
@@ -135,6 +149,9 @@ namespace Hairibar.Ragdoll.Animation
                 && puppet.TryConsumeStaggerSnapshot(out activationSnapshot);
             hasClassificationSnapshot = false;
             lastClassificationSnapshot = RagdollGroundingSnapshot.Empty;
+            stepBalanceLatched = false;
+            stepAnimatorLayer = -1;
+            stepAnimatorStateHash = 0;
             // Do not classify/BeginStep here: centerOfMass has not run a single
             // FixedUpdate yet, so its Snapshot is still Empty (zero COM/velocity).
             // Deciding a step from that would pick a foot/direction blind. Defer
@@ -148,6 +165,8 @@ namespace Hairibar.Ragdoll.Animation
             centerOfMass.SetActive(false);
             hasActivationSnapshot = false;
             hasClassificationSnapshot = false;
+            stepAnimatorLayer = -1;
+            stepAnimatorStateHash = 0;
         }
 
         protected override void OnBehaviourShutdown()
@@ -158,6 +177,20 @@ namespace Hairibar.Ragdoll.Animation
         protected override void OnBehaviourFixedUpdate(float deltaTime)
         {
             centerOfMass.FixedUpdate(deltaTime);
+
+            // Behaviour activation can happen before the first collision callback
+            // for the newly-active stream. Do not interpret that one empty sample
+            // as a physical loss of support; the next fixed tick is the bounded
+            // opportunity for Enter/Stay contacts to populate the snapshot. A
+            // genuinely contact-free rig still reaches Unrecoverable on the next
+            // tick, so this is initialization ordering protection, not support
+            // synthesis or a stale-foot fallback.
+            if (pendingFirstClassification
+                && centerOfMass.Snapshot.TotalMass > Mathf.Epsilon
+                && centerOfMass.Snapshot.ContactBackedSupportPointCount == 0)
+            {
+                return;
+            }
             if (!UpdateBalanceClassification()) return;
 
             // Unrecoverable aborts the moment it is observed, mid-cycle or not --
@@ -191,7 +224,14 @@ namespace Hairibar.Ragdoll.Animation
             }
 
             bool completedPhase = stepMachine.Advance(
-                deltaTime, liftOffDuration, swingDuration, replantDuration, settlingDuration);
+                deltaTime,
+                liftOffDuration,
+                swingDuration,
+                replantDuration,
+                settlingDuration,
+                BuildPhaseSignals(),
+                swingAnimatorReplantProgress,
+                minimumSettlingStableDuration);
             if (!completedPhase || stepMachine.State != RagdollBipedStaggerState.Idle) return;
 
             RagdollBipedStaggerOutcome outcome = RagdollBipedStaggerMath.ResolveOutcome(
@@ -225,13 +265,6 @@ namespace Hairibar.Ragdoll.Animation
 
         bool UpdateBalanceClassification()
         {
-            if (!Context.Bindings.TryGetBone(leftFootBone, out RagdollBone leftFoot)
-                || !Context.Bindings.TryGetBone(rightFootBone, out RagdollBone rightFoot)
-                || leftFoot.Rigidbody == null || rightFoot.Rigidbody == null)
-            {
-                return false;
-            }
-
             RagdollGroundingSnapshot grounding;
             if (hasActivationSnapshot)
             {
@@ -258,15 +291,34 @@ namespace Hairibar.Ragdoll.Animation
                 supportUp);
             LastCapturePoint = capturePoint;
             float margin = RagdollBipedBalanceMath.SignedSupportMargin(
-                capturePoint,
-                leftFoot.Rigidbody.position,
-                rightFoot.Rigidbody.position,
-                supportRadius,
-                supportUp);
+                point: capturePoint,
+                hasLeftFootSupport: grounding.HasLeftFootSupport,
+                leftFoot: grounding.LeftFootSupportPoint,
+                hasRightFootSupport: grounding.HasRightFootSupport,
+                rightFoot: grounding.RightFootSupportPoint,
+                supportRadius: supportRadius,
+                supportUp: supportUp);
             LastSignedSupportMargin = margin;
 
             RagdollBipedBalanceState nextState = RagdollBipedBalanceMath.Classify(
-                margin, stableMargin, requiresStepMargin);
+                margin,
+                grounding.ContactBackedSupportPointCount,
+                stableMargin,
+                requiresStepMargin);
+            // Once a step has started, do not let a transient zero-support
+            // interval abort the episode as Unrecoverable. Continue observing
+            // valid Stable/RecoverableWithoutStep samples so Settling can use
+            // an actual stable window rather than a timer-only transition.
+            if (stepMachine.State != RagdollBipedStaggerState.Idle
+                && stepBalanceLatched
+                && nextState == RagdollBipedBalanceState.Unrecoverable)
+            {
+                return true;
+            }
+            if (stepMachine.State != RagdollBipedStaggerState.Idle)
+            {
+                stepBalanceLatched = true;
+            }
             if (nextState == CurrentState) return true;
 
             RagdollBipedBalanceState previous = CurrentState;
@@ -278,10 +330,10 @@ namespace Hairibar.Ragdoll.Animation
         void BeginStep()
         {
             if (!stepMachine.TryBeginStep(maxSteps)) return;
+            stepBalanceLatched = false;
 
             if (!Context.Bindings.TryGetBone(leftFootBone, out RagdollBone leftFoot)
-                || !Context.Bindings.TryGetBone(rightFootBone, out RagdollBone rightFoot)
-                || leftFoot.Rigidbody == null || rightFoot.Rigidbody == null)
+                || !Context.Bindings.TryGetBone(rightFootBone, out RagdollBone rightFoot))
             {
                 stepMachine.RegisterStepFailed();
                 return;
@@ -307,16 +359,28 @@ namespace Hairibar.Ragdoll.Animation
                 supportUp);
             swingFoot = RagdollBipedStaggerMath.SelectStepFoot(
                 capturePoint,
-                leftFoot.Rigidbody.position,
-                rightFoot.Rigidbody.position,
+                grounding.HasLeftFootSupport,
+                grounding.LeftFootSupportPoint,
+                grounding.HasRightFootSupport,
+                grounding.RightFootSupportPoint,
                 supportUp);
             swingFootBone = swingFoot == RagdollBipedStepFoot.Left
                 ? leftFootBone
                 : rightFootBone;
 
-            Vector3 stanceFootPosition = swingFoot == RagdollBipedStepFoot.Left
-                ? rightFoot.Rigidbody.position
-                : leftFoot.Rigidbody.position;
+            Vector3 stanceFootPosition;
+            if (swingFoot == RagdollBipedStepFoot.Left)
+            {
+                stanceFootPosition = grounding.HasRightFootSupport
+                    ? grounding.RightFootSupportPoint
+                    : grounding.LeftFootSupportPoint;
+            }
+            else
+            {
+                stanceFootPosition = grounding.HasLeftFootSupport
+                    ? grounding.LeftFootSupportPoint
+                    : grounding.RightFootSupportPoint;
+            }
             Vector3 offset = capturePoint - stanceFootPosition;
             RagdollBipedStepDirection direction = RagdollBipedStaggerMath.ClassifyStepDirection(
                 offset, transform.forward, supportUp);
@@ -328,6 +392,40 @@ namespace Hairibar.Ragdoll.Animation
                 // that never actually moved.
                 stepMachine.RegisterStepFailed();
             }
+        }
+
+        RagdollBipedStaggerPhaseSignals BuildPhaseSignals()
+        {
+            RagdollGroundingSnapshot grounding = hasClassificationSnapshot
+                ? lastClassificationSnapshot
+                : centerOfMass.Snapshot;
+            bool selectedFootGrounded = swingFoot == RagdollBipedStepFoot.Left
+                ? grounding.HasLeftFootSupport
+                : grounding.HasRightFootSupport;
+
+            bool animatorStateAvailable = false;
+            float animatorNormalizedTime = 0f;
+            Animator animator = Context != null && Context.Animator
+                ? Context.Animator.TargetAnimator
+                : null;
+            if (animator && stepAnimatorLayer >= 0
+                && stepAnimatorLayer < animator.layerCount
+                && stepAnimatorStateHash != 0)
+            {
+                AnimatorStateInfo stateInfo = animator.GetCurrentAnimatorStateInfo(
+                    stepAnimatorLayer);
+                animatorStateAvailable = stateInfo.fullPathHash == stepAnimatorStateHash;
+                if (animatorStateAvailable)
+                    animatorNormalizedTime = stateInfo.normalizedTime;
+            }
+
+            bool balanceRecovered = CurrentState == RagdollBipedBalanceState.Stable
+                || CurrentState == RagdollBipedBalanceState.RecoverableWithoutStep;
+            return new RagdollBipedStaggerPhaseSignals(
+                selectedFootGrounded,
+                animatorStateAvailable,
+                animatorNormalizedTime,
+                balanceRecovered);
         }
 
         bool TryCrossFadeStep(RagdollBipedStepDirection direction)
@@ -387,6 +485,9 @@ namespace Hairibar.Ragdoll.Animation
                 }
             }
             CrossFadeStepState(animator, stateName, transitionDuration, layer);
+            stepAnimatorLayer = layer;
+            stepAnimatorStateHash = Animator.StringToHash(
+                animator.GetLayerName(layer) + "." + stateName);
             return true;
         }
 

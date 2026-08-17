@@ -104,6 +104,38 @@ namespace Hairibar.Ragdoll.RagdollLab.Tests
         }
 
         [Test]
+        public void CausalRequiresStepEvidenceRoundTripsAndLegacyReportsRemainReadable()
+        {
+            var source = new ScenarioReport
+            {
+                name = "Stagger",
+                perturbationEventAvailable = true,
+                firstPerturbationEventName = "PushApplied",
+                firstPerturbationFrame = 100,
+                firstPerturbationSimulationTime = 2f,
+                firstRequiresStepFrame = 101,
+                firstRequiresStepSimulationTime = 2.02f,
+                requiresStepLatencyAvailable = true,
+                requiresStepLatencySeconds = 0.02f
+            };
+
+            ScenarioReport roundTrip = JsonUtility.FromJson<ScenarioReport>(JsonUtility.ToJson(source));
+            ScenarioReport legacy = JsonUtility.FromJson<ScenarioReport>(
+                "{\"name\":\"Stagger\",\"firstRequiresStepSimulationTime\":0.02}");
+
+            Assert.That(roundTrip.perturbationEventAvailable, Is.True);
+            Assert.That(roundTrip.firstPerturbationEventName, Is.EqualTo("PushApplied"));
+            Assert.That(roundTrip.firstPerturbationFrame, Is.EqualTo(100));
+            Assert.That(roundTrip.firstRequiresStepFrame, Is.EqualTo(101));
+            Assert.That(roundTrip.requiresStepLatencyAvailable, Is.True);
+            Assert.That(roundTrip.requiresStepLatencySeconds, Is.EqualTo(0.02f).Within(0.0001f));
+            Assert.That(legacy, Is.Not.Null);
+            Assert.That(legacy.firstRequiresStepSimulationTime, Is.EqualTo(0.02f).Within(0.0001f));
+            Assert.That(legacy.requiresStepLatencyAvailable, Is.False);
+            Assert.That(legacy.requiresStepLatencySeconds, Is.EqualTo(-1f));
+        }
+
+        [Test]
         public void AnimatedPairTrackingRoundTripsDerivativesAndMappingState()
         {
             var source = new PhysicsFrame

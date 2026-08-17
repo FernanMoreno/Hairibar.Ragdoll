@@ -43,6 +43,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
         {
             rig = new StaggerPhysicalRig(footOffsetX: 0.5f);
             yield return null;
+            yield return new WaitForFixedUpdate();
             rig.Stagger.StableMargin = 0.05f;
             rig.Stagger.RequiresStepMargin = 0.25f;
             // Root sits directly between the feet: capture point margin is
@@ -86,6 +87,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 "The package-owned Stagger test fixture could not provide StepRecovery.");
             rig = new StaggerPhysicalRig(footOffsetX: 0.5f,
                 footCenterX: 0.5f, stepController: controller);
+            yield return new WaitForFixedUpdate();
             yield return new WaitForFixedUpdate();
             rig.Stagger.StableMargin = 0.05f;
             rig.Stagger.RequiresStepMargin = 0.25f;
@@ -598,7 +600,12 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Assert.That(finalMargin, Is.GreaterThanOrEqualTo(marginBeforePush - 0.001f),
                 $"Capture margin must not finish below its stable baseline " +
                 $"(before={marginBeforePush:F4}, final={finalMargin:F4}).");
-            Assert.That(selectedTravel, Is.GreaterThan(0.02f),
+            // The authored clip returns the foot toward its landing pose before
+            // this terminal sample. The episode trace above already proves that
+            // the body crossed the stride threshold during LiftOff/Swing; using
+            // the final displacement here would measure clip settling, not step
+            // execution.
+            Assert.That(selectedFootMoved, Is.True,
                 "The physically selected foot must execute the authored stride.");
             Assert.That(selectedLandingError, Is.LessThan(0.15f),
                 "Selected foot horizontal landing error must remain bounded after contact.");
@@ -1444,30 +1451,26 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Result.PuppetBehaviour.CanStagger = true;
             Result.PuppetBehaviour.LoseBalanceOnTargetDrift = false;
 
-            if (!freezeBodies)
+            // Contact-backed support is now part of the runtime contract, so even
+            // the frozen actuator fixture must provide an actual ground collider.
+            // The frozen bodies remain deterministic; the collider only supplies
+            // the same Enter/Stay stream that a production rig would use.
+            ground = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            ground.name = "Stagger Test Ground";
+            ground.transform.position = -SupportUp * 1.15f;
+            ground.transform.rotation = Quaternion.FromToRotation(
+                Vector3.up, GroundNormal);
+            ground.transform.localScale = new Vector3(10f, 0.1f, 10f);
+            ground.layer = 0;
+            Collider groundCollider = ground.GetComponent<Collider>();
+            leftFoot.GetComponent<GroundContactProbe>().ExpectedGround = groundCollider;
+            rightFoot.GetComponent<GroundContactProbe>().ExpectedGround = groundCollider;
+            if (!freezeBodies && movingGround)
             {
-                RootBody.isKinematic = false;
-                LeftFootBody.isKinematic = false;
-                RightFootBody.isKinematic = false;
-                LeftFootBody.useGravity = true;
-                RightFootBody.useGravity = true;
-                ground = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                ground.name = "Stagger Test Ground";
-                ground.transform.position = -SupportUp * 1.15f;
-                ground.transform.rotation = Quaternion.FromToRotation(
-                    Vector3.up, GroundNormal);
-                ground.transform.localScale = new Vector3(10f, 0.1f, 10f);
-                ground.layer = 0;
-                Collider groundCollider = ground.GetComponent<Collider>();
-                leftFoot.GetComponent<GroundContactProbe>().ExpectedGround = groundCollider;
-                rightFoot.GetComponent<GroundContactProbe>().ExpectedGround = groundCollider;
-                if (movingGround)
-                {
-                    GroundBody = ground.AddComponent<Rigidbody>();
-                    GroundBody.isKinematic = true;
-                    GroundBody.useGravity = false;
-                    GroundBody.constraints = RigidbodyConstraints.FreezeAll;
-                }
+                GroundBody = ground.AddComponent<Rigidbody>();
+                GroundBody.isKinematic = true;
+                GroundBody.useGravity = false;
+                GroundBody.constraints = RigidbodyConstraints.FreezeAll;
             }
 
             Stagger = Result.PuppetBehaviour.gameObject

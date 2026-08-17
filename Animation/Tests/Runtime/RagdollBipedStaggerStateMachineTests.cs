@@ -66,6 +66,141 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [Test]
+        public void Advance_LiftOffContactLoss_PreemptsTimeout()
+        {
+            var machine = new RagdollBipedStaggerStateMachine();
+            machine.TryBeginStep(maxSteps: 3);
+
+            machine.Advance(0.02f, LiftOff, Swing, Replant, Settling,
+                GroundedSignals);
+            bool completed = machine.Advance(0.02f, LiftOff, Swing, Replant, Settling,
+                new RagdollBipedStaggerPhaseSignals(
+                    selectedFootGrounded: false,
+                    animatorStateAvailable: false,
+                    animatorNormalizedTime: 0f,
+                    balanceRecovered: false));
+
+            Assert.That(completed, Is.True);
+            Assert.That(machine.State, Is.EqualTo(RagdollBipedStaggerState.Swing));
+            Assert.That(machine.LiftOffContactObserved, Is.True);
+        }
+
+        [Test]
+        public void Advance_SwingIgnoresPreLiftGroundedContact()
+        {
+            var machine = new RagdollBipedStaggerStateMachine();
+            machine.TryBeginStep(maxSteps: 3);
+
+            machine.Advance(LiftOff, LiftOff, Swing, Replant, Settling, GroundedSignals);
+            Assert.That(machine.State, Is.EqualTo(RagdollBipedStaggerState.Swing));
+
+            bool completed = machine.Advance(0.02f, LiftOff, Swing, Replant, Settling,
+                GroundedSignals);
+
+            Assert.That(completed, Is.False);
+            Assert.That(machine.State, Is.EqualTo(RagdollBipedStaggerState.Swing));
+        }
+
+        [Test]
+        public void Advance_SwingContactReacquisition_EntersReplant()
+        {
+            var machine = new RagdollBipedStaggerStateMachine();
+            machine.TryBeginStep(maxSteps: 3);
+            machine.Advance(0f, LiftOff, Swing, Replant, Settling,
+                AirborneSignals);
+
+            bool completed = machine.Advance(0.02f, LiftOff, Swing, Replant, Settling,
+                GroundedSignals);
+
+            Assert.That(completed, Is.True);
+            Assert.That(machine.State, Is.EqualTo(RagdollBipedStaggerState.Replant));
+
+            completed = machine.Advance(0.02f, LiftOff, Swing, Replant, Settling,
+                GroundedSignals);
+            Assert.That(completed, Is.True);
+            Assert.That(machine.State, Is.EqualTo(RagdollBipedStaggerState.Settling));
+        }
+
+        [Test]
+        public void Advance_SwingMatchingAnimatorProgress_EntersReplant()
+        {
+            var machine = new RagdollBipedStaggerStateMachine();
+            machine.TryBeginStep(maxSteps: 3);
+            machine.Advance(LiftOff, LiftOff, Swing, Replant, Settling,
+                AirborneSignals);
+
+            bool completed = machine.Advance(
+                0.02f, LiftOff, Swing, Replant, Settling,
+                new RagdollBipedStaggerPhaseSignals(
+                    selectedFootGrounded: false,
+                    animatorStateAvailable: true,
+                    animatorNormalizedTime: 0.8f,
+                    balanceRecovered: false),
+                animatorReplantProgress: 0.75f);
+
+            Assert.That(completed, Is.True);
+            Assert.That(machine.State, Is.EqualTo(RagdollBipedStaggerState.Replant));
+        }
+
+        [Test]
+        public void Advance_MismatchedOrNonFiniteAnimatorProgress_DoesNotCompleteEarly()
+        {
+            var machine = new RagdollBipedStaggerStateMachine();
+            machine.TryBeginStep(maxSteps: 3);
+            machine.Advance(LiftOff, LiftOff, Swing, Replant, Settling,
+                AirborneSignals);
+
+            bool completed = machine.Advance(
+                0.02f, LiftOff, Swing, Replant, Settling,
+                new RagdollBipedStaggerPhaseSignals(
+                    selectedFootGrounded: false,
+                    animatorStateAvailable: false,
+                    animatorNormalizedTime: 0.99f,
+                    balanceRecovered: false),
+                animatorReplantProgress: 0.75f);
+
+            Assert.That(completed, Is.False);
+            Assert.That(machine.State, Is.EqualTo(RagdollBipedStaggerState.Swing));
+
+            completed = machine.Advance(
+                Swing, LiftOff, Swing, Replant, Settling,
+                new RagdollBipedStaggerPhaseSignals(
+                    selectedFootGrounded: false,
+                    animatorStateAvailable: true,
+                    animatorNormalizedTime: float.NaN,
+                    balanceRecovered: false),
+                animatorReplantProgress: 0.75f);
+
+            Assert.That(completed, Is.True);
+            Assert.That(machine.State, Is.EqualTo(RagdollBipedStaggerState.Replant),
+                "The configured Swing duration remains the fail-safe timeout.");
+        }
+
+        [Test]
+        public void Advance_SettlingRequiresContinuousRecoveredWindow()
+        {
+            var machine = new RagdollBipedStaggerStateMachine();
+            machine.TryBeginStep(maxSteps: 3);
+            CompleteToSettling(machine);
+
+            bool completed = machine.Advance(
+                0.05f, LiftOff, Swing, Replant, Settling,
+                RecoveredSignals, stableBalanceDuration: 0.1f);
+            Assert.That(completed, Is.False);
+            Assert.That(machine.State, Is.EqualTo(RagdollBipedStaggerState.Settling));
+
+            machine.Advance(
+                0.02f, LiftOff, Swing, Replant, Settling,
+                GroundedSignals, stableBalanceDuration: 0.1f);
+            completed = machine.Advance(
+                0.1f, LiftOff, Swing, Replant, Settling,
+                RecoveredSignals, stableBalanceDuration: 0.1f);
+
+            Assert.That(completed, Is.True);
+            Assert.That(machine.State, Is.EqualTo(RagdollBipedStaggerState.Idle));
+        }
+
+        [Test]
         public void FullCycle_LiftOffSwingReplantSettling_ReturnsToIdle()
         {
             var machine = new RagdollBipedStaggerStateMachine();
@@ -130,10 +265,27 @@ namespace Hairibar.Ragdoll.Animation.Tests
 
         static void CompleteOneCycle(RagdollBipedStaggerStateMachine machine)
         {
-            machine.Advance(LiftOff, LiftOff, Swing, Replant, Settling); // LiftOff -> Swing
-            machine.Advance(Swing, LiftOff, Swing, Replant, Settling);   // Swing -> Replant
-            machine.Advance(Replant, LiftOff, Swing, Replant, Settling); // Replant -> Settling
-            machine.Advance(Settling, LiftOff, Swing, Replant, Settling); // Settling -> Idle
+            machine.Advance(LiftOff, LiftOff, Swing, Replant, Settling, NoEvidenceSignals); // LiftOff -> Swing
+            machine.Advance(Swing, LiftOff, Swing, Replant, Settling, NoEvidenceSignals);   // Swing -> Replant
+            machine.Advance(Replant, LiftOff, Swing, Replant, Settling, NoEvidenceSignals); // Replant -> Settling
+            machine.Advance(Settling, LiftOff, Swing, Replant, Settling, NoEvidenceSignals); // Settling -> Idle
         }
+
+        static void CompleteToSettling(RagdollBipedStaggerStateMachine machine)
+        {
+            machine.Advance(LiftOff, LiftOff, Swing, Replant, Settling, AirborneSignals);
+            machine.Advance(Swing, LiftOff, Swing, Replant, Settling, GroundedSignals);
+            machine.Advance(Replant, LiftOff, Swing, Replant, Settling, GroundedSignals);
+            Assert.That(machine.State, Is.EqualTo(RagdollBipedStaggerState.Settling));
+        }
+
+        static readonly RagdollBipedStaggerPhaseSignals NoEvidenceSignals =
+            new RagdollBipedStaggerPhaseSignals(false, false, 0f, false);
+        static readonly RagdollBipedStaggerPhaseSignals AirborneSignals =
+            new RagdollBipedStaggerPhaseSignals(false, false, 0f, false);
+        static readonly RagdollBipedStaggerPhaseSignals GroundedSignals =
+            new RagdollBipedStaggerPhaseSignals(true, false, 0f, false);
+        static readonly RagdollBipedStaggerPhaseSignals RecoveredSignals =
+            new RagdollBipedStaggerPhaseSignals(true, false, 0f, true);
     }
 }

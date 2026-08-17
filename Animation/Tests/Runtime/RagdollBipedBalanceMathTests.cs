@@ -67,6 +67,67 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [Test]
+        public void SignedSupportMargin_OneContactIgnoresAirborneEndpoint()
+        {
+            float margin = RagdollBipedBalanceMath.SignedSupportMargin(
+                point: Vector3.zero,
+                hasLeftFootSupport: true,
+                leftFoot: Vector3.zero,
+                hasRightFootSupport: false,
+                rightFoot: new Vector3(100f, 0f, 0f),
+                supportRadius: 0.25f,
+                supportUp: Vector3.up);
+
+            Assert.That(margin, Is.EqualTo(0.25f).Within(0.0001f));
+        }
+
+        [Test]
+        public void SignedSupportMargin_ZeroContactReturnsFiniteNonPositiveSentinel()
+        {
+            float margin = RagdollBipedBalanceMath.SignedSupportMargin(
+                point: Vector3.zero,
+                hasLeftFootSupport: false,
+                leftFoot: Vector3.left,
+                hasRightFootSupport: false,
+                rightFoot: Vector3.right,
+                supportRadius: 0.25f,
+                supportUp: Vector3.up);
+
+            Assert.That(float.IsNaN(margin), Is.False);
+            Assert.That(float.IsInfinity(margin), Is.False);
+            Assert.That(margin, Is.LessThanOrEqualTo(0f));
+        }
+
+        [Test]
+        public void Classify_ZeroContactIsUnrecoverableEvenWithStepBudget()
+        {
+            RagdollBipedBalanceState state = RagdollBipedBalanceMath.Classify(
+                signedSupportMargin: -0.15f,
+                supportPointCount: 0,
+                stableMargin: StableMargin,
+                requiresStepMargin: RequiresStepMargin);
+
+            Assert.That(state, Is.EqualTo(RagdollBipedBalanceState.Unrecoverable));
+        }
+
+        [Test]
+        public void SignedSupportMargin_TwoContactPointsMatchesLegacyTwoFootGeometry()
+        {
+            float legacy = RagdollBipedBalanceMath.SignedSupportMargin(
+                Vector3.zero, Vector3.left, Vector3.right, 0.25f, Vector3.up);
+            float contactBacked = RagdollBipedBalanceMath.SignedSupportMargin(
+                point: Vector3.zero,
+                hasLeftFootSupport: true,
+                leftFoot: Vector3.left,
+                hasRightFootSupport: true,
+                rightFoot: Vector3.right,
+                supportRadius: 0.25f,
+                supportUp: Vector3.up);
+
+            Assert.That(contactBacked, Is.EqualTo(legacy).Within(0.0001f));
+        }
+
+        [Test]
         public void CapturePoint_CompatibilityOverloadMatchesExplicitWorldUp()
         {
             Vector3 centerOfMass = new Vector3(0.2f, 1.1f, -0.3f);

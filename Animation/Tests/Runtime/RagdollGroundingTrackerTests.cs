@@ -134,5 +134,91 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Assert.That(tracker.Snapshot.EffectiveUp, Is.EqualTo(Vector3.up));
             Assert.That(float.IsNaN(tracker.Snapshot.RelativeCenterOfMassVelocity.x), Is.False);
         }
+
+        [Test]
+        public void Snapshot_TracksZeroOneAndTwoContactBackedFeet()
+        {
+            RagdollGroundingTracker tracker = new RagdollGroundingTracker();
+
+            tracker.Update(
+                true,
+                Vector3.zero,
+                Vector3.up,
+                Vector3.zero,
+                Vector3.zero,
+                1f,
+                0.02f,
+                hasLeftFootSupport: true,
+                leftFootSupportPoint: new Vector3(-0.3f, 0f, 0f));
+
+            Assert.That(tracker.Snapshot.HasLeftFootSupport, Is.True);
+            Assert.That(tracker.Snapshot.HasRightFootSupport, Is.False);
+            Assert.That(tracker.Snapshot.ContactBackedSupportPointCount, Is.EqualTo(1));
+            Assert.That(tracker.Snapshot.LeftFootSupportPoint,
+                Is.EqualTo(new Vector3(-0.3f, 0f, 0f)));
+
+            tracker.Update(
+                true,
+                Vector3.zero,
+                Vector3.up,
+                Vector3.zero,
+                Vector3.zero,
+                1f,
+                0.02f,
+                hasRightFootSupport: true,
+                rightFootSupportPoint: new Vector3(0.3f, 0f, 0f));
+
+            Assert.That(tracker.Snapshot.HasLeftFootSupport, Is.False);
+            Assert.That(tracker.Snapshot.HasRightFootSupport, Is.True);
+            Assert.That(tracker.Snapshot.ContactBackedSupportPointCount, Is.EqualTo(1));
+
+            tracker.Update(
+                true,
+                Vector3.zero,
+                Vector3.up,
+                Vector3.zero,
+                Vector3.zero,
+                1f,
+                0.02f,
+                hasLeftFootSupport: true,
+                leftFootSupportPoint: new Vector3(-0.3f, 0f, 0f),
+                hasRightFootSupport: true,
+                rightFootSupportPoint: new Vector3(0.3f, 0f, 0f));
+
+            Assert.That(tracker.Snapshot.ContactBackedSupportPointCount, Is.EqualTo(2));
+
+            tracker.Update(
+                true,
+                Vector3.zero,
+                Vector3.up,
+                Vector3.zero,
+                Vector3.zero,
+                1f,
+                0.02f);
+
+            Assert.That(tracker.Snapshot.ContactBackedSupportPointCount, Is.Zero);
+            Assert.That(tracker.Snapshot.HasLeftFootSupport, Is.False);
+            Assert.That(tracker.Snapshot.HasRightFootSupport, Is.False);
+        }
+
+        [Test]
+        public void Snapshot_InvalidContactBackedPointIsUnavailableAndFinite()
+        {
+            RagdollGroundingTracker tracker = new RagdollGroundingTracker();
+            tracker.Update(
+                true,
+                Vector3.zero,
+                Vector3.up,
+                Vector3.zero,
+                Vector3.zero,
+                1f,
+                0.02f,
+                hasLeftFootSupport: true,
+                leftFootSupportPoint: new Vector3(float.NaN, 0f, 0f));
+
+            Assert.That(tracker.Snapshot.HasLeftFootSupport, Is.False);
+            Assert.That(tracker.Snapshot.ContactBackedSupportPointCount, Is.Zero);
+            Assert.That(float.IsNaN(tracker.Snapshot.LeftFootSupportPoint.x), Is.False);
+        }
     }
 }

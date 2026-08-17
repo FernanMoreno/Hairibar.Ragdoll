@@ -17,6 +17,12 @@ namespace Hairibar.Ragdoll.Animation
         Vector3 weightedPressure;
         float pressureWeight;
         int pressureContactCount;
+        RagdollBoneHandle leftFootHandle = RagdollBoneHandle.Invalid;
+        RagdollBoneHandle rightFootHandle = RagdollBoneHandle.Invalid;
+        Vector3 leftFootSupportPoint;
+        Vector3 rightFootSupportPoint;
+        int leftFootSupportCount;
+        int rightFootSupportCount;
 
         internal RagdollGroundingSnapshot Snapshot => tracker.Snapshot;
         internal Vector3 Up { get; private set; }
@@ -32,6 +38,18 @@ namespace Hairibar.Ragdoll.Animation
         {
             tracker.Reset();
             ClearPressureContacts();
+        }
+
+        internal void ConfigureFootSupport(
+            RagdollBoneHandle leftFoot,
+            RagdollBoneHandle rightFoot)
+        {
+            leftFootHandle = leftFoot;
+            rightFootHandle = rightFoot;
+            leftFootSupportPoint = Vector3.zero;
+            rightFootSupportPoint = Vector3.zero;
+            leftFootSupportCount = 0;
+            rightFootSupportCount = 0;
         }
 
         internal void RegisterCollision(
@@ -76,6 +94,11 @@ namespace Hairibar.Ragdoll.Animation
                         ref pressureWeight,
                         ref pressureContactCount);
                 }
+                AccumulateFootSupportForEvent(
+                    collisionEvent,
+                    groundLayers,
+                    up,
+                    minimumGroundDot);
                 return;
             }
 
@@ -88,6 +111,109 @@ namespace Hairibar.Ragdoll.Animation
                 ref weightedPressure,
                 ref pressureWeight,
                 ref pressureContactCount);
+
+            AccumulateFootSupportForEvent(
+                collisionEvent,
+                groundLayers,
+                up,
+                minimumGroundDot);
+        }
+
+        void AccumulateFootSupportForEvent(
+            RagdollCollisionEvent collisionEvent,
+            LayerMask groundLayers,
+            Vector3 up,
+            float minimumGroundDot)
+        {
+            bool isRagdollCollider = collisionEvent.OtherCollider
+                && IsRagdollCollider(collisionEvent.OtherCollider);
+            bool isGroundLayer = collisionEvent.OtherLayer >= 0
+                && collisionEvent.OtherLayer < 32
+                && (groundLayers.value & (1 << collisionEvent.OtherLayer)) != 0;
+            if (!IsValidFootSupportSample(
+                collisionEvent.Bone,
+                leftFootHandle,
+                rightFootHandle,
+                collisionEvent.HasContact,
+                isGroundLayer,
+                isRagdollCollider,
+                collisionEvent.ContactPoint,
+                collisionEvent.ContactNormal,
+                up,
+                minimumGroundDot))
+            {
+                return;
+            }
+
+            if (collisionEvent.Bone.Equals(leftFootHandle))
+            {
+                AccumulateFootSupport(
+                    collisionEvent.ContactPoint,
+                    collisionEvent.ContactNormal,
+                    up,
+                    minimumGroundDot,
+                    ref leftFootSupportPoint,
+                    ref leftFootSupportCount);
+            }
+            else if (collisionEvent.Bone.Equals(rightFootHandle))
+            {
+                AccumulateFootSupport(
+                    collisionEvent.ContactPoint,
+                    collisionEvent.ContactNormal,
+                    up,
+                    minimumGroundDot,
+                    ref rightFootSupportPoint,
+                    ref rightFootSupportCount);
+            }
+        }
+
+        internal static bool IsValidFootSupportSample(
+            RagdollBoneHandle bone,
+            RagdollBoneHandle leftFoot,
+            RagdollBoneHandle rightFoot,
+            bool hasContact,
+            bool isGroundLayer,
+            bool isRagdollCollider,
+            Vector3 point,
+            Vector3 normal,
+            Vector3 up,
+            float minimumGroundDot)
+        {
+            if (!hasContact || !isGroundLayer || isRagdollCollider
+                || (!bone.Equals(leftFoot) && !bone.Equals(rightFoot)))
+            {
+                return false;
+            }
+            if (!IsFinite(point) || !IsFinite(normal)
+                || !IsFinite(up) || up.sqrMagnitude <= Mathf.Epsilon
+                || normal.sqrMagnitude <= Mathf.Epsilon)
+            {
+                return false;
+            }
+
+            return Vector3.Dot(normal.normalized, up.normalized)
+                >= Mathf.Clamp01(minimumGroundDot);
+        }
+
+        static void AccumulateFootSupport(
+            Vector3 point,
+            Vector3 normal,
+            Vector3 up,
+            float minimumGroundDot,
+            ref Vector3 pointSum,
+            ref int pointCount)
+        {
+            if (!IsFinite(point) || !IsFinite(normal)
+                || normal.sqrMagnitude <= Mathf.Epsilon)
+            {
+                return;
+            }
+
+            Vector3 resolvedNormal = normal.normalized;
+            if (Vector3.Dot(resolvedNormal, up) < minimumGroundDot) return;
+
+            pointSum += point;
+            pointCount++;
         }
 
         internal static bool AccumulateGroundContact(
@@ -206,7 +332,15 @@ namespace Hairibar.Ragdoll.Animation
                 grounded ? supportColliderId : 0,
                 grounded ? supportRigidbodyId : 0,
                 grounded && hasSupportPlatform,
-                grounded ? supportVelocity : Vector3.zero);
+                grounded ? supportVelocity : Vector3.zero,
+                leftFootSupportCount > 0,
+                leftFootSupportCount > 0
+                    ? leftFootSupportPoint / leftFootSupportCount
+                    : Vector3.zero,
+                rightFootSupportCount > 0,
+                rightFootSupportCount > 0
+                    ? rightFootSupportPoint / rightFootSupportCount
+                    : Vector3.zero);
             ClearPressureContacts();
         }
 
@@ -215,6 +349,10 @@ namespace Hairibar.Ragdoll.Animation
             weightedPressure = Vector3.zero;
             pressureWeight = 0f;
             pressureContactCount = 0;
+            leftFootSupportPoint = Vector3.zero;
+            rightFootSupportPoint = Vector3.zero;
+            leftFootSupportCount = 0;
+            rightFootSupportCount = 0;
         }
 
         void CalculateCenterOfMass(

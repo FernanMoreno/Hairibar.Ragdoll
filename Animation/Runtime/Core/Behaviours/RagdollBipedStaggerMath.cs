@@ -63,6 +63,36 @@ namespace Hairibar.Ragdoll.Animation
         }
 
         /// <summary>
+        /// Selects the unsupported foot when exactly one foot has current
+        /// contact-backed support. With two supports it preserves the existing
+        /// capture-point distance rule; with no support it returns the legacy
+        /// deterministic left-foot result rather than inventing support.
+        /// </summary>
+        public static RagdollBipedStepFoot SelectStepFoot(
+            Vector3 capturePoint,
+            bool hasLeftFootSupport,
+            Vector3 leftFoot,
+            bool hasRightFootSupport,
+            Vector3 rightFoot,
+            Vector3 supportUp)
+        {
+            if (hasLeftFootSupport && !hasRightFootSupport)
+            {
+                return RagdollBipedStepFoot.Right;
+            }
+            if (!hasLeftFootSupport && hasRightFootSupport)
+            {
+                return RagdollBipedStepFoot.Left;
+            }
+
+            return SelectStepFoot(
+                capturePoint,
+                leftFoot,
+                rightFoot,
+                supportUp);
+        }
+
+        /// <summary>
         /// Caps how far the swing foot may reach in one step, preventing a large
         /// capture-point overshoot from producing an anatomically impossible
         /// lunge. Returns landingTarget unchanged when already within range.

@@ -25,6 +25,12 @@ namespace Hairibar.Ragdoll.Animation
         public Vector3 SupportVelocity { get; private set; }
         public bool HasRelativeMotion { get; private set; }
         public bool SupportContinuityReset { get; private set; }
+        public bool HasLeftFootSupport { get; private set; }
+        public Vector3 LeftFootSupportPoint { get; private set; }
+        public bool HasRightFootSupport { get; private set; }
+        public Vector3 RightFootSupportPoint { get; private set; }
+        public int ContactBackedSupportPointCount =>
+            (HasLeftFootSupport ? 1 : 0) + (HasRightFootSupport ? 1 : 0);
         public bool HasCenterOfPressure { get; private set; }
         public Vector3 CenterOfPressure { get; private set; }
         public Vector3 CenterOfMassVector { get; private set; }
@@ -49,7 +55,11 @@ namespace Hairibar.Ragdoll.Animation
             bool hasSupportPlatform = false,
             Vector3 supportVelocity = default(Vector3),
             bool hasRelativeMotion = false,
-            bool supportContinuityReset = false)
+            bool supportContinuityReset = false,
+            bool hasLeftFootSupport = false,
+            Vector3 leftFootSupportPoint = default(Vector3),
+            bool hasRightFootSupport = false,
+            Vector3 rightFootSupportPoint = default(Vector3))
         {
             IsGrounded = isGrounded;
             StableTime = IsFinite(stableTime) ? Mathf.Max(0f, stableTime) : 0f;
@@ -77,6 +87,14 @@ namespace Hairibar.Ragdoll.Animation
             SupportRigidbodyId = supportRigidbodyId;
             HasSupportPlatform = hasSupportPlatform && supportColliderId != 0;
             SupportContinuityReset = supportContinuityReset;
+            HasLeftFootSupport = hasLeftFootSupport && IsFinite(leftFootSupportPoint);
+            LeftFootSupportPoint = HasLeftFootSupport
+                ? leftFootSupportPoint
+                : Vector3.zero;
+            HasRightFootSupport = hasRightFootSupport && IsFinite(rightFootSupportPoint);
+            RightFootSupportPoint = HasRightFootSupport
+                ? rightFootSupportPoint
+                : Vector3.zero;
             HasCenterOfPressure = hasCenterOfPressure && IsFinite(centerOfPressure);
             CenterOfPressure = HasCenterOfPressure
                 ? centerOfPressure

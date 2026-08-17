@@ -6,7 +6,7 @@ namespace Hairibar.Ragdoll.RagdollLab
 {
     public static class RagdollLabSchema
     {
-        public const string Version = "1.6.0";
+        public const string Version = "1.7.0";
     }
 
     [Serializable] public struct Vector3Data
@@ -390,6 +390,13 @@ namespace Hairibar.Ragdoll.RagdollLab
         public float maximumSignedSupportMargin;
         public float recoveryOvershootMeters;
         public float firstRequiresStepSimulationTime = -1f;
+        public int firstRequiresStepFrame = -1;
+        public bool perturbationEventAvailable;
+        public string firstPerturbationEventName;
+        public int firstPerturbationFrame = -1;
+        public float firstPerturbationSimulationTime = -1f;
+        public bool requiresStepLatencyAvailable;
+        public float requiresStepLatencySeconds = -1f;
         public bool recoveryCompletionAvailable;
         public bool recoveryCompleted;
         public bool taskCompletionAvailable;

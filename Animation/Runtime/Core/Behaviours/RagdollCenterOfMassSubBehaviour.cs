@@ -16,6 +16,9 @@ namespace Hairibar.Ragdoll.Animation
         [SerializeField, Range(0f, 89.9f)] float maximumGroundAngle = 60f;
 
         [NonSerialized] RagdollGroundProbe probe;
+        BoneName leftSupportFoot;
+        BoneName rightSupportFoot;
+        bool supportFeetConfigured;
 
         public LayerMask GroundLayers
         {
@@ -64,6 +67,14 @@ namespace Hairibar.Ragdoll.Animation
             MaximumGroundAngle = maximumAngle;
         }
 
+        public void ConfigureSupportFeet(BoneName leftFoot, BoneName rightFoot)
+        {
+            leftSupportFoot = leftFoot;
+            rightSupportFoot = rightFoot;
+            supportFeetConfigured = true;
+            ConfigureProbeSupportFeet();
+        }
+
         public void RegisterCollision(RagdollCollisionEvent collisionEvent)
         {
             if (!IsInitialized || !IsActive || probe == null) return;
@@ -81,6 +92,7 @@ namespace Hairibar.Ragdoll.Animation
         protected override void OnInitialize()
         {
             probe = new RagdollGroundProbe(Context);
+            ConfigureProbeSupportFeet();
             Normalize();
         }
 
@@ -114,6 +126,23 @@ namespace Hairibar.Ragdoll.Animation
             ProbeStartOffset = probeStartOffset;
             ProbeDistance = probeDistance;
             MaximumGroundAngle = maximumGroundAngle;
+        }
+
+        void ConfigureProbeSupportFeet()
+        {
+            if (!supportFeetConfigured || probe == null || !IsInitialized) return;
+
+            RagdollBoneHandle leftHandle;
+            RagdollBoneHandle rightHandle;
+            if (!Context.Bindings.TryGetBoneHandle(leftSupportFoot, out leftHandle))
+            {
+                leftHandle = RagdollBoneHandle.Invalid;
+            }
+            if (!Context.Bindings.TryGetBoneHandle(rightSupportFoot, out rightHandle))
+            {
+                rightHandle = RagdollBoneHandle.Invalid;
+            }
+            probe.ConfigureFootSupport(leftHandle, rightHandle);
         }
 
         static Vector3 ResolveUp()

@@ -2,6 +2,35 @@ using UnityEngine;
 
 namespace Hairibar.Ragdoll.Animation
 {
+    internal readonly struct RagdollBipedStaggerPhaseSignals
+    {
+        internal readonly bool SelectedFootGrounded;
+        internal readonly bool AnimatorStateAvailable;
+        internal readonly float AnimatorNormalizedTime;
+        internal readonly bool BalanceRecovered;
+
+        internal bool HasAnimatorProgress => AnimatorStateAvailable
+            && IsFinite(AnimatorNormalizedTime)
+            && AnimatorNormalizedTime >= 0f;
+
+        internal RagdollBipedStaggerPhaseSignals(
+            bool selectedFootGrounded,
+            bool animatorStateAvailable,
+            float animatorNormalizedTime,
+            bool balanceRecovered)
+        {
+            SelectedFootGrounded = selectedFootGrounded;
+            AnimatorStateAvailable = animatorStateAvailable;
+            AnimatorNormalizedTime = animatorNormalizedTime;
+            BalanceRecovered = balanceRecovered;
+        }
+
+        static bool IsFinite(float value)
+        {
+            return !float.IsNaN(value) && !float.IsInfinity(value);
+        }
+    }
+
     internal enum RagdollBipedStaggerState
     {
         Idle,
@@ -22,6 +51,8 @@ namespace Hairibar.Ragdoll.Animation
         internal RagdollBipedStaggerState State { get; private set; }
         internal float StateElapsedTime { get; private set; }
         internal int StepCount { get; private set; }
+        internal bool LiftOffContactObserved { get; private set; }
+        internal float StableBalanceElapsedTime { get; private set; }
 
         internal RagdollBipedStaggerStateMachine()
         {
@@ -33,6 +64,8 @@ namespace Hairibar.Ragdoll.Animation
             State = RagdollBipedStaggerState.Idle;
             StateElapsedTime = 0f;
             StepCount = 0;
+            LiftOffContactObserved = false;
+            StableBalanceElapsedTime = 0f;
         }
 
         /// <summary>
@@ -55,6 +88,8 @@ namespace Hairibar.Ragdoll.Animation
             StepCount++;
             State = RagdollBipedStaggerState.LiftOff;
             StateElapsedTime = 0f;
+            LiftOffContactObserved = false;
+            StableBalanceElapsedTime = 0f;
             return true;
         }
 
@@ -65,11 +100,9 @@ namespace Hairibar.Ragdoll.Animation
         }
 
         /// <summary>
-        /// Advances state-local time. Returns true when the current phase's
-        /// duration elapsed and the machine moved to the next phase. Settling
-        /// completing returns the machine to Idle -- the owning behaviour reads
-        /// the latest balance classification there to decide between declaring
-        /// success, beginning another step, or giving up.
+        /// Advances the legacy timer-only compatibility path. The production
+        /// behaviour uses the signal overload below; this overload preserves
+        /// callers that intentionally exercise timeout fallback semantics.
         /// </summary>
         internal bool Advance(
             float deltaTime,
@@ -78,17 +111,69 @@ namespace Hairibar.Ragdoll.Animation
             float replantDuration,
             float settlingDuration)
         {
-            StateElapsedTime += Mathf.Max(0f, deltaTime);
+            return Advance(
+                deltaTime,
+                liftOffDuration,
+                swingDuration,
+                replantDuration,
+                settlingDuration,
+                new RagdollBipedStaggerPhaseSignals(
+                    selectedFootGrounded: true,
+                    animatorStateAvailable: false,
+                    animatorNormalizedTime: 0f,
+                    balanceRecovered: false));
+        }
+
+        /// <summary>
+        /// Advances one fixed-step phase using physical/authored evidence first
+        /// and the existing durations as finite fail-safe timeouts.
+        /// </summary>
+        internal bool Advance(
+            float deltaTime,
+            float liftOffDuration,
+            float swingDuration,
+            float replantDuration,
+            float settlingDuration,
+            RagdollBipedStaggerPhaseSignals signals,
+            float animatorReplantProgress = 0.75f,
+            float stableBalanceDuration = 0.04f)
+        {
+            StateElapsedTime += SanitizeDelta(deltaTime);
             switch (State)
             {
                 case RagdollBipedStaggerState.LiftOff:
-                    return TryAdvancePhase(liftOffDuration, RagdollBipedStaggerState.Swing);
+                    if (!signals.SelectedFootGrounded)
+                        LiftOffContactObserved = true;
+                    return (LiftOffContactObserved || HasTimedOut(liftOffDuration))
+                        && TransitionTo(RagdollBipedStaggerState.Swing);
                 case RagdollBipedStaggerState.Swing:
-                    return TryAdvancePhase(swingDuration, RagdollBipedStaggerState.Replant);
+                    bool replantContact = LiftOffContactObserved
+                        && signals.SelectedFootGrounded;
+                    bool animatorReached = signals.HasAnimatorProgress
+                        && IsFinite(animatorReplantProgress)
+                        && signals.AnimatorNormalizedTime >= Mathf.Clamp01(
+                            animatorReplantProgress);
+                    return (replantContact || animatorReached
+                        || HasTimedOut(swingDuration))
+                        && TransitionTo(RagdollBipedStaggerState.Replant);
                 case RagdollBipedStaggerState.Replant:
-                    return TryAdvancePhase(replantDuration, RagdollBipedStaggerState.Settling);
+                    return (signals.SelectedFootGrounded
+                        || HasTimedOut(replantDuration))
+                        && TransitionTo(RagdollBipedStaggerState.Settling);
                 case RagdollBipedStaggerState.Settling:
-                    return TryAdvancePhase(settlingDuration, RagdollBipedStaggerState.Idle);
+                    if (signals.BalanceRecovered)
+                    {
+                        StableBalanceElapsedTime += SanitizeDelta(deltaTime);
+                    }
+                    else
+                    {
+                        StableBalanceElapsedTime = 0f;
+                    }
+
+                    bool stableWindowComplete = IsFinite(stableBalanceDuration)
+                        && StableBalanceElapsedTime >= Mathf.Max(0f, stableBalanceDuration);
+                    return (stableWindowComplete || HasTimedOut(settlingDuration))
+                        && TransitionTo(RagdollBipedStaggerState.Idle);
                 default:
                     return false;
             }
@@ -98,18 +183,32 @@ namespace Hairibar.Ragdoll.Animation
         {
             State = RagdollBipedStaggerState.Failed;
             StateElapsedTime = 0f;
+            StableBalanceElapsedTime = 0f;
         }
 
-        bool TryAdvancePhase(float duration, RagdollBipedStaggerState next)
+        bool HasTimedOut(float duration)
         {
+            if (!IsFinite(duration)) return true;
             float safeDuration = Mathf.Max(0f, duration);
-            if (safeDuration > Mathf.Epsilon && StateElapsedTime < safeDuration)
-            {
-                return false;
-            }
+            return safeDuration <= Mathf.Epsilon || StateElapsedTime >= safeDuration;
+        }
 
+        static float SanitizeDelta(float deltaTime)
+        {
+            return IsFinite(deltaTime) ? Mathf.Max(0f, deltaTime) : 0f;
+        }
+
+        static bool IsFinite(float value)
+        {
+            return !float.IsNaN(value) && !float.IsInfinity(value);
+        }
+
+        bool TransitionTo(RagdollBipedStaggerState next)
+        {
             State = next;
             StateElapsedTime = 0f;
+            if (next == RagdollBipedStaggerState.Settling)
+                StableBalanceElapsedTime = 0f;
             return true;
         }
     }

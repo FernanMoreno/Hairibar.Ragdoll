@@ -121,9 +121,9 @@ namespace Hairibar.Ragdoll.Animation
         [Header("Stagger")]
         [Tooltip("When true, a sustained RequiresStep balance classification invokes OnRequiresStep instead of only relying on TargetDrift knockout.")]
         [SerializeField] bool canStagger = false;
-        [Tooltip("Root-bone-relative left foot bone used for the capture-point support segment.")]
+        [Tooltip("Root-bone-relative left foot whose current ground contact can provide support.")]
         [SerializeField] BoneName staggerLeftFootBone = "foot_l";
-        [Tooltip("Root-bone-relative right foot bone used for the capture-point support segment.")]
+        [Tooltip("Root-bone-relative right foot whose current ground contact can provide support.")]
         [SerializeField] BoneName staggerRightFootBone = "foot_r";
         [SerializeField, Min(0.01f)] float staggerPendulumLength = 0.9f;
         [SerializeField, Min(0f)] float staggerSupportRadius = 0.15f;
@@ -1299,6 +1299,9 @@ namespace Hairibar.Ragdoll.Animation
                 groundProbeDistance,
                 maximumGroundAngle);
             centerOfMass.Initialize(this);
+            centerOfMass.ConfigureSupportFeet(
+                staggerLeftFootBone,
+                staggerRightFootBone);
         }
 
         void ReinitializeCenterOfMassSubBehaviour()
@@ -1317,6 +1320,9 @@ namespace Hairibar.Ragdoll.Animation
                 groundProbeStartOffset,
                 groundProbeDistance,
                 maximumGroundAngle);
+            centerOfMass.ConfigureSupportFeet(
+                staggerLeftFootBone,
+                staggerRightFootBone);
         }
 
         protected override void OnBehaviourHierarchyChanged(
@@ -2828,13 +2834,6 @@ namespace Hairibar.Ragdoll.Animation
         bool TryClassifyStaggerBalance(out RagdollBipedBalanceState classification)
         {
             classification = RagdollBipedBalanceState.Stable;
-            if (!Context.Bindings.TryGetBone(staggerLeftFootBone, out RagdollBone leftFoot)
-                || !Context.Bindings.TryGetBone(staggerRightFootBone, out RagdollBone rightFoot)
-                || leftFoot.Rigidbody == null || rightFoot.Rigidbody == null)
-            {
-                return false;
-            }
-
             RagdollGroundingSnapshot snapshot = centerOfMass.Snapshot;
             if (snapshot.TotalMass <= Mathf.Epsilon)
             {
@@ -2850,14 +2849,19 @@ namespace Hairibar.Ragdoll.Animation
                 Physics.gravity.magnitude,
                 snapshot.EffectiveUp);
             float margin = RagdollBipedBalanceMath.SignedSupportMargin(
-                lastStaggerCapturePoint,
-                leftFoot.Rigidbody.position,
-                rightFoot.Rigidbody.position,
-                staggerSupportRadius,
-                snapshot.EffectiveUp);
+                point: lastStaggerCapturePoint,
+                hasLeftFootSupport: snapshot.HasLeftFootSupport,
+                leftFoot: snapshot.LeftFootSupportPoint,
+                hasRightFootSupport: snapshot.HasRightFootSupport,
+                rightFoot: snapshot.RightFootSupportPoint,
+                supportRadius: staggerSupportRadius,
+                supportUp: snapshot.EffectiveUp);
             lastStaggerSignedSupportMargin = margin;
             classification = RagdollBipedBalanceMath.Classify(
-                margin, staggerStableMargin, staggerRequiresStepMargin);
+                margin,
+                snapshot.ContactBackedSupportPointCount,
+                staggerStableMargin,
+                staggerRequiresStepMargin);
             lastStaggerClassification = classification;
             return true;
         }
@@ -2879,25 +2883,24 @@ namespace Hairibar.Ragdoll.Animation
                 return;
             }
 
-            if (!Context.Bindings.TryGetBone(staggerLeftFootBone, out RagdollBone leftFoot)
-                || !Context.Bindings.TryGetBone(staggerRightFootBone, out RagdollBone rightFoot)
-                || !Context.Bindings.TryGetBone(balancerLeftCalfBone, out RagdollBone leftCalf)
+            if (!Context.Bindings.TryGetBone(balancerLeftCalfBone, out RagdollBone leftCalf)
                 || !Context.Bindings.TryGetBone(balancerRightCalfBone, out RagdollBone rightCalf)
-                || leftFoot.Rigidbody == null || rightFoot.Rigidbody == null
                 || leftCalf.Rigidbody == null || rightCalf.Rigidbody == null)
             {
                 return;
             }
 
             RagdollGroundingSnapshot snapshot = centerOfMass.Snapshot;
+            if (!TryResolveContactBackedSupportCenter(snapshot, out Vector3 supportCenter))
+            {
+                return;
+            }
             Vector3 capturePoint = RagdollBipedBalanceMath.CapturePoint(
                 snapshot.CenterOfMass,
                 ResolveBalanceVelocity(snapshot),
                 staggerPendulumLength,
                 Physics.gravity.magnitude,
                 snapshot.EffectiveUp);
-            Vector3 supportCenter =
-                (leftFoot.Rigidbody.position + rightFoot.Rigidbody.position) * 0.5f;
             Vector3 centerOfPressureTarget = RagdollBipedBalancerMath.ResolveCenterOfPressureTarget(
                 supportCenter, balancerSettings.CopOffset);
             Vector3 torque = RagdollBipedBalancerMath.ResolveReactiveTorque(
@@ -2921,6 +2924,33 @@ namespace Hairibar.Ragdoll.Animation
             return snapshot.HasRelativeMotion
                 ? snapshot.RelativeCenterOfMassVelocity
                 : snapshot.CenterOfMassVelocity;
+        }
+
+        static bool TryResolveContactBackedSupportCenter(
+            RagdollGroundingSnapshot snapshot,
+            out Vector3 supportCenter)
+        {
+            if (snapshot.ContactBackedSupportPointCount == 2)
+            {
+                supportCenter = (snapshot.LeftFootSupportPoint
+                    + snapshot.RightFootSupportPoint) * 0.5f;
+                return IsFinite(supportCenter);
+            }
+
+            if (snapshot.HasLeftFootSupport)
+            {
+                supportCenter = snapshot.LeftFootSupportPoint;
+                return IsFinite(supportCenter);
+            }
+
+            if (snapshot.HasRightFootSupport)
+            {
+                supportCenter = snapshot.RightFootSupportPoint;
+                return IsFinite(supportCenter);
+            }
+
+            supportCenter = Vector3.zero;
+            return false;
         }
 
         sealed class CachedSubscribers<T> where T : Delegate

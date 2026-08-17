@@ -79,6 +79,59 @@ namespace Hairibar.Ragdoll.Animation
             return Mathf.Max(0f, supportRadius) - Vector3.Distance(p, nearest);
         }
 
+        /// <summary>
+        /// Computes support margin from the feet that have current physical
+        /// contact. One valid foot is a disk; two valid feet are a capsule around
+        /// their projected segment. An unavailable point never becomes an
+        /// endpoint merely because its Rigidbody is present.
+        /// </summary>
+        public static float SignedSupportMargin(
+            Vector3 point,
+            bool hasLeftFootSupport,
+            Vector3 leftFoot,
+            bool hasRightFootSupport,
+            Vector3 rightFoot,
+            float supportRadius,
+            Vector3 supportUp)
+        {
+            Vector3 up = ResolveSupportUp(supportUp);
+            bool leftAvailable = hasLeftFootSupport && IsFinite(leftFoot);
+            bool rightAvailable = hasRightFootSupport && IsFinite(rightFoot);
+            float radius = Mathf.Max(0f, supportRadius);
+
+            if (!IsFinite(point)) return -radius;
+
+            if (!leftAvailable && !rightAvailable)
+            {
+                // Keep the observable margin finite for telemetry. The
+                // support-aware Classify overload separately turns zero support
+                // into Unrecoverable instead of treating this as a step range.
+                return -radius;
+            }
+
+            Vector3 projectedPoint = Vector3.ProjectOnPlane(point, up);
+            if (leftAvailable && !rightAvailable)
+            {
+                return radius - Vector3.Distance(
+                    projectedPoint,
+                    Vector3.ProjectOnPlane(leftFoot, up));
+            }
+
+            if (!leftAvailable)
+            {
+                return radius - Vector3.Distance(
+                    projectedPoint,
+                    Vector3.ProjectOnPlane(rightFoot, up));
+            }
+
+            return SignedSupportMargin(
+                point,
+                leftFoot,
+                rightFoot,
+                radius,
+                up);
+        }
+
         public static float SignedCaptureMargin(
             Vector3 centerOfMass,
             Vector3 centerOfMassVelocity,
@@ -138,6 +191,23 @@ namespace Hairibar.Ragdoll.Animation
             if (signedSupportMargin >= -safeRequiresStepMargin)
                 return RagdollBipedBalanceState.RequiresStep;
             return RagdollBipedBalanceState.Unrecoverable;
+        }
+
+        public static RagdollBipedBalanceState Classify(
+            float signedSupportMargin,
+            int supportPointCount,
+            float stableMargin,
+            float requiresStepMargin)
+        {
+            if (supportPointCount <= 0)
+            {
+                return RagdollBipedBalanceState.Unrecoverable;
+            }
+
+            return Classify(
+                signedSupportMargin,
+                stableMargin,
+                requiresStepMargin);
         }
 
         static Vector3 ResolveSupportUp(Vector3 supportUp)

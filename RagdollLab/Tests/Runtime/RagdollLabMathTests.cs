@@ -179,7 +179,7 @@ namespace Hairibar.Ragdoll.RagdollLab.Tests
 
         [Test] public void SchemaAndThresholdDefaultsAreExplicitAndFinite()
         {
-            Assert.That(RagdollLabSchema.Version, Is.EqualTo("1.6.0"));
+            Assert.That(RagdollLabSchema.Version, Is.EqualTo("1.7.0"));
             var thresholds = ScriptableObject.CreateInstance<RagdollLabThresholds>();
 
             Assert.That(thresholds.shortContactDurationSeconds, Is.EqualTo(0.1f));

@@ -17,6 +17,13 @@ namespace Hairibar.Ragdoll.RagdollLab
         const float PersistentAnchorSettlingSeconds = 0.5f;
         const float PersistentAnchorTimeAboveThresholdSeconds = 0.5f;
 
+        static readonly string[] PerturbationEventNames =
+        {
+            "PushApplied",
+            "Impact",
+            "EventApplied"
+        };
+
         sealed class JointSample
         {
             public int frameIndex;
@@ -277,6 +284,18 @@ namespace Hairibar.Ragdoll.RagdollLab
             var report = new ScenarioReport { name = "Captured", frameCount = frames?.Count ?? 0 };
             if (frames == null || frames.Count == 0) return report;
             report.durationSeconds = (frames.Count - 1) * frames[0].fixedDeltaTime;
+            var eventFrames = new List<(string name, int frameIndex, float simulationTime)>();
+            for (int i = 0; i < frames.Count; i++)
+            {
+                if (frames[i]?.events == null) continue;
+                for (int e = 0; e < frames[i].events.Length; e++)
+                {
+                    EventMarker marker = frames[i].events[e];
+                    if (marker == null) continue;
+                    eventFrames.Add((marker.name, i, marker.simulationTime));
+                }
+            }
+            TryFindFirstPerturbationEvent(frames, eventFrames, report);
             var energy = new List<float>(); var comSpeed = new List<float>(); var impulses = new List<float>(); var penetration = new List<float>();
             var balancerTorque = new List<float>();
             int fallenFrames = 0; int firstFall = -1, recovered = -1;
@@ -319,7 +338,10 @@ namespace Hairibar.Ragdoll.RagdollLab
                     {
                         report.requiresStepFrameCount++;
                         if (report.firstRequiresStepSimulationTime < 0f)
+                        {
                             report.firstRequiresStepSimulationTime = frame.simulationTime;
+                            report.firstRequiresStepFrame = i;
+                        }
                         perturbationObserved = true;
                     }
                     if (string.Equals(balance.state, "Unrecoverable", StringComparison.Ordinal)) report.unrecoverableFrameCount++;
@@ -375,6 +397,18 @@ namespace Hairibar.Ragdoll.RagdollLab
                     contactStarts.Remove(contact.key);
                 }
             }
+            if (report.perturbationEventAvailable
+                && report.firstRequiresStepFrame >= report.firstPerturbationFrame
+                && report.firstRequiresStepSimulationTime >= 0f)
+            {
+                float latency = report.firstRequiresStepSimulationTime
+                    - report.firstPerturbationSimulationTime;
+                if (RagdollLabMath.IsFinite(latency) && latency >= 0f)
+                {
+                    report.requiresStepLatencyAvailable = true;
+                    report.requiresStepLatencySeconds = latency;
+                }
+            }
             report.kineticEnergy = Summary("KineticEnergy", "J", energy, 1f, "RigidBody velocities + principal-axis inertia", "system motion energy");
             report.centerOfMassSpeed = Summary("CenterOfMassSpeed", "m/s", comSpeed, 1f, "mass-weighted body COM", "global balance motion");
             report.contactImpulse = Summary("ContactImpulse", "N*s", impulses, 1f, "Collision ContactPoint.impulse", "impact/contact load");
@@ -387,14 +421,6 @@ namespace Hairibar.Ragdoll.RagdollLab
             report.contactTransitionsPerSecond = contactTransitions / Mathf.Max(report.durationSeconds, frames[0].fixedDeltaTime);
             report.shortContactCount = shortContacts;
             report.recoveryOvershootMeters = recoveryOvershoot;
-
-            var eventFrames = new List<(string name, int frameIndex, float simulationTime)>();
-            for (int i = 0; i < frames.Count; i++)
-            {
-                if (frames[i].events == null) continue;
-                for (int e = 0; e < frames[i].events.Length; e++)
-                    eventFrames.Add((frames[i].events[e].name, i, frames[i].events[e].simulationTime));
-            }
 
             var jointById = new Dictionary<string, JointAccumulator>();
             var jointAccumulators = new List<JointAccumulator>();
@@ -645,12 +671,18 @@ namespace Hairibar.Ragdoll.RagdollLab
                     null, report.recoveryOvershootMeters, 0, 0);
             if (profile.available && IsRecoveryProfile(profile.id)
                 && report.firstRequiresStepSimulationTime >= 0f
-                && report.firstRequiresStepSimulationTime < thresholds.requiresStepEarlySeconds)
+                && !report.requiresStepLatencyAvailable)
+                result.unavailableReasons.Add("requires_step_perturbation_marker_unavailable");
+            if (profile.available && IsRecoveryProfile(profile.id)
+                && report.requiresStepLatencyAvailable
+                && report.requiresStepLatencySeconds < thresholds.requiresStepEarlySeconds)
                 Add(result, "STEP_REQUIRED_TOO_EARLY", "medium", "0.70", report.name,
-                    "RequiresStep was classified inside the configured early-step window",
+                    "RequiresStep was classified " + report.requiresStepLatencySeconds.ToString("R")
+                    + " seconds after perturbation event " + report.firstPerturbationEventName,
                     "capture margin threshold, initial-condition mismatch, or stale balance snapshot",
-                    null, report.firstRequiresStepSimulationTime, 0, 0,
-                    report.firstRequiresStepSimulationTime, report.firstRequiresStepSimulationTime);
+                    null, report.requiresStepLatencySeconds, report.firstPerturbationFrame,
+                    report.firstRequiresStepFrame, report.firstPerturbationSimulationTime,
+                    report.firstRequiresStepSimulationTime);
             if (report.fallenFrameCount > 0 && report.recoveryTimeSeconds <= 0f)
                 Add(result, "FAILED_TO_RECOVER", "high", "0.84", report.name, "fall samples were recorded without a recovery interval", "unrecoverable balance state, missing support, or incomplete capture", null, report.fallenFrameCount, 0, report.fallenFrameCount);
             if (report.staggerEpisodes != null) for (int i = 0; i < report.staggerEpisodes.Length; i++)
@@ -694,6 +726,40 @@ namespace Hairibar.Ragdoll.RagdollLab
                 || string.Equals(profileId, "GetUp", StringComparison.Ordinal)
                 || string.Equals(profileId, "Stagger", StringComparison.Ordinal)
                 || string.Equals(profileId, "Balancer", StringComparison.Ordinal);
+        }
+
+        static void TryFindFirstPerturbationEvent(
+            IReadOnlyList<PhysicsFrame> frames,
+            List<(string name, int frameIndex, float simulationTime)> eventFrames,
+            ScenarioReport report)
+        {
+            if (frames == null || eventFrames == null || report == null) return;
+            for (int i = 0; i < eventFrames.Count; i++)
+            {
+                var marker = eventFrames[i];
+                if (!IsPerturbationEvent(marker.name)) continue;
+                int frameIndex = Mathf.Clamp(marker.frameIndex, 0, frames.Count - 1);
+                float frameTime = frames[frameIndex] != null
+                    ? frames[frameIndex].simulationTime
+                    : marker.simulationTime;
+                if (!RagdollLabMath.IsFinite(frameTime)) frameTime = marker.simulationTime;
+                if (!RagdollLabMath.IsFinite(frameTime)) continue;
+                report.perturbationEventAvailable = true;
+                report.firstPerturbationEventName = marker.name;
+                report.firstPerturbationFrame = frameIndex;
+                report.firstPerturbationSimulationTime = frameTime;
+                return;
+            }
+        }
+
+        static bool IsPerturbationEvent(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+            for (int i = 0; i < PerturbationEventNames.Length; i++)
+                if (string.Equals(name, PerturbationEventNames[i], StringComparison.OrdinalIgnoreCase))
+                    return true;
+            return name.IndexOf("push", StringComparison.OrdinalIgnoreCase) >= 0
+                || name.IndexOf("impact", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         static void AddAnchorDriftDiagnostic(
@@ -852,7 +918,7 @@ namespace Hairibar.Ragdoll.RagdollLab
                 case "COM_INSTABILITY": return new[] { "inspect capture point, support margin, and stance contact telemetry" };
                 case "RECOVERY_TOO_SLOW": return new[] { "compare recovery transition times against the paired baseline" };
                 case "RECOVERY_OVERSHOOT": return new[] { "inspect post-recovery margin samples and reactive torque" };
-                case "STEP_REQUIRED_TOO_EARLY": return new[] { "verify initial balance snapshot and RequiresStep threshold" };
+                case "STEP_REQUIRED_TOO_EARLY": return new[] { "verify PushApplied/impact EventMarker and RequiresStep transition timing" };
                 case "BALANCER_INEFFECTIVE": return new[] { "rerun a paired Balancer OFF/ON capture with identical setup" };
                 case "MAPPING_INTEGRITY": return new[] { "inspect animated-pair identity set and authored/effective mapping availability per frame" };
                 case "STEP_FAILED_TO_REPLANT": return new[] { "verify selected-foot ground support and Animator phase timing" };
@@ -869,7 +935,7 @@ namespace Hairibar.Ragdoll.RagdollLab
                 case "COM_INSTABILITY": return new[] { "signed support margin remains within the configured deficit" };
                 case "RECOVERY_TOO_SLOW": return new[] { "recovery completes below the configured time threshold" };
                 case "RECOVERY_OVERSHOOT": return new[] { "no negative margin sample follows a positive recovery sample" };
-                case "STEP_REQUIRED_TOO_EARLY": return new[] { "the first RequiresStep classification occurs outside the early window" };
+                case "STEP_REQUIRED_TOO_EARLY": return new[] { "the perturbation marker is valid and RequiresStep latency is outside the early window" };
                 case "BALANCER_INEFFECTIVE": return new[] { "paired comparison accepts a stability improvement without safety regressions" };
                 case "MAPPING_INTEGRITY": return new[] { "pair identities remain stable and effective mapping weights are available for every animated pair" };
                 default: return new[] { "the cited metric stays below its configured diagnostic threshold" };
