@@ -318,16 +318,32 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
             string path = Path.Combine(directory, "documentation-audit.json");
             string previous = Environment.GetEnvironmentVariable(
                 "HAIRIBAR_DOCUMENTATION_AUDIT");
+            string previousOutput = Environment.GetEnvironmentVariable(
+                RagdollClosureCoordinator.OutputEnvironmentVariable);
+            string previousRunId = Environment.GetEnvironmentVariable(
+                RagdollClosureCoordinator.RunIdEnvironmentVariable);
             try
             {
                 Environment.SetEnvironmentVariable(
                     "HAIRIBAR_DOCUMENTATION_AUDIT", path);
+                Environment.SetEnvironmentVariable(
+                    RagdollClosureCoordinator.OutputEnvironmentVariable,
+                    directory);
+                Environment.SetEnvironmentVariable(
+                    RagdollClosureCoordinator.RunIdEnvironmentVariable,
+                    Guid.NewGuid().ToString("D"));
                 method.Invoke(null, new object[] { directory });
             }
             finally
             {
                 Environment.SetEnvironmentVariable(
                     "HAIRIBAR_DOCUMENTATION_AUDIT", previous);
+                Environment.SetEnvironmentVariable(
+                    RagdollClosureCoordinator.OutputEnvironmentVariable,
+                    previousOutput);
+                Environment.SetEnvironmentVariable(
+                    RagdollClosureCoordinator.RunIdEnvironmentVariable,
+                    previousRunId);
             }
             Assert.That(File.Exists(path), Is.True);
             return path;

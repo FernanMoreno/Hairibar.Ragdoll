@@ -38,7 +38,7 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
                 Assert.That(contract.AffectedApis, Is.Not.Empty, contract.Id);
                 Assert.That(contract.OfficialSource.Split(';').Select(source => source.Trim()),
                     Is.All.Matches<string>(source =>
-                        source.StartsWith("http://www.root-motion.com/puppetmasterdox/html/",
+                        source.StartsWith("https://root-motion.com/puppetmasterdox/html/",
                             StringComparison.Ordinal)
                         || source.StartsWith("https://docs.unity3d.com/6000.0/Documentation/",
                             StringComparison.Ordinal)), contract.Id);

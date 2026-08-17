@@ -141,6 +141,46 @@ namespace Hairibar.Ragdoll.RagdollLab
             return com.y < minHeight || (upright < 0.35f && supportContactCount == 0);
         }
 
+        public static bool IsLikelyFallen(
+            Vector3 com,
+            Quaternion rootRotation,
+            int supportContactCount,
+            Vector3 supportOrigin,
+            Vector3 supportUp,
+            float minHeight = 0.35f,
+            bool supportReferenceAvailable = true)
+        {
+            Vector3 up = supportUp.sqrMagnitude > 0.000001f && IsFinite(supportUp)
+                ? supportUp.normalized
+                : Vector3.up;
+            float upright = Vector3.Dot(rootRotation * Vector3.up, up);
+            bool belowSupport = supportReferenceAvailable && IsFinite(com) && IsFinite(supportOrigin)
+                && Vector3.Dot(com - supportOrigin, up) < minHeight;
+            return belowSupport || (upright < 0.35f && supportContactCount == 0);
+        }
+
+        /// Classifies a contact normal against the effective support up direction.
+        /// The recorder supplies the physical ContactPoint.normal after orienting it
+        /// toward the tracked body, so this helper remains independent of collider
+        /// ordering and can be tested without a Unity collision callback.
+        public static bool IsGroundSupportNormal(
+            Vector3 normal,
+            Vector3 supportUp,
+            float maximumGroundAngle,
+            out float normalDot)
+        {
+            normalDot = -1f;
+            if (!IsFinite(normal) || !IsFinite(supportUp)
+                || normal.sqrMagnitude <= Mathf.Epsilon || supportUp.sqrMagnitude <= Mathf.Epsilon)
+                return false;
+
+            Vector3 normalizedNormal = normal.normalized;
+            Vector3 normalizedUp = supportUp.normalized;
+            normalDot = Vector3.Dot(normalizedNormal, normalizedUp);
+            float angle = Mathf.Clamp(IsFinite(maximumGroundAngle) ? maximumGroundAngle : 90f, 0f, 90f);
+            return normalDot >= Mathf.Cos(angle * Mathf.Deg2Rad);
+        }
+
         /// Mean of the samples strictly before eventIndex, over up to lookbackFrames.
         /// With no antecedent (eventIndex == 0) the event's own sample is returned.
         public static float Baseline(IReadOnlyList<float> values, int eventIndex, int lookbackFrames)

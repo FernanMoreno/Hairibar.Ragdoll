@@ -56,6 +56,6 @@ depend on the consumer project or its assets.
 
 Historical normative references:
 
-- http://www.root-motion.com/puppetmasterdox/html/classes.html
-- http://www.root-motion.com/puppetmasterdox/html/pages.html
+- https://root-motion.com/puppetmasterdox/html/classes.html
+- https://root-motion.com/puppetmasterdox/html/pages.html
 - https://docs.unity3d.com/

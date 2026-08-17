@@ -1,0 +1,28 @@
+[Licensing::Module] Trying to connect to existing licensing client channel...
+[Licensing::IpcConnector] Successfully connected to: "LicenseClient-ferna" at "2026-08-15T21:56:10.3703607Z"
+Built from '6000.5/staging' branch; Version is '6000.5.2f1 (eb73d3b415a1) revision 15430611'; Using compiler version '194234433'; Build Type 'Release'
+OS: 'Windows 11  (10.0.26200) Core' Language: 'es' Physical Memory: 32543 MB
+BatchMode: 1, IsHumanControllingUs: 0, StartBugReporterOnCrash: 0, Is64bit: 1
+System  architecture: x64
+Process architecture: x64
+Date: 2026-08-15T21:56:10Z
+
+COMMAND LINE ARGUMENTS:
+C:\Program Files\Unity\Hub\Editor\6000.5.2f1\Editor\Unity.exe
+-batchmode
+-nographics
+-projectPath
+C:\Users\ferna\OneDrive\Escritorio\Game\Unity Game\My project
+-runTests
+-testPlatform
+EditMode
+-testFilter
+Hairibar.Ragdoll.Animation.Editor.Tests.RagdollCapabilityCatalogTests.CatalogContainsExactClosedWorldInventoryWithTypedAndEvidence
+-testResults
+C:\Users\ferna\OneDrive\Escritorio\Game\Hairibar.Ragdoll\Artifacts\postroadmap-editmode.xml
+-logFile
+C:\Users\ferna\OneDrive\Escritorio\Game\Hairibar.Ragdoll\Artifacts\postroadmap-editmode.log
+-quit
+Successfully changed project path to: C:\Users\ferna\OneDrive\Escritorio\Game\Unity Game\My project
+C:/Users/ferna/OneDrive/Escritorio/Game/Unity Game/My project
+Exiting without the bug reporter. Application will terminate with return code 1

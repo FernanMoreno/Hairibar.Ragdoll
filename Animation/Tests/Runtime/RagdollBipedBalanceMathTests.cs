@@ -54,6 +54,42 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [Test]
+        public void SignedSupportMargin_UsesExplicitSupportUp()
+        {
+            float margin = RagdollBipedBalanceMath.SignedSupportMargin(
+                point: Vector3.up,
+                leftFoot: Vector3.zero,
+                rightFoot: Vector3.up,
+                supportRadius: 0.25f,
+                supportUp: Vector3.right);
+
+            Assert.That(margin, Is.EqualTo(0.25f).Within(0.0001f));
+        }
+
+        [Test]
+        public void CapturePoint_CompatibilityOverloadMatchesExplicitWorldUp()
+        {
+            Vector3 centerOfMass = new Vector3(0.2f, 1.1f, -0.3f);
+            Vector3 velocity = new Vector3(0.4f, 3f, -0.7f);
+
+            Assert.That(
+                RagdollBipedBalanceMath.CapturePoint(
+                    centerOfMass, velocity, 0.9f, 9.81f),
+                Is.EqualTo(RagdollBipedBalanceMath.CapturePoint(
+                    centerOfMass, velocity, 0.9f, 9.81f, Vector3.up)));
+        }
+
+        [Test]
+        public void CapturePoint_ProjectsVelocityAgainstArbitrarySupportUp()
+        {
+            Vector3 point = RagdollBipedBalanceMath.CapturePoint(
+                Vector3.zero, Vector3.up, 1f, 9.81f, Vector3.right);
+
+            Assert.That(point.y, Is.GreaterThan(0f));
+            Assert.That(point.x, Is.EqualTo(0f).Within(0.0001f));
+        }
+
+        [Test]
         public void SignedCaptureMargin_StationaryComCenteredOnFeet_MatchesSupportMargin()
         {
             float margin = RagdollBipedBalanceMath.SignedCaptureMargin(

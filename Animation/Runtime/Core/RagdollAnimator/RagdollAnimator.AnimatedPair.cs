@@ -12,6 +12,8 @@ namespace Hairibar.Ragdoll.Animation
             public Transform TargetBone => bonePair.TargetBone;
             public RagdollBoneHandle Handle { get; }
             public RagdollMappingWeights MappingWeights { get; internal set; }
+            public RagdollMappingWeights EffectiveMappingWeights { get; internal set; }
+            public bool EffectiveMappingAvailable { get; internal set; }
 
             /// <summary>
             /// Latest unmodified animation sample converted into the ragdoll bone's pose
@@ -39,6 +41,20 @@ namespace Hairibar.Ragdoll.Animation
             readonly RagdollBoneTargetBonePair bonePair;
             RagdollTargetDefaultPose defaultTargetPose;
             AnimatedPoseSampler poseSampler;
+            AnimatedPoseSampler targetPoseSampler;
+
+            public Vector3 TargetLinearVelocity => targetPoseSampler.LinearVelocity;
+            public Vector3 TargetAngularVelocity => targetPoseSampler.AngularVelocity;
+            public Vector3 TargetLinearAcceleration => targetPoseSampler.LinearAcceleration;
+            public Vector3 TargetAngularAcceleration => targetPoseSampler.AngularAcceleration;
+            public Vector3 TargetLinearJerk => targetPoseSampler.LinearJerk;
+            public Vector3 TargetAngularJerk => targetPoseSampler.AngularJerk;
+            public float TargetSampleDeltaTime => targetPoseSampler.SampleDeltaTime;
+            public float TargetSampleTime => targetSampleTime;
+            public bool TargetKinematicsAvailable => targetPoseSampler.KinematicsAvailable;
+            public bool TargetAccelerationAvailable => targetPoseSampler.AccelerationAvailable;
+            public bool TargetJerkAvailable => targetPoseSampler.JerkAvailable;
+            public bool TargetKinematicsReset => targetPoseSampler.KinematicsReset;
 
 
             internal void SampleAnimatedPose(
@@ -94,6 +110,7 @@ namespace Hairibar.Ragdoll.Animation
                 }
                 targetSampleTime = sampleTime;
                 SampledTargetPose = targetPose;
+                targetPoseSampler.Push(targetPose, sampleTime);
                 poseSampler.Push(ragdollPose, sampleTime);
                 RestoreAnimatedPose();
 
@@ -173,19 +190,43 @@ namespace Hairibar.Ragdoll.Animation
             internal void CopyRuntimeStateFrom(AnimatedPair source)
             {
                 if (source == null) throw new System.ArgumentNullException(nameof(source));
+                bool sameAssociation = source.TargetBone && TargetBone
+                    && source.TargetBone == TargetBone
+                    && source.RagdollBone != null
+                    && RagdollBone != null
+                    && source.RagdollBone.Transform == RagdollBone.Transform;
                 SampledTargetPose = source.SampledTargetPose;
                 currentPose = source.currentPose;
                 poseSampler = source.poseSampler;
                 poseLinearVelocity = source.poseLinearVelocity;
                 poseAngularVelocity = source.poseAngularVelocity;
-                targetLinearVelocity = source.targetLinearVelocity;
-                unclockedTargetDisplacement = source.unclockedTargetDisplacement;
-                targetSampleTime = source.targetSampleTime;
-                lastTargetMovementSampleTime = source.lastTargetMovementSampleTime;
-                targetSampleInitialized = source.targetSampleInitialized;
-                hasTargetMovementSample = source.hasTargetMovementSample;
                 MappingWeights = source.MappingWeights;
                 defaultTargetPose = source.defaultTargetPose;
+                if (sameAssociation)
+                {
+                    targetLinearVelocity = source.targetLinearVelocity;
+                    unclockedTargetDisplacement = source.unclockedTargetDisplacement;
+                    targetSampleTime = source.targetSampleTime;
+                    lastTargetMovementSampleTime = source.lastTargetMovementSampleTime;
+                    targetSampleInitialized = source.targetSampleInitialized;
+                    hasTargetMovementSample = source.hasTargetMovementSample;
+                    targetPoseSampler = source.targetPoseSampler;
+                    EffectiveMappingWeights = source.EffectiveMappingWeights;
+                    EffectiveMappingAvailable = source.EffectiveMappingAvailable;
+                }
+                else
+                {
+                    targetLinearVelocity = Vector3.zero;
+                    unclockedTargetDisplacement = Vector3.zero;
+                    targetSampleTime = 0f;
+                    lastTargetMovementSampleTime = 0f;
+                    targetSampleInitialized = false;
+                    hasTargetMovementSample = false;
+                    targetPoseSampler = default;
+                    EffectiveMappingWeights = MappingWeights;
+                    EffectiveMappingAvailable = false;
+                    SampledTargetPose = default;
+                }
             }
 
             internal TeleportState CaptureTeleportState()
@@ -202,7 +243,10 @@ namespace Hairibar.Ragdoll.Animation
                     targetSampleTime = targetSampleTime,
                     lastTargetMovementSampleTime = lastTargetMovementSampleTime,
                     targetSampleInitialized = targetSampleInitialized,
-                    hasTargetMovementSample = hasTargetMovementSample
+                    hasTargetMovementSample = hasTargetMovementSample,
+                    targetPoseSampler = targetPoseSampler,
+                    effectiveMappingWeights = EffectiveMappingWeights,
+                    effectiveMappingAvailable = EffectiveMappingAvailable
                 };
             }
 
@@ -219,6 +263,9 @@ namespace Hairibar.Ragdoll.Animation
                 lastTargetMovementSampleTime = state.lastTargetMovementSampleTime;
                 targetSampleInitialized = state.targetSampleInitialized;
                 hasTargetMovementSample = state.hasTargetMovementSample;
+                targetPoseSampler = state.targetPoseSampler;
+                EffectiveMappingWeights = state.effectiveMappingWeights;
+                EffectiveMappingAvailable = state.effectiveMappingAvailable;
             }
 
             internal void ApplyTeleport(
@@ -242,6 +289,10 @@ namespace Hairibar.Ragdoll.Animation
                         deltaRotation,
                         deltaPosition,
                         pivot);
+                    targetPoseSampler.ApplyTeleport(
+                        deltaRotation,
+                        deltaPosition,
+                        pivot);
                 }
 
                 poseLinearVelocity = Vector3.zero;
@@ -249,6 +300,7 @@ namespace Hairibar.Ragdoll.Animation
                 targetLinearVelocity = Vector3.zero;
                 unclockedTargetDisplacement = Vector3.zero;
                 hasTargetMovementSample = false;
+                EffectiveMappingAvailable = false;
             }
 
             internal struct TeleportState
@@ -264,6 +316,9 @@ namespace Hairibar.Ragdoll.Animation
                 internal float lastTargetMovementSampleTime;
                 internal bool targetSampleInitialized;
                 internal bool hasTargetMovementSample;
+                internal AnimatedPoseSampler targetPoseSampler;
+                internal RagdollMappingWeights effectiveMappingWeights;
+                internal bool effectiveMappingAvailable;
             }
 
 
@@ -275,6 +330,8 @@ namespace Hairibar.Ragdoll.Animation
                 this.bonePair = bonePair;
                 Handle = handle;
                 MappingWeights = mappingWeights;
+                EffectiveMappingWeights = mappingWeights;
+                EffectiveMappingAvailable = false;
                 defaultTargetPose = RagdollTargetDefaultPose.Capture(TargetBone);
             }
         }

@@ -19,7 +19,7 @@ DecisiÃ³n de la secciÃ³n 5: se optÃ³ por portarlo. Hallazgo de la secciÃ�
 
 | AcciÃ³n | Archivo | Estado |
 |---|---|---|
-| aÃ±adido | `Animation/Runtime/Core/Behaviours/RagdollBipedBalancerSettings.cs` | Struct espejo de `SubBehaviourBalancer.Settings`, 7 campos con **defaults verificados contra la doc oficial** (no asumidos): `torqueMlp=0f`, `IMlp=1f`, `velocityF=0.5f`, `maxTorqueMag=45f` â€” los tres Ãºltimos corrigieron mi primer supuesto tras re-consultar Context7. |
+| aÃ±adido | `Animation/Runtime/Core/Behaviours/RagdollBipedBalancerSettings.cs` | Superficie de compatibilidad Hairibar con los nombres públicos listados para `SubBehaviourBalancer.Settings`; el índice archivado confirma el nombre, pero la página de detalle/defaults no fue recuperable, por lo que los defaults y el math no se presentan como paridad oficial. |
 | aÃ±adido | `Animation/Runtime/Core/Behaviours/RagdollBipedBalancerMath.cs` | `ResolveCenterOfPressureTarget` + `ResolveReactiveTorque` â€” math pura Hairibar-owned (RootMotion's real implementation es closed-source; solo el settings surface es pÃºblico). 8/8 tests GREEN. |
 | modificado | `Animation/Runtime/Core/Behaviours/RagdollPuppetBehaviour.cs` | `BalancerSettings` (default `torqueMlp=0`, inerte hasta opt-in), `ApplyReactiveBalancer()` llamado en `OnBehaviourFixedUpdate` junto a `TryClassifyStaggerBalance`; aplica torque a `balancerLeftCalfBone`/`balancerRightCalfBone` solo durante `RecoverableWithoutStep`, cede a `EvaluateStaggerTrigger` si escala a `RequiresStep`. |
 
@@ -84,5 +84,4 @@ Los 9 bugs de actuaciÃ³n identificados por la contra-revisiÃ³n estÃ¡n **co
 ---
 
 *AuditorÃ­a generada por verificaciÃ³n directa de cÃ³digo â€” 17 agentes de lectura contra `Hairibar.Ragdoll` y `CODE RED`, cero afirmaciones sin cita archivo:lÃ­nea o hash de commit. Ninguna reivindicaciÃ³n del diagnÃ³stico original resultÃ³ falsa. Contra-revisiÃ³n de la secciÃ³n 6 (2026-08-13) verificada lÃ­nea por lÃ­nea contra `master` antes de incorporarse. VersiÃ³n web con navegaciÃ³n: [artifact publicado](https://claude.ai/code/artifact/8113af88-615d-40cb-8fec-e75eab6777cc).*
-
 

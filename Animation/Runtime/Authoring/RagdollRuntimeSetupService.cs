@@ -190,7 +190,7 @@ namespace Hairibar.Ragdoll.Animation
                 puppetLayer);
         }
 
-        [RagdollCompatibilityApi("Runtime setup compatibility", "http://www.root-motion.com/puppetmasterdox/html/pages.html")]
+        [RagdollCompatibilityApi("Runtime setup compatibility", "https://root-motion.com/puppetmasterdox/html/pages.html")]
         public static RagdollSetupResult ConfigureSeparated(
             Transform target,
             RagdollDefinitionBindings puppet,

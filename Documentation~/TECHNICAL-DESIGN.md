@@ -221,7 +221,7 @@ en frames renderizados; `Fixed` se mide en fronteras `WaitForFixedUpdate`. Con
 `timeScale == 0`, `Fixed` se verifica mediante frames renderizados porque Unity no
 produce una nueva frontera física escalada que se pueda esperar.
 
-Fuentes: [Baker oficial de RootMotion](http://www.root-motion.com/puppetmasterdox/html/page12.html),
+Fuentes: [Baker oficial de RootMotion](https://root-motion.com/puppetmasterdox/html/page12.html),
 [Animator.Update](https://docs.unity3d.com/ScriptReference/Animator.Update.html),
 [Animator.updateMode](https://docs.unity3d.com/ScriptReference/Animator-updateMode.html),
 [AnimatorControllerPlayable](https://docs.unity3d.com/ScriptReference/Animations.AnimatorControllerPlayable.html)
@@ -254,7 +254,7 @@ raíz lógica a `EnumerateAll`: hacerlo crearía indebidamente Rigidbody/Collide
 el contenedor del personaje y cambiaría ownership, biometría y topología. La
 equivalencia es funcional en el flujo de autoría, no identidad de campos.
 
-Fuente: [BipedRagdollReferences oficial](http://www.root-motion.com/puppetmasterdox/html/struct_root_motion_1_1_dynamics_1_1_biped_ragdoll_references.html).
+Fuente: [BipedRagdollReferences oficial](https://root-motion.com/puppetmasterdox/html/struct_root_motion_1_1_dynamics_1_1_biped_ragdoll_references.html).
 
 ## 14. Extensibilidad
 

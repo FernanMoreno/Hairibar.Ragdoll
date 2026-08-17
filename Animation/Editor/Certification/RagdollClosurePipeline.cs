@@ -638,6 +638,9 @@ namespace Hairibar.Ragdoll.Animation.Editor
                 Uri uri;
                 if (!Uri.TryCreate(part.Trim(), UriKind.Absolute, out uri))
                     return false;
+                if (!string.Equals(uri.Scheme, Uri.UriSchemeHttps,
+                        StringComparison.OrdinalIgnoreCase))
+                    return false;
                 return string.Equals(uri.Host, "www.root-motion.com",
                            StringComparison.OrdinalIgnoreCase)
                     || string.Equals(uri.Host, "root-motion.com",

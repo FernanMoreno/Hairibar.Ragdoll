@@ -4,10 +4,11 @@ using UnityEngine;
 namespace Hairibar.Ragdoll.Animation
 {
     /// <summary>
-    /// Biped stagger behaviour, following PuppetMaster's documented split between
-    /// BehaviourPuppet (fall/unpin/get-up) and a separate biped stagger behaviour
-    /// for in-place balance recovery (RootMotion's BehaviourBipedStagger). It
-    /// classifies whether the capture point (center of mass projected along its
+    /// Hairibar biped stagger behaviour, following the documented semantic split
+    /// between BehaviourPuppet (fall/unpin/get-up) and a separate biped stagger
+    /// concept for in-place balance recovery. The recovered Doxygen corpus does
+    /// not establish a detail-level RootMotion BehaviourBipedStagger contract.
+    /// It classifies whether the capture point (center of mass projected along its
     /// own velocity, inverted-pendulum approximation) has left the foot-to-foot
     /// support base, using its own RagdollCenterOfMassSubBehaviour instance --
     /// the same reusable module RagdollPuppetBehaviour already uses for
@@ -79,6 +80,11 @@ namespace Hairibar.Ragdoll.Animation
         public RagdollBipedBalanceState CurrentState { get; private set; } =
             RagdollBipedBalanceState.Stable;
         public float LastSignedSupportMargin { get; private set; }
+        public Vector3 LastCapturePoint { get; private set; }
+        public string CurrentPhase => stepMachine.State.ToString();
+        public int StepCount => stepMachine.StepCount;
+        public bool SwingFootAvailable => stepMachine.StepCount > 0;
+        public string SwingFootName => SwingFootAvailable ? swingFoot.ToString() : "Unavailable";
         internal RagdollGroundingSnapshot LastClassificationSnapshot =>
             lastClassificationSnapshot;
         public event Action<RagdollBipedBalanceState, RagdollBipedBalanceState> BalanceStateChanged;
@@ -123,6 +129,7 @@ namespace Hairibar.Ragdoll.Animation
             centerOfMass.Reset();
             CurrentState = RagdollBipedBalanceState.Stable;
             LastSignedSupportMargin = 0f;
+            LastCapturePoint = Vector3.zero;
             stepMachine.Reset();
             hasActivationSnapshot = puppet != null
                 && puppet.TryConsumeStaggerSnapshot(out activationSnapshot);
@@ -239,14 +246,23 @@ namespace Hairibar.Ragdoll.Animation
 
             lastClassificationSnapshot = grounding;
             hasClassificationSnapshot = true;
-            float margin = RagdollBipedBalanceMath.SignedCaptureMargin(
+            Vector3 supportUp = grounding.EffectiveUp;
+            Vector3 centerOfMassVelocity = grounding.HasRelativeMotion
+                ? grounding.RelativeCenterOfMassVelocity
+                : grounding.CenterOfMassVelocity;
+            Vector3 capturePoint = RagdollBipedBalanceMath.CapturePoint(
                 grounding.CenterOfMass,
-                grounding.CenterOfMassVelocity,
-                leftFoot.Rigidbody.position,
-                rightFoot.Rigidbody.position,
+                centerOfMassVelocity,
                 pendulumLength,
                 Physics.gravity.magnitude,
-                supportRadius);
+                supportUp);
+            LastCapturePoint = capturePoint;
+            float margin = RagdollBipedBalanceMath.SignedSupportMargin(
+                capturePoint,
+                leftFoot.Rigidbody.position,
+                rightFoot.Rigidbody.position,
+                supportRadius,
+                supportUp);
             LastSignedSupportMargin = margin;
 
             RagdollBipedBalanceState nextState = RagdollBipedBalanceMath.Classify(
@@ -279,13 +295,21 @@ namespace Hairibar.Ragdoll.Animation
                 stepMachine.RegisterStepFailed();
                 return;
             }
+            Vector3 supportUp = grounding.EffectiveUp;
+            Vector3 centerOfMassVelocity = grounding.HasRelativeMotion
+                ? grounding.RelativeCenterOfMassVelocity
+                : grounding.CenterOfMassVelocity;
             Vector3 capturePoint = RagdollBipedBalanceMath.CapturePoint(
                 grounding.CenterOfMass,
-                grounding.CenterOfMassVelocity,
+                centerOfMassVelocity,
                 pendulumLength,
-                Physics.gravity.magnitude);
+                Physics.gravity.magnitude,
+                supportUp);
             swingFoot = RagdollBipedStaggerMath.SelectStepFoot(
-                capturePoint, leftFoot.Rigidbody.position, rightFoot.Rigidbody.position);
+                capturePoint,
+                leftFoot.Rigidbody.position,
+                rightFoot.Rigidbody.position,
+                supportUp);
             swingFootBone = swingFoot == RagdollBipedStepFoot.Left
                 ? leftFootBone
                 : rightFootBone;
@@ -295,7 +319,7 @@ namespace Hairibar.Ragdoll.Animation
                 : leftFoot.Rigidbody.position;
             Vector3 offset = capturePoint - stanceFootPosition;
             RagdollBipedStepDirection direction = RagdollBipedStaggerMath.ClassifyStepDirection(
-                offset, transform.forward, transform.up);
+                offset, transform.forward, supportUp);
 
             if (!TryCrossFadeStep(direction))
             {

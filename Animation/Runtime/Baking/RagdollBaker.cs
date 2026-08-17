@@ -67,7 +67,7 @@ namespace Hairibar.Ragdoll.Animation
             RagdollBakerClipSettingsPolicy.PreserveDestination;
 
         [Obsolete("Use clipSettingsPolicy instead.")]
-        [RagdollCompatibilityApi("Baker compatibility", "http://www.root-motion.com/puppetmasterdox/html/page12.html")]
+        [RagdollCompatibilityApi("Baker compatibility", "https://root-motion.com/puppetmasterdox/html/page12.html")]
         public bool inheritClipSettings
         {
             get => clipSettingsPolicy == RagdollBakerClipSettingsPolicy.InheritSource;

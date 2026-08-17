@@ -75,6 +75,6 @@ or R34.
 
 Normative indexes:
 
-- http://www.root-motion.com/puppetmasterdox/html/classes.html
-- http://www.root-motion.com/puppetmasterdox/html/pages.html
+- https://root-motion.com/puppetmasterdox/html/classes.html
+- https://root-motion.com/puppetmasterdox/html/pages.html
 - https://docs.unity3d.com/

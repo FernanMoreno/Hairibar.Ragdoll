@@ -35,7 +35,7 @@ técnico antes de migrar una herramienta de autoría basada en nombres de campos
 No agregues el contenedor lógico a `EnumerateAll` ni lo trates como Rigidbody raíz.
 Al migrar, pasa el antiguo `root` al wizard/servicio de setup y conserva `hips` como
 primera referencia física. Fuente oficial de la diferencia:
-[BipedRagdollReferences](http://www.root-motion.com/puppetmasterdox/html/struct_root_motion_1_1_dynamics_1_1_biped_ragdoll_references.html).
+[BipedRagdollReferences](https://root-motion.com/puppetmasterdox/html/struct_root_motion_1_1_dynamics_1_1_biped_ragdoll_references.html).
 
 La simulación manual exige que el componente `RagdollAnimator` esté deshabilitado
 y que `Physics.simulationMode == SimulationMode.Script`. `OnPreSimulate` evalúa

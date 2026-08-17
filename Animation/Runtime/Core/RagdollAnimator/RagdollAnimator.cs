@@ -1,5 +1,6 @@
 ﻿using Hairibar.NaughtyExtensions;
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 #pragma warning disable 649
@@ -39,7 +40,7 @@ namespace Hairibar.Ragdoll.Animation
         public RagdollSettings RagdollSettings { get; private set; }
         public RagdollDefinitionBindings Bindings => _ragdollBindings;
         public RagdollTargetBindings TargetBindings => _targetBindings;
-        [RagdollCompatibilityApi("Lifecycle and animation", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
+        [RagdollCompatibilityApi("Lifecycle and animation", "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public Animator TargetAnimator
         {
             get => targetAnimator;
@@ -56,7 +57,7 @@ namespace Hairibar.Ragdoll.Animation
         /// fixed-time animation updates.
         /// </summary>
         public bool ControlsAnimator => ownsFixedAnimatorUpdate;
-        [RagdollCompatibilityApi("Lifecycle and animation", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
+        [RagdollCompatibilityApi("Lifecycle and animation", "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public RagdollSimulationMode Mode
         {
             get
@@ -69,7 +70,7 @@ namespace Hairibar.Ragdoll.Animation
             }
             set => GetSimulationModeController().SetMode(value);
         }
-        [RagdollCompatibilityApi("Lifecycle and animation", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
+        [RagdollCompatibilityApi("Lifecycle and animation", "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public bool IsSwitchingMode
         {
             get
@@ -80,7 +81,7 @@ namespace Hairibar.Ragdoll.Animation
                     && controller.IsTransitioning;
             }
         }
-        [RagdollCompatibilityApi("Lifecycle and animation", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
+        [RagdollCompatibilityApi("Lifecycle and animation", "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public bool IsActive
         {
             get
@@ -94,11 +95,19 @@ namespace Hairibar.Ragdoll.Animation
                             || controller.TargetMode == RagdollSimulationMode.Active));
             }
         }
-        [RagdollCompatibilityApi("Lifecycle and animation", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
+        [RagdollCompatibilityApi("Lifecycle and animation", "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public bool IsBlending => IsSwitchingMode || IsSwitchingState;
-        [RagdollCompatibilityApi("Lifecycle and animation", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
+        [RagdollCompatibilityApi("Lifecycle and animation", "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public bool Initiated => animatedPairs != null
             && Bindings && Bindings.IsInitialized;
+
+        /// <summary>
+        /// Gets the exact initialized target/ragdoll associations used by the
+        /// animation matching pipeline. The returned collection is read-only;
+        /// hierarchy rebuilds may replace its contents at a runtime boundary.
+        /// </summary>
+        public IReadOnlyList<AnimatedPair> AnimatedPairs =>
+            animatedPairs ?? Array.Empty<AnimatedPair>();
         [RagdollCompatibilityApi("Lifecycle and animation", "https://docs.unity3d.com/ScriptReference/Animator-updateMode.html")]
         public AnimatorUpdateMode EffectiveUpdateMode
         {
@@ -127,7 +136,7 @@ namespace Hairibar.Ragdoll.Animation
         public bool UsesLegacyTargetBindingFallback { get; private set; }
 
         [Obsolete("Use MasterPinWeight and MasterMuscleWeight independently.")]
-        [RagdollCompatibilityApi("Master authority", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
+        [RagdollCompatibilityApi("Master authority", "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public float MasterAlpha
         {
             get => _masterMuscleWeight;
@@ -140,21 +149,21 @@ namespace Hairibar.Ragdoll.Animation
             }
         }
 
-        [RagdollCompatibilityApi("Master authority", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
+        [RagdollCompatibilityApi("Master authority", "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public float MasterPinWeight
         {
             get => _masterPinWeight;
             set => _masterPinWeight = SanitizeUnit(value, 1f);
         }
 
-        [RagdollCompatibilityApi("Master authority", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
+        [RagdollCompatibilityApi("Master authority", "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public float MasterMuscleWeight
         {
             get => _masterMuscleWeight;
             set => _masterMuscleWeight = SanitizeUnit(value, 1f);
         }
 
-        [RagdollCompatibilityApi("Master authority", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
+        [RagdollCompatibilityApi("Master authority", "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public float MasterMuscleDamper
         {
             get => _masterMuscleDamper;
@@ -194,7 +203,7 @@ namespace Hairibar.Ragdoll.Animation
 
         public bool HasPendingTeleport => teleportPending;
 
-        [RagdollCompatibilityApi("Master authority", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
+        [RagdollCompatibilityApi("Master authority", "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public void SetMuscleWeights(
             int muscleIndex,
             float muscleWeight,
@@ -210,7 +219,7 @@ namespace Hairibar.Ragdoll.Animation
                 muscleDamper);
         }
 
-        [RagdollCompatibilityApi("Master authority", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
+        [RagdollCompatibilityApi("Master authority", "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public void SetMuscleWeights(
             Transform target,
             float muscleWeight,
@@ -226,7 +235,7 @@ namespace Hairibar.Ragdoll.Animation
                 muscleDamper);
         }
 
-        [RagdollCompatibilityApi("Master authority", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
+        [RagdollCompatibilityApi("Master authority", "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public void SetMuscleWeights(
             HumanBodyBones humanBodyBone,
             float muscleWeight,
@@ -242,7 +251,7 @@ namespace Hairibar.Ragdoll.Animation
                 muscleDamper);
         }
 
-        [RagdollCompatibilityApi("Master authority", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
+        [RagdollCompatibilityApi("Master authority", "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public void SetMuscleWeights(
             RagdollMuscleGroup group,
             float muscleWeight,
@@ -258,7 +267,7 @@ namespace Hairibar.Ragdoll.Animation
                 muscleDamper);
         }
 
-        [RagdollCompatibilityApi("Master authority", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
+        [RagdollCompatibilityApi("Master authority", "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public void SetMuscleWeightsRecursive(
             int muscleIndex,
             float muscleWeight,
@@ -274,7 +283,7 @@ namespace Hairibar.Ragdoll.Animation
                 muscleDamper);
         }
 
-        [RagdollCompatibilityApi("Master authority", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
+        [RagdollCompatibilityApi("Master authority", "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public void SetMuscleWeightsRecursive(
             Transform target,
             float muscleWeight,
@@ -290,7 +299,7 @@ namespace Hairibar.Ragdoll.Animation
                 muscleDamper);
         }
 
-        [RagdollCompatibilityApi("Master authority", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
+        [RagdollCompatibilityApi("Master authority", "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public void SetMuscleWeightsRecursive(
             HumanBodyBones humanBodyBone,
             float muscleWeight,

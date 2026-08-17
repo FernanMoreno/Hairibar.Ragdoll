@@ -11,9 +11,9 @@ observable capability, while Unity documentation defines engine mechanics.
 - RootMotion Support, PuppetMaster learning resources:
   https://rootmotion.freshdesk.com/support/solutions
 - RootMotion official PuppetMaster class reference:
-  http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html
+  https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html
 - RootMotion official BehaviourPuppet class reference:
-  http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_behaviour_puppet.html
+  https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_behaviour_puppet.html
 - Unity 6 `SimulationMode.Script`:
   https://docs.unity3d.com/6000.0/Documentation/ScriptReference/SimulationMode.Script.html
 - Unity 6 `PlayableGraph.SetTimeUpdateMode`:

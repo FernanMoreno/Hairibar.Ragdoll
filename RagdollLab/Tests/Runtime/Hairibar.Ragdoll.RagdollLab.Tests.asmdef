@@ -1,13 +1,19 @@
 {
     "name": "Hairibar.Ragdoll.RagdollLab.Tests",
     "references": [
-        "Hairibar.Ragdoll.RagdollLab"
+        "Hairibar.Ragdoll.RagdollLab",
+        "Hairibar.Ragdoll.Animation",
+        "Hairibar.Ragdoll.Core"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
-    "overrideReferences": false,
-    "precompiledReferences": [],
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll",
+        "UnityEngine.TestRunner.dll",
+        "UnityEditor.TestRunner.dll"
+    ],
     "autoReferenced": false,
     "defineConstraints": [],
     "versionDefines": [],

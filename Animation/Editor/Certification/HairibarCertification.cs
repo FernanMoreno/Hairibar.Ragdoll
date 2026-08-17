@@ -1529,11 +1529,19 @@ namespace Hairibar.Ragdoll.Animation.Editor
         static RagdollClosureCoordinator.RunContext
             EnsureCertificationRunContext(string outputRoot)
         {
-            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(
-                RagdollClosureCoordinator.OutputEnvironmentVariable)))
+            string requestedOutputRoot = Path.GetFullPath(outputRoot);
+            string configuredOutputRoot = Environment.GetEnvironmentVariable(
+                RagdollClosureCoordinator.OutputEnvironmentVariable);
+            if (string.IsNullOrWhiteSpace(configuredOutputRoot)
+                || !string.Equals(
+                    Path.GetFullPath(configuredOutputRoot),
+                    requestedOutputRoot,
+                    StringComparison.OrdinalIgnoreCase))
+            {
                 Environment.SetEnvironmentVariable(
                     RagdollClosureCoordinator.OutputEnvironmentVariable,
-                    Path.GetFullPath(outputRoot));
+                    requestedOutputRoot);
+            }
             if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(
                 RagdollClosureCoordinator.RunIdEnvironmentVariable)))
                 Environment.SetEnvironmentVariable(
@@ -1607,7 +1615,7 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     {
                         id = "J07",
                         sourceUrl =
-                            "http://www.root-motion.com/puppetmasterdox/html/pages.html",
+                            "https://root-motion.com/puppetmasterdox/html/pages.html",
                         affectedApi = string.Join(", ", affectedApi),
                         exactTest =
                             "Hairibar.Ragdoll.Animation.Editor.Tests."

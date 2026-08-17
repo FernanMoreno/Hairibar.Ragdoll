@@ -38,7 +38,7 @@ namespace Hairibar.Ragdoll.Animation
             new CachedActionSubscribers();
 
         /// <summary>Called immediately before an animated Target pose is sampled.</summary>
-        [RagdollCompatibilityApi("Lifecycle and animation", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
+        [RagdollCompatibilityApi("Lifecycle and animation", "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public event Action OnRead
         {
             add => onRead.Add(value);
@@ -46,7 +46,7 @@ namespace Hairibar.Ragdoll.Animation
         }
 
         /// <summary>Called immediately after the Puppet pose has been mapped to the Target.</summary>
-        [RagdollCompatibilityApi("Lifecycle and animation", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
+        [RagdollCompatibilityApi("Lifecycle and animation", "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public event Action OnWrite
         {
             add => onWrite.Add(value);
@@ -54,7 +54,7 @@ namespace Hairibar.Ragdoll.Animation
         }
 
         /// <summary>Called after every initialized RagdollAnimator LateUpdate.</summary>
-        [RagdollCompatibilityApi("Lifecycle and animation", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
+        [RagdollCompatibilityApi("Lifecycle and animation", "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public event Action OnPostLateUpdate
         {
             add => onPostLateUpdate.Add(value);
@@ -62,7 +62,7 @@ namespace Hairibar.Ragdoll.Animation
         }
 
         /// <summary>Called when it is time to restore unanimated Target transforms.</summary>
-        [RagdollCompatibilityApi("Lifecycle and animation", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
+        [RagdollCompatibilityApi("Lifecycle and animation", "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public event Action OnFixTransforms
         {
             add => onFixTransforms.Add(value);
@@ -73,7 +73,7 @@ namespace Hairibar.Ragdoll.Animation
         /// Called once after mappings, modifiers, lifecycle, behaviours, collision and
         /// joint runtime services have initialized and the Puppet has snapped to Target.
         /// </summary>
-        [RagdollCompatibilityApi("Lifecycle and animation", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
+        [RagdollCompatibilityApi("Lifecycle and animation", "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public event Action OnPostInitialized
         {
             add => onPostInitialized.Add(value);

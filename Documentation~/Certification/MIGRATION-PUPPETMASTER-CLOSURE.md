@@ -8,7 +8,7 @@ specified by those sources is identified here as **diseño propio Hairibar**.
 Normative public references:
 
 - RootMotion PuppetMaster pages and class reference:
-  http://www.root-motion.com/puppetmasterdox/html/pages.html
+  https://root-motion.com/puppetmasterdox/html/pages.html
 - Unity 6 scripting and engine contracts: https://docs.unity3d.com/6000.0/
 
 ## Master authority

@@ -64,6 +64,8 @@ namespace Hairibar.Ragdoll.Animation
                 }
 
                 weights.Clamp();
+                pair.EffectiveMappingWeights = weights;
+                pair.EffectiveMappingAvailable = true;
                 if (suppressedBones != null
                     && suppressedBones[pair.Handle.Index])
                 {

@@ -41,9 +41,19 @@ namespace Hairibar.Ragdoll.Animation
             Vector3 leftFoot,
             Vector3 rightFoot)
         {
-            Vector3 p = Vector3.ProjectOnPlane(capturePoint, Vector3.up);
-            Vector3 a = Vector3.ProjectOnPlane(leftFoot, Vector3.up);
-            Vector3 b = Vector3.ProjectOnPlane(rightFoot, Vector3.up);
+            return SelectStepFoot(capturePoint, leftFoot, rightFoot, Vector3.up);
+        }
+
+        public static RagdollBipedStepFoot SelectStepFoot(
+            Vector3 capturePoint,
+            Vector3 leftFoot,
+            Vector3 rightFoot,
+            Vector3 supportUp)
+        {
+            Vector3 up = ResolveSupportUp(supportUp);
+            Vector3 p = Vector3.ProjectOnPlane(capturePoint, up);
+            Vector3 a = Vector3.ProjectOnPlane(leftFoot, up);
+            Vector3 b = Vector3.ProjectOnPlane(rightFoot, up);
 
             float distanceToLeft = Vector3.Distance(a, p);
             float distanceToRight = Vector3.Distance(b, p);
@@ -128,6 +138,20 @@ namespace Hairibar.Ragdoll.Animation
             return stepCount < Mathf.Max(0, maxSteps)
                 ? RagdollBipedStaggerOutcome.Continue
                 : RagdollBipedStaggerOutcome.Failed;
+        }
+
+        static Vector3 ResolveSupportUp(Vector3 supportUp)
+        {
+            return IsFinite(supportUp) && supportUp.sqrMagnitude > 0.000001f
+                ? supportUp.normalized
+                : Vector3.up;
+        }
+
+        static bool IsFinite(Vector3 value)
+        {
+            return !float.IsNaN(value.x) && !float.IsInfinity(value.x)
+                && !float.IsNaN(value.y) && !float.IsInfinity(value.y)
+                && !float.IsNaN(value.z) && !float.IsInfinity(value.z);
         }
     }
 }

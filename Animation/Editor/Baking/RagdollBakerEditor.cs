@@ -318,6 +318,8 @@ namespace Hairibar.Ragdoll.Animation.Editor
 
             var backups = new List<AssetBackup>(clips.Count);
             var createdPaths = new List<string>(clips.Count);
+            var stagedAssets = new List<AnimationClip>(clips.Count);
+            var stagedPaths = new List<string>(clips.Count);
             try
             {
                 for (int index = 0; index < clips.Count; index++)
@@ -364,10 +366,20 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     {
                         AnimationClip asset = UnityEngine.Object.Instantiate(clip);
                         asset.name = clip.name;
-                        AssetDatabase.CreateAsset(asset, path);
-                        createdPaths.Add(path);
+                        stagedAssets.Add(asset);
+                        stagedPaths.Add(path);
                     }
                     afterWrite?.Invoke(index);
+                }
+
+                // Delay creation of new files until every destination write and
+                // transaction callback has succeeded. If a later boundary fails,
+                // rollback only restores existing objects in place; no asset
+                // database deletion/reimport can invalidate their managed identity.
+                for (int index = 0; index < stagedAssets.Count; index++)
+                {
+                    AssetDatabase.CreateAsset(stagedAssets[index], stagedPaths[index]);
+                    createdPaths.Add(stagedPaths[index]);
                 }
                 AssetDatabase.SaveAssets();
                 for (int index = 0; index < paths.Count; index++)
@@ -412,8 +424,12 @@ namespace Hairibar.Ragdoll.Animation.Editor
                         rollbackFailures.Add(exception);
                     }
                 }
-                try { AssetDatabase.SaveAssets(); }
-                catch (Exception exception) { rollbackFailures.Add(exception); }
+                // The destination objects have already been restored in place. A
+                // global SaveAssets here can force Unity to reimport the asset
+                // database after DeleteAsset and replace the managed destination
+                // wrapper, violating the transaction's identity guarantee. The
+                // successful commit path still saves explicitly above; failed
+                // transactions leave only the restored in-memory destination dirty.
                 if (rollbackFailures.Count != 0)
                 {
                     rollbackFailures.Insert(0, commitException);
@@ -429,6 +445,10 @@ namespace Hairibar.Ragdoll.Animation.Editor
                     if (backups[index].Snapshot)
                         UnityEngine.Object.DestroyImmediate(
                             backups[index].Snapshot);
+                for (int index = 0; index < stagedAssets.Count; index++)
+                    if (stagedAssets[index]
+                        && !createdPaths.Contains(stagedPaths[index]))
+                        UnityEngine.Object.DestroyImmediate(stagedAssets[index]);
             }
         }
 

@@ -72,20 +72,19 @@ namespace Hairibar.Ragdoll.Animation.Editor
     {
         public const int ExpectedCount = 142;
 
-        const string Creation = "http://www.root-motion.com/puppetmasterdox/html/page1.html";
-        const string Editing = "http://www.root-motion.com/puppetmasterdox/html/page2.html";
-        const string Setup = "http://www.root-motion.com/puppetmasterdox/html/page4.html";
-        const string PuppetMasterComponent = "http://www.root-motion.com/puppetmasterdox/html/page5.html";
-        const string PuppetMaster = "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html";
-        const string Behaviours = "http://www.root-motion.com/puppetmasterdox/html/page9.html";
-        const string BehaviourPuppet = "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_behaviour_puppet.html";
-        const string BehaviourFall = "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_behaviour_fall.html";
-        const string BehaviourBipedStagger = "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_behaviour_biped_stagger.html";
-        const string SubBehaviourBalancer = "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_sub_behaviour_balancer.html";
-        const string Props = "http://www.root-motion.com/puppetmasterdox/html/page6.html";
-        const string Ik = "http://www.root-motion.com/puppetmasterdox/html/page7.html";
-        const string Performance = "http://www.root-motion.com/puppetmasterdox/html/page8.html";
-        const string Baker = "http://www.root-motion.com/puppetmasterdox/html/page12.html";
+        const string Creation = "https://root-motion.com/puppetmasterdox/html/page1.html";
+        const string Editing = "https://root-motion.com/puppetmasterdox/html/page2.html";
+        const string Setup = "https://root-motion.com/puppetmasterdox/html/page4.html";
+        const string PuppetMasterComponent = "https://root-motion.com/puppetmasterdox/html/page5.html";
+        const string PuppetMaster = "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html";
+        const string Behaviours = "https://root-motion.com/puppetmasterdox/html/page9.html";
+        const string BehaviourPuppet = "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_behaviour_puppet.html";
+        const string BehaviourFall = "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_behaviour_fall.html";
+        const string PuppetMasterClassIndex = "https://root-motion.com/puppetmasterdox/html/classes.html";
+        const string Props = "https://root-motion.com/puppetmasterdox/html/page6.html";
+        const string Ik = "https://root-motion.com/puppetmasterdox/html/page7.html";
+        const string Performance = "https://root-motion.com/puppetmasterdox/html/page8.html";
+        const string Baker = "https://root-motion.com/puppetmasterdox/html/page12.html";
         const string UnityUndo = "https://docs.unity3d.com/6000.0/Documentation/ScriptReference/Undo.html";
         const string UnityAnimator = "https://docs.unity3d.com/6000.0/Documentation/ScriptReference/Animator.html";
         const string UnityBuild = "https://docs.unity3d.com/6000.0/Documentation/Manual/build-script-build.html";
@@ -229,8 +228,8 @@ namespace Hairibar.Ragdoll.Animation.Editor
             Add(result, "E", BehaviourFall, RagdollEvidenceKind.NUnitPlayMode, new[]
             {
                 S("BehaviourFall", "The Target Animator enters the configured Fall state, updates its height/velocity blend, obeys runtime parameters and invokes onEnd once only after both time and velocity gates pass.", "RagdollFallBehaviour; TargetAnimator"),
-                S(BehaviourBipedStagger, "BehaviourBipedStagger", "A sustained capture-point RequiresStep episode selects one swing foot, drives an Animator step state and physically recovers through lift-off, swing and replant without unpinning.", "RagdollBipedStaggerBehaviour; RagdollPuppetBehaviour.OnRequiresStep; StepSwingFoot"),
-                S(SubBehaviourBalancer + "; " + "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_sub_behaviour_balancer_1_1_settings.html", "SubBehaviourBalancer.Settings", "Reactive lower-leg torque uses the documented setting surface; force limit and damping have independently observable Hairibar effects.", "RagdollBipedBalancerSettings; RagdollBipedBalancerMath"),
+                S(PuppetMasterClassIndex, "BehaviourBipedStagger", "Hairibar-owned capture-point Stagger recovery selects one swing foot, drives an Animator step state and physically recovers through lift-off, swing and replant without unpinning. The recovered Doxygen corpus does not provide a BehaviourBipedStagger detail contract, so this is not vendor API parity.", "RagdollBipedStaggerBehaviour; RagdollPuppetBehaviour.OnRequiresStep; StepSwingFoot"),
+                S(PuppetMasterClassIndex, "SubBehaviourBalancer.Settings", "Hairibar-owned reactive lower-leg torque exposes a settings shape named after the class listed in the Doxygen index. The recovered corpus does not independently prove the detail fields/defaults or closed implementation; force and damping effects are Hairibar observations.", "RagdollBipedBalancerSettings; RagdollBipedBalancerMath"),
             }, UnityAnimator);
             RequireExactNUnitTest(result, "E02", RagdollEvidenceKind.NUnitPlayMode,
                 "Hairibar.Ragdoll.Animation.Tests.RagdollBipedStaggerBehaviourPlayModeTests." +

@@ -6,7 +6,7 @@ namespace Hairibar.Ragdoll.RagdollLab
 {
     public static class RagdollLabSchema
     {
-        public const string Version = "1.1.0";
+        public const string Version = "1.5.0";
     }
 
     [Serializable] public struct Vector3Data
@@ -28,6 +28,7 @@ namespace Hairibar.Ragdoll.RagdollLab
         public string schemaVersion = RagdollLabSchema.Version;
         public string runId;
         public string scenario = "Unspecified";
+        public string scenarioProfile = RagdollLabScenarioProfiles.UnavailableId;
         public int seed;
         public string unityVersion;
         public string physicsScene;
@@ -37,6 +38,10 @@ namespace Hairibar.Ragdoll.RagdollLab
         public float totalMass;
         public string captureRoot;
         public string startedUtc;
+        public string variant = "unspecified";
+        public bool balancerEnabled;
+        public string initialConditionFingerprint;
+        public string pushDescriptor;
     }
 
     [Serializable] public sealed class BodyTelemetry
@@ -83,6 +88,12 @@ namespace Hairibar.Ragdoll.RagdollLab
         public Vector3Data relativeVelocity, impulse;
         public float impulseMagnitude;
         public bool contactStart, contactStay, contactEnd;
+        public bool hasContactStartTime, hasContactEndTime, hasContactDuration;
+        public float contactStartTime, contactEndTime, contactDurationSeconds;
+        public bool groundSupport;
+        public float supportNormalDot;
+        public Vector3Data supportVelocity;
+        public bool supportRelativeMotionAvailable;
         public bool penetration;
         public float penetrationDepth;
     }
@@ -90,8 +101,13 @@ namespace Hairibar.Ragdoll.RagdollLab
     [Serializable] public sealed class TargetPoseTelemetry
     {
         public string id;
+        public string pairId;
         public string bone;
+        public string targetTransformId;
         public string physicsBodyId;
+        public bool sourceAvailable;
+        public bool targetAvailable;
+        public bool physicsAvailable;
         public Vector3Data targetPosition, physicsPosition, renderedPosition;
         public QuaternionData targetRotation, physicsRotation, renderedRotation;
         public float targetPhysicsDistance;
@@ -100,6 +116,88 @@ namespace Hairibar.Ragdoll.RagdollLab
         public float targetPhysicsAngularError;
         public float physicsRenderedAngularError;
         public float targetRenderedAngularError;
+        public Vector3Data targetLinearVelocity, targetAngularVelocity;
+        public Vector3Data targetLinearAcceleration, targetAngularAcceleration;
+        public Vector3Data targetLinearJerk, targetAngularJerk;
+        public Vector3Data physicsLinearVelocity, physicsAngularVelocity;
+        public Vector3Data physicsLinearAcceleration, physicsAngularAcceleration;
+        public Vector3Data physicsLinearJerk, physicsAngularJerk;
+        public float targetSampleTime;
+        public float sampleDeltaTime;
+        public bool targetKinematicsAvailable;
+        public bool targetVelocityAvailable;
+        public bool targetAccelerationAvailable;
+        public bool targetJerkAvailable;
+        public bool targetKinematicsReset;
+        public bool physicsKinematicsAvailable;
+        public bool physicsVelocityAvailable;
+        public bool physicsAccelerationAvailable;
+        public bool physicsJerkAvailable;
+        public bool physicsKinematicsReset;
+        public bool authoredMappingAvailable;
+        public float authoredMappingPositionWeight;
+        public float authoredMappingRotationWeight;
+        public bool effectiveMappingAvailable;
+        public float effectiveMappingPositionWeight;
+        public float effectiveMappingRotationWeight;
+    }
+
+    [Serializable] public sealed class BalanceFrameTelemetry
+    {
+        public bool sourceAvailable;
+        public string activeBehaviour = "Unavailable";
+        public string state = "Unavailable";
+        public bool hasCapturePoint;
+        public Vector3Data capturePoint;
+        public bool hasSignedSupportMargin;
+        public float signedSupportMargin;
+        public Vector3Data supportOrigin, supportUp;
+        public bool supportReferenceAvailable;
+        public bool effectiveUpAvailable;
+        public Vector3Data effectiveUp;
+        public bool relativeSupportMotionAvailable;
+        public Vector3Data supportVelocity;
+        public Vector3Data relativeCenterOfMassVelocity;
+        public int supportColliderId;
+        public int supportRigidbodyId;
+        public bool transitionObserved;
+        public string transitionFrom = "Unavailable";
+        public string transitionTo = "Unavailable";
+        public bool hasBalancerTorque;
+        public Vector3Data balancerTorque;
+    }
+
+    [Serializable] public sealed class StaggerFrameTelemetry
+    {
+        public bool sourceAvailable;
+        public string episodeId;
+        public string phase = "Unavailable";
+        public string swingFoot = "Unavailable";
+        public bool swingFootAvailable;
+        public int stepCount;
+        public bool selectedFootGroundSupport;
+        public bool liftOffObserved;
+        public bool replantObserved;
+    }
+
+    [Serializable] public sealed class StaggerEpisodeReport
+    {
+        public string episodeId;
+        public int firstFrame, lastFrame;
+        public float firstSimulationTime, lastSimulationTime;
+        public string initialBalanceState = "Unavailable";
+        public string terminalBalanceState = "Unavailable";
+        public string terminalOutcome = "Unavailable";
+        public string swingFoot = "Unavailable";
+        public int stepCount;
+        public int liftOffFrame = -1, replantFrame = -1;
+        public float replantContactDuration;
+        public float minimumSignedSupportMargin;
+        public float finalSignedSupportMargin;
+        public string finalPuppetState = "Unavailable";
+        public bool unpinnedObserved;
+        public string invalidReason;
+        public string[] phaseSamples = Array.Empty<string>();
     }
 
     [Serializable] public sealed class CharacterTelemetry
@@ -113,6 +211,9 @@ namespace Hairibar.Ragdoll.RagdollLab
         public int supportPointCount;
         public bool centerOfMassInsideSupport;
         public float supportMarginMeters;
+        public Vector3Data supportOrigin, supportUp;
+        public bool supportReferenceAvailable;
+        public float centerOfMassHeightAboveSupport;
         public string puppetState;
         public string simulationMode;
         public float masterMappingWeight;
@@ -132,6 +233,8 @@ namespace Hairibar.Ragdoll.RagdollLab
         public float tangentialSlipSpeed;
         public float accumulatedSlipDistance;
         public float contactDuration;
+        public Vector3Data supportPoint;
+        public bool supportPointValid;
     }
 
     [Serializable] public sealed class EventMarker
@@ -155,6 +258,13 @@ namespace Hairibar.Ragdoll.RagdollLab
         public CharacterTelemetry character;
         public EventMarker[] events;
         public FootTelemetry[] feet;
+        public BalanceFrameTelemetry balance;
+        public StaggerFrameTelemetry stagger;
+        public bool animatedPairCaptureAttempted;
+        public bool animatedPairSourceAvailable;
+        public int animatedPairCount;
+        public TargetPoseTelemetry[] animatedPairs = Array.Empty<TargetPoseTelemetry>();
+        public string[] mappingIntegrityWarnings = Array.Empty<string>();
     }
 
     [Serializable] public sealed class MetricSummary
@@ -189,13 +299,69 @@ namespace Hairibar.Ragdoll.RagdollLab
         public int frameCount;
         public float durationSeconds;
         public MetricSummary kineticEnergy, centerOfMassSpeed, contactImpulse, penetration, footSlipSpeed;
+        public MetricSummary balancerTorque;
         public float dominantFrequencyHz;
         public int fallenFrameCount;
         public float recoveryTimeSeconds;
         public string[] topOffenderIds;
         public float contactTransitionsPerSecond;
         public int shortContactCount;
+        public StaggerEpisodeReport[] staggerEpisodes = Array.Empty<StaggerEpisodeReport>();
+        public bool balanceTelemetryAvailable;
+        public bool signedSupportMarginAvailable;
+        public float minimumSignedSupportMargin;
+        public float finalSignedSupportMargin;
+        public int balanceSampleCount;
+        public int requiresStepFrameCount;
+        public int unrecoverableFrameCount;
+        public int balancerAppliedFrameCount;
+        public int recoveredStaggerEpisodeCount;
+        public int failedStaggerEpisodeCount;
+        public int unpinnedStaggerEpisodeCount;
+        public int supportSampleCount;
+        public int supportLossFrameCount;
+        public float maximumSignedSupportMargin;
+        public float recoveryOvershootMeters;
+        public float firstRequiresStepSimulationTime = -1f;
         public JointReport[] joints;
+        public bool animatedPairSourceAvailable;
+        public int animatedPairCount;
+        public int animatedPairSampleCount;
+        public PairTrackingReport[] pairTracking = Array.Empty<PairTrackingReport>();
+        public string[] mappingIntegrityWarnings = Array.Empty<string>();
+    }
+
+    [Serializable] public sealed class PairTrackingReport
+    {
+        public string id;
+        public string bone;
+        public string targetTransformId;
+        public string physicsBodyId;
+        public bool sourceAvailable;
+        public bool targetAvailable;
+        public bool physicsAvailable;
+        public int sampleCount;
+        public MetricSummary targetPhysicsDistance;
+        public MetricSummary targetPhysicsAngularError;
+        public MetricSummary targetLinearSpeed;
+        public MetricSummary targetAngularSpeed;
+        public MetricSummary physicsLinearSpeed;
+        public MetricSummary physicsAngularSpeed;
+        public MetricSummary targetLinearAcceleration;
+        public MetricSummary targetAngularAcceleration;
+        public MetricSummary targetLinearJerk;
+        public MetricSummary targetAngularJerk;
+        public MetricSummary physicsLinearAcceleration;
+        public MetricSummary physicsAngularAcceleration;
+        public MetricSummary physicsLinearJerk;
+        public MetricSummary physicsAngularJerk;
+        public bool authoredMappingAvailable;
+        public float authoredMappingPositionWeight;
+        public float authoredMappingRotationWeight;
+        public bool effectiveMappingAvailable;
+        public float effectiveMappingPositionWeight;
+        public float effectiveMappingRotationWeight;
+        public string[] mappingIntegrityWarnings = Array.Empty<string>();
     }
 
     [Serializable] public sealed class DiagnosticEvidence
@@ -203,17 +369,26 @@ namespace Hairibar.Ragdoll.RagdollLab
         public string type, severity, confidence, subject, scenario, observation, hypothesis;
         public string[] metrics;
         public int firstFrame, peakFrame;
+        public string availability = "available";
+        public float firstSimulationTime = -1f;
+        public float peakSimulationTime = -1f;
+        public string[] recommendedChecks = Array.Empty<string>();
+        public string[] falsifiers = Array.Empty<string>();
     }
 
     [Serializable] public sealed class DiagnosticsReport
     {
         public string schemaVersion = RagdollLabSchema.Version;
+        public string scenarioProfile = RagdollLabScenarioProfiles.UnavailableId;
+        public bool profileAvailable;
+        public List<string> unavailableReasons = new();
         public List<DiagnosticEvidence> diagnostics = new();
     }
 
     [Serializable] public sealed class ComparisonMetric
     {
         public string name, unit;
+        public string expectation = "neutral";
         public float current, baseline, delta, relativeDelta;
         public bool regression;
     }
@@ -225,6 +400,28 @@ namespace Hairibar.Ragdoll.RagdollLab
         public bool baselineFound;
         public List<ComparisonMetric> metrics = new();
         public List<string> regressionGuards = new();
+        public string decision = "unavailable";
+        public bool safetyGuardsPassed;
+        public string invalidReason;
+        public string scenarioProfile = RagdollLabScenarioProfiles.UnavailableId;
+        public bool profileAvailable;
+        public List<string> rejectionReasons = new();
+    }
+
+    [Serializable] public sealed class BalanceComparisonReport
+    {
+        public string schemaVersion = RagdollLabSchema.Version;
+        public string decision = "invalid";
+        public string invalidReason;
+        public string baselineRunId, candidateRunId;
+        public string scenarioProfile = RagdollLabScenarioProfiles.UnavailableId;
+        public bool profileAvailable;
+        public bool setupMatched;
+        public bool safetyGuardsPassed;
+        public List<ComparisonMetric> stabilityMetrics = new();
+        public List<ComparisonMetric> safetyMetrics = new();
+        public List<string> safetyGuards = new();
+        public List<string> rejectionReasons = new();
     }
 
     [Serializable] public sealed class EvaluationReport
@@ -240,5 +437,6 @@ namespace Hairibar.Ragdoll.RagdollLab
         public List<string> warnings = new();
         public ScenarioReport scenarioReport;
         public DiagnosticsReport diagnostics;
+        public BalanceComparisonReport balanceComparison;
     }
 }

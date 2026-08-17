@@ -50,7 +50,9 @@ namespace Hairibar.Ragdoll.Animation
             }
 
             Vector3 gravity = Physics.gravity;
-            Vector3 up = gravity.sqrMagnitude > Mathf.Epsilon
+            bool effectiveUpAvailable = IsFinite(gravity)
+                && gravity.sqrMagnitude > Mathf.Epsilon;
+            Vector3 up = effectiveUpAvailable
                 ? -gravity.normalized
                 : Vector3.up;
             float minimumGroundDot = Mathf.Cos(
@@ -129,7 +131,9 @@ namespace Hairibar.Ragdoll.Animation
                 out totalMass);
 
             Vector3 gravity = Physics.gravity;
-            Up = gravity.sqrMagnitude > Mathf.Epsilon
+            bool effectiveUpAvailable = IsFinite(gravity)
+                && gravity.sqrMagnitude > Mathf.Epsilon;
+            Up = effectiveUpAvailable
                 ? -gravity.normalized
                 : Vector3.up;
 
@@ -154,6 +158,10 @@ namespace Hairibar.Ragdoll.Animation
             float nearestDistance = float.PositiveInfinity;
             Vector3 point = Vector3.zero;
             Vector3 normal = Up;
+            int supportColliderId = 0;
+            int supportRigidbodyId = 0;
+            bool hasSupportPlatform = false;
+            Vector3 supportVelocity = Vector3.zero;
 
             for (int index = 0; index < hitCount; index++)
             {
@@ -166,6 +174,12 @@ namespace Hairibar.Ragdoll.Animation
                 nearestDistance = hit.distance;
                 point = hit.point;
                 normal = hit.normal;
+                supportColliderId = RagdollUnityObjectId.Get(hit.collider);
+                supportRigidbodyId = hit.rigidbody ? RagdollUnityObjectId.Get(hit.rigidbody) : 0;
+                hasSupportPlatform = supportColliderId != 0;
+                supportVelocity = hit.rigidbody
+                    ? hit.rigidbody.GetPointVelocity(hit.point)
+                    : Vector3.zero;
             }
 
             grounded = grounded && foundGround;
@@ -187,7 +201,12 @@ namespace Hairibar.Ragdoll.Animation
                 deltaTime,
                 hasCenterOfPressure,
                 centerOfPressure,
-                Up);
+                Up,
+                effectiveUpAvailable,
+                grounded ? supportColliderId : 0,
+                grounded ? supportRigidbodyId : 0,
+                grounded && hasSupportPlatform,
+                grounded ? supportVelocity : Vector3.zero);
             ClearPressureContacts();
         }
 
@@ -242,6 +261,13 @@ namespace Hairibar.Ragdoll.Animation
             RagdollBone ignored;
             return context.Bindings.TryGetBone(collider, out ignored)
                 || context.Bindings.TryGetBoneFromAttachedRigidbody(collider, out ignored);
+        }
+
+        static bool IsFinite(Vector3 value)
+        {
+            return !float.IsNaN(value.x) && !float.IsInfinity(value.x)
+                && !float.IsNaN(value.y) && !float.IsInfinity(value.y)
+                && !float.IsNaN(value.z) && !float.IsInfinity(value.z);
         }
     }
 

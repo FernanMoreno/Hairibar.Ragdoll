@@ -28,6 +28,31 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [Test]
+        public void SelectStepFoot_UsesExplicitSupportUp()
+        {
+            RagdollBipedStepFoot foot = RagdollBipedStaggerMath.SelectStepFoot(
+                capturePoint: Vector3.up,
+                leftFoot: Vector3.zero,
+                rightFoot: Vector3.forward,
+                supportUp: Vector3.right);
+
+            Assert.That(foot, Is.EqualTo(RagdollBipedStepFoot.Right));
+        }
+
+        [Test]
+        public void SelectStepFoot_CompatibilityOverloadMatchesExplicitWorldUp()
+        {
+            Vector3 capturePoint = new Vector3(0.2f, 4f, -0.7f);
+            Vector3 leftFoot = new Vector3(-0.4f, 0.3f, 0.1f);
+            Vector3 rightFoot = new Vector3(0.5f, -0.2f, -0.2f);
+
+            Assert.That(
+                RagdollBipedStaggerMath.SelectStepFoot(capturePoint, leftFoot, rightFoot),
+                Is.EqualTo(RagdollBipedStaggerMath.SelectStepFoot(
+                    capturePoint, leftFoot, rightFoot, Vector3.up)));
+        }
+
+        [Test]
         public void ClampStepLength_WithinRange_ReturnsTargetUnchanged()
         {
             Vector3 clamped = RagdollBipedStaggerMath.ClampStepLength(

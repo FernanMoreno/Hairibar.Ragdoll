@@ -626,7 +626,7 @@ namespace Hairibar.Ragdoll.Animation
         /// Sets independent mapping, pin, muscle and muscle-damper multipliers for one
         /// registered bone. Invalid values resolve to the safe disabled value.
         /// </summary>
-        [RagdollCompatibilityApi("Master authority", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
+        [RagdollCompatibilityApi("Master authority", "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public void SetAuthorityWeights(
             RagdollBoneHandle bone,
             float mapping,
@@ -646,7 +646,7 @@ namespace Hairibar.Ragdoll.Animation
                 state.MaxAngularAccelerationMultiplier);
         }
 
-        [RagdollCompatibilityApi("Master authority", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
+        [RagdollCompatibilityApi("Master authority", "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public int SetAuthorityWeights(
             RagdollMuscleGroup group,
             float mapping,
@@ -679,7 +679,7 @@ namespace Hairibar.Ragdoll.Animation
         /// Sets a source and optionally its ancestors/descendants. Traversal is based on
         /// the current generation-safe topology, so unrelated branches remain unchanged.
         /// </summary>
-        [RagdollCompatibilityApi("Master authority", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
+        [RagdollCompatibilityApi("Master authority", "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public int SetAuthorityWeightsRecursive(
             RagdollBoneHandle source,
             float mapping,

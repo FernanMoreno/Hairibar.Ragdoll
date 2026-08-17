@@ -114,7 +114,7 @@ namespace Hairibar.Ragdoll.Animation
             DestroyOwnedObject();
         }
 
-        [RagdollCompatibilityApi("Props and IK", "http://www.root-motion.com/puppetmasterdox/html/page6.html")]
+        [RagdollCompatibilityApi("Props and IK", "https://root-motion.com/puppetmasterdox/html/page6.html")]
         public bool BeginAction()
         {
             return BeginActionCore(true);
@@ -124,7 +124,7 @@ namespace Hairibar.Ragdoll.Animation
         /// Starts or restarts one timed melee action. Expiration is committed at a
         /// FixedUpdate boundary so physics overrides are never changed mid-step.
         /// </summary>
-        [RagdollCompatibilityApi("Props and IK", "http://www.root-motion.com/puppetmasterdox/html/page6.html")]
+        [RagdollCompatibilityApi("Props and IK", "https://root-motion.com/puppetmasterdox/html/page6.html")]
         public bool StartAction(float duration)
         {
             return StartActionCore(duration, true);
@@ -239,7 +239,7 @@ namespace Hairibar.Ragdoll.Animation
             }
         }
 
-        [RagdollCompatibilityApi("Props and IK", "http://www.root-motion.com/puppetmasterdox/html/page6.html")]
+        [RagdollCompatibilityApi("Props and IK", "https://root-motion.com/puppetmasterdox/html/page6.html")]
         public bool EndAction()
         {
             lastActionError = null;

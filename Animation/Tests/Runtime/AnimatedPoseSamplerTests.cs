@@ -16,6 +16,8 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Assert.That(sampler.Pose.worldPosition, Is.EqualTo(new Vector3(3f, 2f, 1f)));
             Assert.That(sampler.LinearVelocity, Is.EqualTo(Vector3.zero));
             Assert.That(sampler.AngularVelocity, Is.EqualTo(Vector3.zero));
+            Assert.That(sampler.KinematicsAvailable, Is.False);
+            Assert.That(sampler.KinematicsReset, Is.True);
         }
 
         [Test]
@@ -46,6 +48,30 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [Test]
+        public void Push_DerivesAccelerationAndJerkFromAnimationSampleIntervals()
+        {
+            AnimatedPoseSampler sampler = new AnimatedPoseSampler();
+            sampler.Push(Pose(Vector3.zero, Quaternion.identity), 0f);
+            sampler.Push(Pose(Vector3.right, Quaternion.identity), 1f);
+            sampler.Push(Pose(Vector3.right * 3f, Quaternion.identity), 2f);
+
+            Assert.That(sampler.LinearVelocity, Is.EqualTo(Vector3.right * 2f));
+            Assert.That(sampler.LinearAcceleration, Is.EqualTo(Vector3.right).Within(0.0001f));
+            Assert.That(sampler.AccelerationAvailable, Is.True);
+            Assert.That(sampler.JerkAvailable, Is.False);
+
+            sampler.Push(Pose(Vector3.right * 7f, Quaternion.identity), 3f);
+
+            Assert.That(sampler.LinearVelocity, Is.EqualTo(Vector3.right * 4f));
+            Assert.That(sampler.LinearAcceleration, Is.EqualTo(Vector3.right * 2f).Within(0.0001f));
+            Assert.That(sampler.LinearJerk, Is.EqualTo(Vector3.right).Within(0.0001f));
+            Assert.That(sampler.JerkAvailable, Is.True);
+            Assert.That(sampler.SampleDeltaTime, Is.EqualTo(1f).Within(0.0001f));
+            Assert.That(sampler.KinematicsAvailable, Is.True);
+            Assert.That(sampler.KinematicsReset, Is.False);
+        }
+
+        [Test]
         public void Push_CalculatesAngularVelocityFromLocalRotation()
         {
             AnimatedPoseSampler sampler = new AnimatedPoseSampler();
@@ -70,6 +96,10 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Assert.That(sampler.Pose.worldPosition, Is.EqualTo(new Vector3(100f, 0f, 0f)));
             Assert.That(sampler.LinearVelocity, Is.EqualTo(Vector3.zero));
             Assert.That(sampler.AngularVelocity, Is.EqualTo(Vector3.zero));
+            Assert.That(sampler.LinearAcceleration, Is.EqualTo(Vector3.zero));
+            Assert.That(sampler.LinearJerk, Is.EqualTo(Vector3.zero));
+            Assert.That(sampler.KinematicsAvailable, Is.False);
+            Assert.That(sampler.KinematicsReset, Is.True);
         }
 
         [Test]
@@ -83,6 +113,23 @@ namespace Hairibar.Ragdoll.Animation.Tests
 
             Assert.That(sampler.Pose.worldPosition, Is.EqualTo(new Vector3(2f, 0f, 0f)));
             Assert.That(sampler.LinearVelocity, Is.EqualTo(Vector3.one));
+            Assert.That(sampler.KinematicsAvailable, Is.False);
+            Assert.That(sampler.KinematicsReset, Is.True);
+        }
+
+        [Test]
+        public void InvalidSampleTime_ResetsDerivativeAvailability()
+        {
+            AnimatedPoseSampler sampler = new AnimatedPoseSampler();
+            sampler.Push(Pose(Vector3.zero, Quaternion.identity), 0f);
+            sampler.Push(Pose(Vector3.right, Quaternion.identity), 1f);
+
+            sampler.Push(Pose(Vector3.one * 2f, Quaternion.identity), float.NaN);
+
+            Assert.That(sampler.KinematicsAvailable, Is.False);
+            Assert.That(sampler.AccelerationAvailable, Is.False);
+            Assert.That(sampler.JerkAvailable, Is.False);
+            Assert.That(sampler.KinematicsReset, Is.True);
         }
 
         [Test]

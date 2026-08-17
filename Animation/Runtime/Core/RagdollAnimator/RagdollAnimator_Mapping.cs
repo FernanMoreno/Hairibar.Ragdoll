@@ -10,7 +10,7 @@ namespace Hairibar.Ragdoll.Animation
         /// A value of zero leaves the target fully animated; one uses the configured
         /// per-bone mapping weights.
         /// </summary>
-        [RagdollCompatibilityApi("Master authority", "http://www.root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
+        [RagdollCompatibilityApi("Master authority", "https://root-motion.com/puppetmasterdox/html/class_root_motion_1_1_dynamics_1_1_puppet_master.html")]
         public float MasterMappingWeight
         {
             get => _masterMappingWeight;
@@ -39,7 +39,9 @@ namespace Hairibar.Ragdoll.Animation
         public void SetBoneMappingWeights(RagdollBoneHandle bone, RagdollMappingWeights mappingWeights)
         {
             mappingWeights.Clamp();
-            GetAnimatedPair(bone).MappingWeights = mappingWeights;
+            AnimatedPair pair = GetAnimatedPair(bone);
+            pair.MappingWeights = mappingWeights;
+            pair.EffectiveMappingAvailable = false;
         }
 
         /// <summary>
@@ -53,6 +55,7 @@ namespace Hairibar.Ragdoll.Animation
             foreach (AnimatedPair pair in animatedPairs)
             {
                 pair.MappingWeights = GetConfiguredMappingWeights(pair.Name);
+                pair.EffectiveMappingAvailable = false;
             }
         }
 

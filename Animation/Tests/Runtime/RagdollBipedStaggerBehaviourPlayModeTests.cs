@@ -29,6 +29,16 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
 
         [UnityTest]
+        public IEnumerator PackageFixture_ProvidesRequiredAnimatorContract()
+        {
+            RuntimeAnimatorController controller =
+                StaggerTestAnimatorFixture.LoadController();
+            Assert.That(controller, Is.Not.Null);
+            Assert.That(StaggerTestAnimatorFixture.IsValid(controller), Is.True);
+            yield return null;
+        }
+
+        [UnityTest]
         public IEnumerator BalancedCaptureMargin_CompletesStepCycleAndReactivatesPuppetAsPuppet()
         {
             rig = new StaggerPhysicalRig(footOffsetX: 0.5f);
@@ -71,10 +81,9 @@ namespace Hairibar.Ragdoll.Animation.Tests
         [UnityTest]
         public IEnumerator StepActuator_CrossFadesStepStateAndRunsStepPhases()
         {
-            RuntimeAnimatorController controller = Resources.Load<RuntimeAnimatorController>(
-                "HairibarStaggerTests/StepRecovery");
+            RuntimeAnimatorController controller = StaggerTestAnimatorFixture.LoadController();
             Assert.That(controller, Is.Not.Null,
-                "Run Code Red/Ragdoll/Create Stagger Test Assets before PlayMode tests.");
+                "The package-owned Stagger test fixture could not provide StepRecovery.");
             rig = new StaggerPhysicalRig(footOffsetX: 0.5f,
                 footCenterX: 0.5f, stepController: controller);
             yield return new WaitForFixedUpdate();
@@ -125,8 +134,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
         [UnityTest]
         public IEnumerator StepActuator_LeftSelectionMovesOnlyLeftTarget()
         {
-            RuntimeAnimatorController controller = Resources.Load<RuntimeAnimatorController>(
-                "HairibarStaggerTests/StepRecovery");
+            RuntimeAnimatorController controller = StaggerTestAnimatorFixture.LoadController();
             Assert.That(controller, Is.Not.Null);
             // Move the support segment left of the COM so the runtime selector
             // deterministically chooses the left swing foot.
@@ -159,8 +167,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
         [UnityTest]
         public IEnumerator PhysicalStep_SelectedFootMovesMoreThanStanceFoot()
         {
-            RuntimeAnimatorController controller = Resources.Load<RuntimeAnimatorController>(
-                "HairibarStaggerTests/StepRecovery");
+            RuntimeAnimatorController controller = StaggerTestAnimatorFixture.LoadController();
             Assert.That(controller, Is.Not.Null);
             rig = new StaggerPhysicalRig(footOffsetX: 0.5f, stepController: controller,
                 freezeBodies: false);
@@ -205,8 +212,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
         [UnityTest]
         public IEnumerator PhysicalPush_RequiresStepEventActivatesStaggerWithoutManualBeginStep()
         {
-            RuntimeAnimatorController controller = Resources.Load<RuntimeAnimatorController>(
-                "HairibarStaggerTests/StepRecovery");
+            RuntimeAnimatorController controller = StaggerTestAnimatorFixture.LoadController();
             Assert.That(controller, Is.Not.Null);
             rig = new StaggerPhysicalRig(footOffsetX: 0.5f, stepController: controller,
                 freezeBodies: false);
@@ -331,8 +337,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
         [UnityTest]
         public IEnumerator E02_PhysicalPush_StaggerRecoveryBenchmarkProvesCompleteEpisode()
         {
-            RuntimeAnimatorController controller = Resources.Load<RuntimeAnimatorController>(
-                "HairibarStaggerTests/StepRecovery");
+            RuntimeAnimatorController controller = StaggerTestAnimatorFixture.LoadController();
             Assert.That(controller, Is.Not.Null);
             rig = new StaggerPhysicalRig(
                 footOffsetX: 0.5f,
@@ -413,6 +418,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 string tickPhase = ReadStepPhase(rig.Stagger);
                 recoveryTrace.Add(new StaggerRecoveryFixedTick(
                     tick,
+                    Time.fixedTime,
                     rig.Controller.ActiveBehaviour?.GetType().Name,
                     rig.Puppet.State,
                     rig.Stagger.CurrentState,
@@ -603,6 +609,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Assert.That(sawUnpinned, Is.False);
             Assert.That(minimumMargin, Is.LessThan(0f));
             Assert.That(maximumMargin, Is.GreaterThan(minimumMargin));
+            AssertE02TelemetryTrace(recoveryTrace, selectedFoot);
         }
 
         [UnityTest]
@@ -637,6 +644,128 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 rig.Stagger.PendulumLength,
                 Physics.gravity.magnitude,
                 rig.Stagger.SupportRadius);
+        }
+
+        static void AssertE02TelemetryTrace(
+            IReadOnlyList<StaggerRecoveryFixedTick> trace,
+            int expectedSelectedFoot)
+        {
+            Assert.That(trace, Is.Not.Null.And.Not.Empty,
+                "E02 must retain at least one fixed-tick telemetry sample.");
+
+            int previousTick = -1;
+            float previousSimulationTime = float.NegativeInfinity;
+            int phaseOrder = -1;
+            int observedSelectedFoot = -1;
+            bool sawPuppetBeforeStagger = false;
+            bool sawStagger = false;
+            bool sawPuppetAfterStagger = false;
+            bool sawLiftOff = false;
+            bool sawSwing = false;
+            bool sawReplant = false;
+            bool sawReplantContact = false;
+            bool sawSettling = false;
+
+            for (int index = 0; index < trace.Count; index++)
+            {
+                StaggerRecoveryFixedTick sample = trace[index];
+                Assert.That(sample.tick, Is.GreaterThan(previousTick),
+                    $"Telemetry tick provenance must be strictly ordered at sample {index}.");
+                Assert.That(sample.simulationTime,
+                    Is.GreaterThan(previousSimulationTime),
+                    $"Telemetry simulation-time provenance must be strictly ordered at tick {sample.tick}.");
+                Assert.That(IsFinite(sample.signedMargin), Is.True,
+                    $"Signed capture margin must be finite at tick {sample.tick}.");
+                Assert.That(IsFinite(sample.capturePoint), Is.True,
+                    $"Capture point must be finite at tick {sample.tick}.");
+
+                previousTick = sample.tick;
+                previousSimulationTime = sample.simulationTime;
+
+                if (sample.activeBehaviour == nameof(RagdollPuppetBehaviour)
+                    && !sawStagger)
+                {
+                    sawPuppetBeforeStagger = true;
+                }
+
+                if (sample.activeBehaviour == nameof(RagdollBipedStaggerBehaviour))
+                {
+                    sawStagger = true;
+                    string phase = sample.stepPhase;
+                    if (phase == "Idle" || phase == "Unknown") continue;
+
+                    Assert.That(sample.selectedFoot == 0 || sample.selectedFoot == 1, Is.True,
+                        $"A non-idle Stagger phase must expose a selected foot at tick {sample.tick}.");
+                    if (observedSelectedFoot < 0)
+                        observedSelectedFoot = sample.selectedFoot;
+                    Assert.That(sample.selectedFoot, Is.EqualTo(observedSelectedFoot),
+                        $"Swing foot identity must remain stable throughout the episode at tick {sample.tick}.");
+
+                    int currentPhaseOrder = PhaseOrder(phase);
+                    Assert.That(currentPhaseOrder, Is.GreaterThanOrEqualTo(phaseOrder),
+                        $"Stagger phases must be monotonic at tick {sample.tick}: {phase}.");
+                    phaseOrder = Mathf.Max(phaseOrder, currentPhaseOrder);
+
+                    bool selectedFootGrounded = sample.selectedFoot == 0
+                        ? sample.leftFootGrounded
+                        : sample.rightFootGrounded;
+                    if (phase == "LiftOff") sawLiftOff = true;
+                    if (phase == "Swing") sawSwing = true;
+                    if (phase == "Replant")
+                    {
+                        sawReplant = true;
+                        sawReplantContact |= selectedFootGrounded;
+                    }
+                    if (phase == "Settling")
+                    {
+                        sawSettling = true;
+                        sawReplantContact |= sawReplant && selectedFootGrounded;
+                    }
+                }
+                else if (sawStagger && sample.activeBehaviour == nameof(RagdollPuppetBehaviour))
+                {
+                    sawPuppetAfterStagger = true;
+                }
+            }
+
+            Assert.That(sawPuppetBeforeStagger, Is.True,
+                "Telemetry must contain the Puppet sample before Stagger activation.");
+            Assert.That(sawStagger, Is.True,
+                "Telemetry must contain the active Stagger interval.");
+            Assert.That(sawPuppetAfterStagger, Is.True,
+                "Telemetry must contain the Puppet sample after Stagger recovery.");
+            Assert.That(observedSelectedFoot, Is.EqualTo(expectedSelectedFoot),
+                "Telemetry selected foot must match the benchmark's physical selection.");
+            Assert.That(sawLiftOff, Is.True);
+            Assert.That(sawSwing, Is.True);
+            Assert.That(sawReplant, Is.True);
+            Assert.That(sawSettling, Is.True);
+            Assert.That(sawReplantContact, Is.True,
+                "Replant telemetry must be backed by selected-foot ground contact at its tick.");
+            Assert.That(phaseOrder, Is.EqualTo(3),
+                "The complete E02 episode must reach Settling after Replant.");
+        }
+
+        static int PhaseOrder(string phase)
+        {
+            switch (phase)
+            {
+                case "LiftOff": return 0;
+                case "Swing": return 1;
+                case "Replant": return 2;
+                case "Settling": return 3;
+                default: return -1;
+            }
+        }
+
+        static bool IsFinite(float value)
+        {
+            return !float.IsNaN(value) && !float.IsInfinity(value);
+        }
+
+        static bool IsFinite(Vector3 value)
+        {
+            return IsFinite(value.x) && IsFinite(value.y) && IsFinite(value.z);
         }
 
         static float CalibratedRequiresStepImpulse(
@@ -759,21 +888,8 @@ namespace Hairibar.Ragdoll.Animation.Tests
 
         static bool IsFootGrounded(StaggerPhysicalRig rig, Rigidbody foot)
         {
-            Collider footCollider = foot.GetComponent<Collider>();
-            Collider groundCollider = rig.GroundCollider;
-            if (!footCollider || !groundCollider) return false;
-
-            Vector3 direction;
-            float distance;
-            return Physics.ComputePenetration(
-                footCollider,
-                footCollider.transform.position,
-                footCollider.transform.rotation,
-                groundCollider,
-                groundCollider.transform.position,
-                groundCollider.transform.rotation,
-                out direction,
-                out distance);
+            GroundContactProbe probe = foot.GetComponent<GroundContactProbe>();
+            return probe != null && probe.IsGrounded;
         }
 
         readonly struct StaggerFixedTick
@@ -834,27 +950,29 @@ namespace Hairibar.Ragdoll.Animation.Tests
 
         readonly struct StaggerRecoveryFixedTick
         {
-            readonly int tick;
-            readonly string activeBehaviour;
-            readonly RagdollPuppetState puppetState;
-            readonly RagdollBipedBalanceState balanceState;
-            readonly float signedMargin;
-            readonly Vector3 capturePoint;
-            readonly int selectedFoot;
-            readonly string stepPhase;
-            readonly string animatorState;
-            readonly int animatorStateHash;
-            readonly Vector3 leftTargetPosition;
-            readonly Vector3 rightTargetPosition;
-            readonly Vector3 leftFootPosition;
-            readonly Vector3 rightFootPosition;
-            readonly Vector3 rootPosition;
-            readonly Vector3 rootVelocity;
-            readonly bool leftFootGrounded;
-            readonly bool rightFootGrounded;
+            internal readonly int tick;
+            internal readonly float simulationTime;
+            internal readonly string activeBehaviour;
+            internal readonly RagdollPuppetState puppetState;
+            internal readonly RagdollBipedBalanceState balanceState;
+            internal readonly float signedMargin;
+            internal readonly Vector3 capturePoint;
+            internal readonly int selectedFoot;
+            internal readonly string stepPhase;
+            internal readonly string animatorState;
+            internal readonly int animatorStateHash;
+            internal readonly Vector3 leftTargetPosition;
+            internal readonly Vector3 rightTargetPosition;
+            internal readonly Vector3 leftFootPosition;
+            internal readonly Vector3 rightFootPosition;
+            internal readonly Vector3 rootPosition;
+            internal readonly Vector3 rootVelocity;
+            internal readonly bool leftFootGrounded;
+            internal readonly bool rightFootGrounded;
 
             internal StaggerRecoveryFixedTick(
                 int tick,
+                float simulationTime,
                 string activeBehaviour,
                 RagdollPuppetState puppetState,
                 RagdollBipedBalanceState balanceState,
@@ -874,6 +992,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 bool rightFootGrounded)
             {
                 this.tick = tick;
+                this.simulationTime = simulationTime;
                 this.activeBehaviour = activeBehaviour;
                 this.puppetState = puppetState;
                 this.balanceState = balanceState;
@@ -896,6 +1015,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
             internal string Format()
             {
                 return $"Recovery tick={tick}, active={activeBehaviour}, " +
+                    $"time={simulationTime:F4}, " +
                     $"puppet={puppetState}, balance={balanceState}, " +
                     $"margin={signedMargin:F4}, capturePoint={capturePoint}, " +
                     $"selectedFoot={selectedFoot}, phase={stepPhase}, " +
@@ -935,6 +1055,280 @@ namespace Hairibar.Ragdoll.Animation.Tests
         }
     }
 
+    /// <summary>
+    /// Owns the deterministic Animator asset required by the package Stagger
+    /// tests. The package must not depend on a consumer/CODE RED asset merely
+    /// to execute its own PlayMode evidence.
+    /// </summary>
+    internal static class StaggerTestAnimatorFixture
+    {
+        const string ResourceName = "HairibarStaggerTests/StepRecovery";
+        const string GeneratedRoot =
+            "Assets/__HairibarRagdollTestFixtures/Stagger";
+        const string ResourceFolder =
+            GeneratedRoot + "/Resources/HairibarStaggerTests";
+        const string ControllerPath = ResourceFolder + "/StepRecovery.controller";
+
+        static readonly string[] DirectionalStates =
+        {
+            "StepForward", "StepBackward", "StepLeft", "StepRight",
+            "StepForwardRightFoot", "StepBackwardRightFoot",
+            "StepLeftRightFoot", "StepRightRightFoot"
+        };
+
+        internal static RuntimeAnimatorController LoadController()
+        {
+            RuntimeAnimatorController existing =
+                Resources.Load<RuntimeAnimatorController>(ResourceName);
+            if (IsValid(existing)) return existing;
+
+#if UNITY_EDITOR
+            return CreateEditorFixture();
+#else
+            return null;
+#endif
+        }
+
+        internal static bool IsValid(RuntimeAnimatorController controller)
+        {
+            if (!controller) return false;
+
+            PropertyInfo parametersProperty = controller.GetType().GetProperty(
+                "parameters", BindingFlags.Instance | BindingFlags.Public);
+            Array parameters = parametersProperty?.GetValue(controller, null) as Array;
+            bool hasSwingFootParameter = false;
+            if (parameters != null)
+            {
+                foreach (object parameter in parameters)
+                {
+                    PropertyInfo name = parameter.GetType().GetProperty("name");
+                    PropertyInfo type = parameter.GetType().GetProperty("type");
+                    if ((string)name?.GetValue(parameter, null) != "StepSwingFoot")
+                        continue;
+
+                    hasSwingFootParameter = type?.GetValue(parameter, null)
+                        is AnimatorControllerParameterType.Int;
+                    break;
+                }
+            }
+
+            PropertyInfo layersProperty = controller.GetType().GetProperty(
+                "layers", BindingFlags.Instance | BindingFlags.Public);
+            Array layers = layersProperty?.GetValue(controller, null) as Array;
+            if (!hasSwingFootParameter || layers == null || layers.Length == 0)
+                return false;
+
+            object layer = layers.GetValue(0);
+            PropertyInfo stateMachineProperty = layer.GetType().GetProperty(
+                "stateMachine", BindingFlags.Instance | BindingFlags.Public);
+            object stateMachine = stateMachineProperty?.GetValue(layer, null);
+            PropertyInfo statesProperty = stateMachine?.GetType().GetProperty(
+                "states", BindingFlags.Instance | BindingFlags.Public);
+            Array states = statesProperty?.GetValue(stateMachine, null) as Array;
+            if (states == null) return false;
+
+            HashSet<string> found = new HashSet<string>();
+            foreach (object childState in states)
+            {
+                PropertyInfo stateProperty = childState.GetType().GetProperty("state");
+                object state = stateProperty?.GetValue(childState, null);
+                if (state == null) continue;
+
+                string name = state.GetType().GetProperty("name")?.GetValue(state, null)
+                    as string;
+                object motion = state.GetType().GetProperty("motion")?.GetValue(state, null);
+                if (!string.IsNullOrEmpty(name) && motion != null)
+                    found.Add(name);
+            }
+
+            for (int index = 0; index < DirectionalStates.Length; index++)
+            {
+                if (!found.Contains(DirectionalStates[index])) return false;
+            }
+
+            return true;
+        }
+
+#if UNITY_EDITOR
+        static RuntimeAnimatorController CreateEditorFixture()
+        {
+            Type assetDatabase = FindEditorType("UnityEditor.AssetDatabase");
+            Type animatorController = FindEditorType(
+                "UnityEditor.Animations.AnimatorController");
+            if (assetDatabase == null || animatorController == null)
+                return null;
+
+            DeleteAsset(assetDatabase, GeneratedRoot);
+            EnsureFolder(assetDatabase, "Assets", "__HairibarRagdollTestFixtures");
+            EnsureFolder(assetDatabase,
+                "Assets/__HairibarRagdollTestFixtures", "Stagger");
+            EnsureFolder(assetDatabase, GeneratedRoot, "Resources");
+            EnsureFolder(assetDatabase, GeneratedRoot + "/Resources", "HairibarStaggerTests");
+
+            MethodInfo createController = animatorController.GetMethod(
+                "CreateAnimatorControllerAtPath",
+                BindingFlags.Static | BindingFlags.Public,
+                null,
+                new[] { typeof(string) },
+                null);
+            object controller = createController?.Invoke(
+                null, new object[] { ControllerPath });
+            if (controller == null) return null;
+
+            MethodInfo addParameter = animatorController.GetMethod(
+                "AddParameter",
+                BindingFlags.Instance | BindingFlags.Public,
+                null,
+                new[] { typeof(string), typeof(AnimatorControllerParameterType) },
+                null);
+            addParameter?.Invoke(controller, new object[]
+            {
+                "StepSwingFoot", AnimatorControllerParameterType.Int
+            });
+
+            Array layers = (Array)animatorController.GetProperty("layers")
+                ?.GetValue(controller, null);
+            if (layers == null || layers.Length == 0) return null;
+            object layer = layers.GetValue(0);
+            object stateMachine = layer.GetType().GetProperty("stateMachine")
+                ?.GetValue(layer, null);
+            if (stateMachine == null) return null;
+
+            Type stateMachineType = stateMachine.GetType();
+            MethodInfo addState = stateMachineType.GetMethod(
+                "AddState",
+                BindingFlags.Instance | BindingFlags.Public,
+                null,
+                new[] { typeof(string), typeof(Vector3) },
+                null);
+            if (addState == null) return null;
+
+            AnimationClip idle = NewClip("Idle");
+            CreateAsset(assetDatabase, idle, ResourceFolder + "/Idle.anim");
+            object idleState = addState.Invoke(
+                stateMachine, new object[] { "Idle", Vector3.zero });
+            idleState.GetType().GetProperty("motion")?.SetValue(idleState, idle, null);
+            stateMachineType.GetProperty("defaultState")?.SetValue(
+                stateMachine, idleState, null);
+
+            for (int index = 0; index < DirectionalStates.Length; index++)
+            {
+                string stateName = DirectionalStates[index];
+                bool rightFoot = stateName.EndsWith("RightFoot", StringComparison.Ordinal);
+                AnimationClip clip = NewStepClip(stateName, rightFoot);
+                CreateAsset(assetDatabase, clip,
+                    ResourceFolder + "/" + stateName + ".anim");
+                object state = addState.Invoke(
+                    stateMachine, new object[] { stateName, Vector3.zero });
+                state.GetType().GetProperty("motion")?.SetValue(state, clip, null);
+            }
+
+            assetDatabase.GetMethod("SaveAssets", BindingFlags.Static | BindingFlags.Public)
+                ?.Invoke(null, null);
+            assetDatabase.GetMethod("Refresh", BindingFlags.Static | BindingFlags.Public,
+                null, Type.EmptyTypes, null)?.Invoke(null, null);
+
+            RuntimeAnimatorController generated = LoadAsset<RuntimeAnimatorController>(
+                assetDatabase, ControllerPath);
+            return IsValid(generated) ? generated : null;
+        }
+
+        static AnimationClip NewClip(string name)
+        {
+            return new AnimationClip
+            {
+                name = name,
+                legacy = false,
+                frameRate = 60f,
+                wrapMode = WrapMode.ClampForever
+            };
+        }
+
+        static AnimationClip NewStepClip(string name, bool rightFoot)
+        {
+            AnimationClip clip = NewClip(name + "Clip");
+            string footPath = rightFoot ? "foot_r" : "foot_l";
+            float baselineX = rightFoot ? 0.5f : -0.5f;
+            float landingX = rightFoot ? 0.2f : -0.2f;
+            clip.SetCurve(footPath, typeof(Transform), "localPosition.x",
+                Curve(baselineX, landingX, baselineX));
+            clip.SetCurve(footPath, typeof(Transform), "localPosition.y",
+                Curve(-1f, -0.8f, -1f));
+            return clip;
+        }
+
+        static AnimationCurve Curve(float first, float middle, float last)
+        {
+            AnimationCurve curve = new AnimationCurve(
+                new Keyframe(0f, first),
+                new Keyframe(0.17f, middle),
+                new Keyframe(0.34f, last));
+            curve.preWrapMode = WrapMode.ClampForever;
+            curve.postWrapMode = WrapMode.ClampForever;
+            return curve;
+        }
+
+        static Type FindEditorType(string fullName)
+        {
+            Type type = Type.GetType(fullName + ", UnityEditor.CoreModule")
+                ?? Type.GetType(fullName + ", UnityEditor");
+            if (type != null) return type;
+
+            foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                type = assembly.GetType(fullName);
+                if (type != null) return type;
+            }
+
+            return null;
+        }
+
+        static void EnsureFolder(Type assetDatabase, string parent, string name)
+        {
+            bool valid = (bool)assetDatabase.GetMethod("IsValidFolder",
+                BindingFlags.Static | BindingFlags.Public,
+                null, new[] { typeof(string) }, null)
+                .Invoke(null, new object[] { parent + "/" + name });
+            if (valid) return;
+
+            assetDatabase.GetMethod("CreateFolder", BindingFlags.Static | BindingFlags.Public,
+                null, new[] { typeof(string), typeof(string) }, null)
+                .Invoke(null, new object[] { parent, name });
+        }
+
+        static void DeleteAsset(Type assetDatabase, string path)
+        {
+            assetDatabase.GetMethod("DeleteAsset", BindingFlags.Static | BindingFlags.Public,
+                null, new[] { typeof(string) }, null)?.Invoke(null, new object[] { path });
+        }
+
+        static void CreateAsset(Type assetDatabase, UnityEngine.Object asset, string path)
+        {
+            assetDatabase.GetMethod("CreateAsset", BindingFlags.Static | BindingFlags.Public,
+                null, new[] { typeof(UnityEngine.Object), typeof(string) }, null)
+                .Invoke(null, new object[] { asset, path });
+        }
+
+        static T LoadAsset<T>(Type assetDatabase, string path) where T : UnityEngine.Object
+        {
+            MethodInfo load = null;
+            foreach (MethodInfo method in assetDatabase.GetMethods(
+                BindingFlags.Static | BindingFlags.Public))
+            {
+                if (method.Name != "LoadAssetAtPath"
+                    || !method.IsGenericMethodDefinition
+                    || method.GetParameters().Length != 1)
+                    continue;
+
+                load = method.MakeGenericMethod(typeof(T));
+                break;
+            }
+
+            return load?.Invoke(null, new object[] { path }) as T;
+        }
+#endif
+    }
+
     internal sealed class StaggerPhysicalRig : IDisposable
     {
         readonly GameObject puppetRoot;
@@ -952,6 +1346,9 @@ namespace Hairibar.Ragdoll.Animation.Tests
         internal Rigidbody RightFootBody { get; }
         internal ConfigurableJoint LeftFootJoint { get; }
         internal ConfigurableJoint RightFootJoint { get; }
+        internal Rigidbody GroundBody { get; private set; }
+        internal Vector3 SupportUp { get; }
+        internal Vector3 GroundNormal { get; }
         internal Collider GroundCollider => ground
             ? ground.GetComponent<Collider>()
             : null;
@@ -960,8 +1357,22 @@ namespace Hairibar.Ragdoll.Animation.Tests
         internal Transform RightTarget { get; }
 
         internal StaggerPhysicalRig(float footOffsetX, float footCenterX = 0f,
-            RuntimeAnimatorController stepController = null, bool freezeBodies = true)
+            RuntimeAnimatorController stepController = null, bool freezeBodies = true,
+            float rootMassScale = 1f, float footMassScale = 1f,
+            float inertiaScale = 1f, Vector3 gravityUp = default(Vector3),
+            Vector3 groundNormal = default(Vector3), bool movingGround = false,
+            bool allowFootRotation = false)
         {
+            Assert.That(rootMassScale, Is.GreaterThan(0f));
+            Assert.That(footMassScale, Is.GreaterThan(0f));
+            Assert.That(inertiaScale, Is.GreaterThan(0f));
+            Assert.That(float.IsNaN(rootMassScale) || float.IsInfinity(rootMassScale), Is.False);
+            Assert.That(float.IsNaN(footMassScale) || float.IsInfinity(footMassScale), Is.False);
+            Assert.That(float.IsNaN(inertiaScale) || float.IsInfinity(inertiaScale), Is.False);
+            SupportUp = ResolveDirection(gravityUp, Vector3.up);
+            GroundNormal = ResolveDirection(groundNormal, SupportUp);
+            Quaternion supportRotation = Quaternion.FromToRotation(
+                Vector3.up, SupportUp);
             ignoredBefore = Physics.GetIgnoreLayerCollision(28, 29);
             BoneName rootName = new BoneName("Root");
             BoneName leftFootName = new BoneName("foot_l");
@@ -969,6 +1380,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
 
             puppetRoot = new GameObject("Stagger Puppet");
             puppetRoot.SetActive(false);
+            puppetRoot.transform.rotation = supportRotation;
             GameObject leftFoot = new GameObject("foot_l");
             leftFoot.transform.SetParent(puppetRoot.transform, false);
             leftFoot.transform.localPosition = new Vector3(footCenterX - footOffsetX, -1f, 0f);
@@ -981,15 +1393,19 @@ namespace Hairibar.Ragdoll.Animation.Tests
             RootBody.constraints = freezeBodies
                 ? RigidbodyConstraints.FreezeAll
                 : RigidbodyConstraints.FreezePosition | RigidbodyConstraints.FreezeRotation;
-            RootBody.mass = 2f;
             ConfigurableJoint rootJoint = puppetRoot.AddComponent<ConfigurableJoint>();
             BoxCollider rootCollider = puppetRoot.AddComponent<BoxCollider>();
             rootCollider.size = Vector3.one * 0.75f;
+            ApplyMassAndInertia(RootBody, 2f * rootMassScale, inertiaScale);
 
-            ConfigurableJoint leftJoint = ConfigureFoot(leftFoot, RootBody, freezeBodies);
+            ConfigurableJoint leftJoint = ConfigureFoot(
+                leftFoot, RootBody, freezeBodies, footMassScale, inertiaScale,
+                allowFootRotation);
             LeftFootJoint = leftJoint;
             LeftFootBody = leftFoot.GetComponent<Rigidbody>();
-            ConfigurableJoint rightJoint = ConfigureFoot(rightFoot, RootBody, freezeBodies);
+            ConfigurableJoint rightJoint = ConfigureFoot(
+                rightFoot, RootBody, freezeBodies, footMassScale, inertiaScale,
+                allowFootRotation);
             RightFootJoint = rightJoint;
             RightFootBody = rightFoot.GetComponent<Rigidbody>();
 
@@ -1009,6 +1425,7 @@ namespace Hairibar.Ragdoll.Animation.Tests
             Assert.That(bindings.IsInitialized, Is.True);
 
             GameObject target = new GameObject("Stagger Puppet");
+            target.transform.rotation = supportRotation;
             TargetAnimator = target.AddComponent<Animator>();
             TargetAnimator.runtimeAnimatorController = stepController;
             GameObject leftTarget = new GameObject("foot_l");
@@ -1036,21 +1453,43 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 RightFootBody.useGravity = true;
                 ground = GameObject.CreatePrimitive(PrimitiveType.Cube);
                 ground.name = "Stagger Test Ground";
-                ground.transform.position = new Vector3(0f, -1.15f, 0f);
+                ground.transform.position = -SupportUp * 1.15f;
+                ground.transform.rotation = Quaternion.FromToRotation(
+                    Vector3.up, GroundNormal);
                 ground.transform.localScale = new Vector3(10f, 0.1f, 10f);
                 ground.layer = 0;
+                Collider groundCollider = ground.GetComponent<Collider>();
+                leftFoot.GetComponent<GroundContactProbe>().ExpectedGround = groundCollider;
+                rightFoot.GetComponent<GroundContactProbe>().ExpectedGround = groundCollider;
+                if (movingGround)
+                {
+                    GroundBody = ground.AddComponent<Rigidbody>();
+                    GroundBody.isKinematic = true;
+                    GroundBody.useGravity = false;
+                    GroundBody.constraints = RigidbodyConstraints.FreezeAll;
+                }
             }
 
             Stagger = Result.PuppetBehaviour.gameObject
                 .AddComponent<RagdollBipedStaggerBehaviour>();
         }
 
-        static ConfigurableJoint ConfigureFoot(GameObject foot, Rigidbody root, bool freeze)
+        static ConfigurableJoint ConfigureFoot(
+            GameObject foot,
+            Rigidbody root,
+            bool freeze,
+            float massScale,
+            float inertiaScale,
+            bool allowRotation)
         {
             Rigidbody body = foot.AddComponent<Rigidbody>();
             body.useGravity = false;
-            body.constraints = freeze ? RigidbodyConstraints.FreezeAll : RigidbodyConstraints.FreezeRotation;
-            body.mass = 0.5f;
+            body.constraints = freeze
+                ? RigidbodyConstraints.FreezeAll
+                : allowRotation
+                    ? RigidbodyConstraints.None
+                    : RigidbodyConstraints.FreezeRotation;
+            foot.AddComponent<GroundContactProbe>();
             ConfigurableJoint joint = foot.AddComponent<ConfigurableJoint>();
             joint.connectedBody = root;
             // Unity defines connectedAnchor relative to the connected
@@ -1067,10 +1506,34 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 joint.xMotion = ConfigurableJointMotion.Free;
                 joint.yMotion = ConfigurableJointMotion.Free;
                 joint.zMotion = ConfigurableJointMotion.Free;
+                if (allowRotation)
+                {
+                    joint.angularXMotion = ConfigurableJointMotion.Free;
+                    joint.angularYMotion = ConfigurableJointMotion.Free;
+                    joint.angularZMotion = ConfigurableJointMotion.Free;
+                }
             }
             BoxCollider collider = foot.AddComponent<BoxCollider>();
             collider.size = Vector3.one * 0.25f;
+            ApplyMassAndInertia(body, 0.5f * massScale, inertiaScale);
             return joint;
+        }
+
+        static void ApplyMassAndInertia(
+            Rigidbody body,
+            float mass,
+            float inertiaScale)
+        {
+            body.mass = mass;
+            body.inertiaTensor = body.inertiaTensor * inertiaScale;
+        }
+
+        internal void MoveGround(Vector3 delta)
+        {
+            if (!GroundBody)
+                throw new InvalidOperationException(
+                    "This StaggerPhysicalRig was not created with a moving ground.");
+            GroundBody.MovePosition(GroundBody.position + delta);
         }
 
         public void Dispose()
@@ -1079,9 +1542,24 @@ namespace Hairibar.Ragdoll.Animation.Tests
             if (Result != null && Result.Target)
                 UnityEngine.Object.DestroyImmediate(Result.Target.gameObject);
             if (ground) UnityEngine.Object.DestroyImmediate(ground);
+            GroundBody = null;
             if (puppetRoot) UnityEngine.Object.DestroyImmediate(puppetRoot);
             if (profile) UnityEngine.Object.DestroyImmediate(profile);
             if (definition) UnityEngine.Object.DestroyImmediate(definition);
+        }
+
+        static Vector3 ResolveDirection(Vector3 value, Vector3 fallback)
+        {
+            return IsFinite(value) && value.sqrMagnitude > Mathf.Epsilon
+                ? value.normalized
+                : fallback.normalized;
+        }
+
+        static bool IsFinite(Vector3 value)
+        {
+            return !float.IsNaN(value.x) && !float.IsInfinity(value.x)
+                && !float.IsNaN(value.y) && !float.IsInfinity(value.y)
+                && !float.IsNaN(value.z) && !float.IsInfinity(value.z);
         }
 
         static object CreateBindings(
@@ -1112,6 +1590,45 @@ namespace Hairibar.Ragdoll.Animation.Tests
                 BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.That(field, Is.Not.Null, name);
             field.SetValue(owner, value);
+        }
+    }
+
+    /// <summary>
+    /// Records an actual Unity collision with the fixture ground. This is
+    /// intentionally different from Physics.ComputePenetration: Unity's
+    /// documented API returns true only while colliders overlap, whereas a
+    /// contact can be valid at the solver's touching boundary without a
+    /// positive penetration depth.
+    /// </summary>
+    internal sealed class GroundContactProbe : MonoBehaviour
+    {
+        internal Collider ExpectedGround { get; set; }
+        internal bool IsGrounded { get; private set; }
+
+        void OnCollisionEnter(Collision collision)
+        {
+            UpdateContact(collision);
+        }
+
+        void OnCollisionStay(Collision collision)
+        {
+            UpdateContact(collision);
+        }
+
+        void OnCollisionExit(Collision collision)
+        {
+            if (collision.collider == ExpectedGround)
+                IsGrounded = false;
+        }
+
+        void UpdateContact(Collision collision)
+        {
+            if (ExpectedGround != null
+                && collision.collider == ExpectedGround
+                && collision.contactCount > 0)
+            {
+                IsGrounded = true;
+            }
         }
     }
 }

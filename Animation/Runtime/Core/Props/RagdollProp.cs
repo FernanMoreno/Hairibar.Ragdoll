@@ -171,7 +171,7 @@ namespace Hairibar.Ragdoll.Animation
         /// Rigidbody currently carrying the prop: the PropMuscle body while a pickup is
         /// prepared/committed, otherwise the live standalone body.
         /// </summary>
-        [RagdollCompatibilityApi("Props and IK", "http://www.root-motion.com/puppetmasterdox/html/page6.html")]
+        [RagdollCompatibilityApi("Props and IK", "https://root-motion.com/puppetmasterdox/html/page6.html")]
         public Rigidbody CurrentRigidbody
         {
             get
@@ -224,7 +224,7 @@ namespace Hairibar.Ragdoll.Animation
         }
 
         /// <summary>Enables the additional pin and resets its temporal solver state.</summary>
-        [RagdollCompatibilityApi("Props and IK", "http://www.root-motion.com/puppetmasterdox/html/page6.html")]
+        [RagdollCompatibilityApi("Props and IK", "https://root-motion.com/puppetmasterdox/html/page6.html")]
         public void AddAdditionalPin()
         {
             if (additionalPin == null)
@@ -238,7 +238,7 @@ namespace Hairibar.Ragdoll.Animation
         }
 
         /// <summary>Disables the additional pin and clears all accumulated solver state.</summary>
-        [RagdollCompatibilityApi("Props and IK", "http://www.root-motion.com/puppetmasterdox/html/page6.html")]
+        [RagdollCompatibilityApi("Props and IK", "https://root-motion.com/puppetmasterdox/html/page6.html")]
         public void RemoveAdditionalPin()
         {
             if (additionalPin == null)
