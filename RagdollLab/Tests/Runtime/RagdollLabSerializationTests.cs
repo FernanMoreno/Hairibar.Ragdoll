@@ -75,6 +75,35 @@ namespace Hairibar.Ragdoll.RagdollLab.Tests
         }
 
         [Test]
+        public void TuningProvenanceRoundTripsAndLegacyMetadataRemainsReadable()
+        {
+            var source = new RagdollLabMetadata
+            {
+                runId = "candidate-run",
+                tuningSessionId = "session",
+                experimentId = "experiment",
+                runRole = "candidate",
+                configurationFingerprint = "candidate-config",
+                baselineConfigurationFingerprint = "baseline-config",
+                treatmentParameter = "pin",
+                treatmentValueAvailable = true,
+                treatmentValue = 0.8f
+            };
+
+            RagdollLabMetadata roundTrip = JsonUtility.FromJson<RagdollLabMetadata>(JsonUtility.ToJson(source));
+            RagdollLabMetadata legacy = JsonUtility.FromJson<RagdollLabMetadata>(
+                "{\"schemaVersion\":\"1.5.0\",\"runId\":\"old\"}");
+
+            Assert.That(roundTrip.experimentId, Is.EqualTo("experiment"));
+            Assert.That(roundTrip.configurationFingerprint, Is.EqualTo("candidate-config"));
+            Assert.That(roundTrip.treatmentValue, Is.EqualTo(0.8f).Within(0.0001f));
+            Assert.That(legacy, Is.Not.Null);
+            Assert.That(legacy.runId, Is.EqualTo("old"));
+            Assert.That(legacy.experimentId, Is.Null);
+            Assert.That(legacy.runRole, Is.EqualTo("none"));
+        }
+
+        [Test]
         public void AnimatedPairTrackingRoundTripsDerivativesAndMappingState()
         {
             var source = new PhysicsFrame

@@ -22,6 +22,14 @@ namespace Hairibar.Ragdoll.RagdollLab
         [SerializeField] bool balancerEnabled;
         [SerializeField] string initialConditionFingerprint;
         [SerializeField] string pushDescriptor;
+        [SerializeField] string tuningSessionId;
+        [SerializeField] string experimentId;
+        [SerializeField] string tuningRunRole = "none";
+        [SerializeField] string configurationFingerprint;
+        [SerializeField] string baselineConfigurationFingerprint;
+        [SerializeField] string treatmentParameter;
+        [SerializeField] bool treatmentValueAvailable;
+        [SerializeField] float treatmentValue;
         [SerializeField] string outputDirectory = "RagdollLab/latest";
         [SerializeField] RagdollLabThresholds thresholds;
         [SerializeField] LayerMask groundLayers = ~0;
@@ -47,6 +55,7 @@ namespace Hairibar.Ragdoll.RagdollLab
         readonly HashSet<string> previousPairIds = new();
         readonly Collider[] penetrationBuffer = new Collider[128];
         string runId;
+        string requestedRunId;
         bool capturing;
         long physicsStep;
         int frameIndex;
@@ -152,9 +161,11 @@ namespace Hairibar.Ragdoll.RagdollLab
         public IReadOnlyList<PhysicsFrame> Frames => frames;
         public bool IsCapturing => capturing;
         public int MaxFrames => maxFrames;
-        public string OutputPath => Application.isEditor || Application.isBatchMode
-            ? Path.Combine(Directory.GetParent(Application.dataPath).FullName, outputDirectory)
-            : Path.Combine(Application.persistentDataPath, outputDirectory);
+        public string OutputPath => Path.IsPathRooted(outputDirectory)
+            ? outputDirectory
+            : Application.isEditor || Application.isBatchMode
+                ? Path.Combine(Directory.GetParent(Application.dataPath).FullName, outputDirectory)
+                : Path.Combine(Application.persistentDataPath, outputDirectory);
         public string ScenarioName { get => scenario; set => scenario = value; }
         public string OutputDirectory { get => outputDirectory; set => outputDirectory = string.IsNullOrWhiteSpace(value) ? "Artifacts/RagdollLab/latest" : value; }
         public int Seed { get => seed; set => seed = value; }
@@ -162,11 +173,25 @@ namespace Hairibar.Ragdoll.RagdollLab
         public bool BalancerEnabled { get => balancerEnabled; set => balancerEnabled = value; }
         public string InitialConditionFingerprint { get => initialConditionFingerprint; set => initialConditionFingerprint = value; }
         public string PushDescriptor { get => pushDescriptor; set => pushDescriptor = value; }
+        public string RunId => runId;
         public bool CaptureOnStart { get => captureOnStart; set => captureOnStart = value; }
         public void SetMaxFrames(int value) => maxFrames = Mathf.Max(1, value);
         public void ConfigureTracking(Transform root) { trackedRoot = root; CachePhysics(); }
         public void ConfigurePoseMapping(Animator animator, Transform renderRoot)
         { targetAnimator = animator; renderedRoot = renderRoot; }
+        public void ConfigureTuningRun(RagdollTuningRunBinding binding)
+        {
+            tuningSessionId = binding?.sessionId;
+            experimentId = binding?.experimentId;
+            tuningRunRole = string.IsNullOrWhiteSpace(binding?.runRole) ? "none" : binding.runRole;
+            configurationFingerprint = binding?.configurationFingerprint;
+            baselineConfigurationFingerprint = binding?.baselineConfigurationFingerprint;
+            treatmentParameter = binding?.treatmentParameter;
+            treatmentValueAvailable = binding != null && binding.treatmentValueAvailable;
+            treatmentValue = binding?.treatmentValue ?? 0f;
+            requestedRunId = binding?.runId;
+            if (!string.IsNullOrWhiteSpace(binding?.artifactDirectory)) outputDirectory = binding.artifactDirectory;
+        }
 
         void Awake()
         {
@@ -202,7 +227,10 @@ namespace Hairibar.Ragdoll.RagdollLab
             previousSelectedFootSupport = false;
             frameIndex = 0;
             physicsStep = 0;
-            runId = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss_fff");
+            runId = string.IsNullOrWhiteSpace(requestedRunId)
+                ? DateTime.UtcNow.ToString("yyyyMMdd_HHmmss_fff")
+                : requestedRunId;
+            requestedRunId = null;
             capturing = true;
             Debug.Log($"[RagdollLab] scenario start: {scenario} bodies={bodies.Count} joints={joints.Count}", this);
         }
@@ -1148,7 +1176,13 @@ namespace Hairibar.Ragdoll.RagdollLab
                 characterHeight = CalculateHeight(), totalMass = CalculateMass(), captureRoot = trackedRoot.name,
                 startedUtc = DateTime.UtcNow.ToString("O"), variant = variant,
                 balancerEnabled = balancerEnabled, initialConditionFingerprint = initialConditionFingerprint,
-                pushDescriptor = pushDescriptor };
+                pushDescriptor = pushDescriptor, tuningSessionId = tuningSessionId,
+                experimentId = experimentId, runRole = tuningRunRole,
+                configurationFingerprint = configurationFingerprint,
+                baselineConfigurationFingerprint = baselineConfigurationFingerprint,
+                treatmentParameter = treatmentParameter,
+                treatmentValueAvailable = treatmentValueAvailable,
+                treatmentValue = treatmentValue };
             var report = new EvaluationReport { metadata = metadata, frameCount = frames.Count,
                 bodyCount = bodies.Count, jointCount = joints.Count, completed = frames.Count > 0 };
             report.scenarioReport = RagdollLabAnalyzer.Analyze(frames, metadata.characterHeight, metadata.totalMass, metadata.gravityMagnitude, thresholds);
@@ -1167,6 +1201,25 @@ namespace Hairibar.Ragdoll.RagdollLab
             File.WriteAllText(Path.Combine(directory, "balance-comparison.json"), JsonUtility.ToJson(report.balanceComparison, true), Encoding.UTF8);
             File.WriteAllText(Path.Combine(directory, "diagnostics.json"), JsonUtility.ToJson(report.diagnostics, true), Encoding.UTF8);
             WriteSummary(directory, report, comparison);
+            if (!string.IsNullOrWhiteSpace(tuningSessionId))
+            {
+                var binding = new RagdollTuningRunBinding
+                {
+                    sessionId = tuningSessionId,
+                    experimentId = experimentId,
+                    runId = runId,
+                    runRole = tuningRunRole,
+                    artifactDirectory = directory,
+                    configurationFingerprint = configurationFingerprint,
+                    baselineConfigurationFingerprint = baselineConfigurationFingerprint,
+                    treatmentParameter = treatmentParameter,
+                    treatmentValueAvailable = treatmentValueAvailable,
+                    treatmentValue = treatmentValue
+                };
+                var transport = new RagdollTuningFileArtifactTransport();
+                if (!transport.TryWriteManifest(directory, binding, report, out _, out string reason))
+                    Debug.LogError("[RagdollLab] tuning artifact manifest failed: " + reason, this);
+            }
         }
 
         void WriteSummary(string directory, EvaluationReport report, ComparisonReport comparison)

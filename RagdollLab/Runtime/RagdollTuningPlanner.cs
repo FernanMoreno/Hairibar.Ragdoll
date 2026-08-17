@@ -22,6 +22,128 @@ namespace Hairibar.Ragdoll.RagdollLab
     }
 
     [Serializable]
+    public sealed class RagdollTuningParameterDescriptor
+    {
+        public string name;
+        public string owner;
+        public string units;
+        public float minimum;
+        public float maximum = 1f;
+        public float safeDelta = 1f;
+        public float step = 0.01f;
+        public string scale = "linear";
+        public string[] scenarios = Array.Empty<string>();
+        public bool runtimeWritable = true;
+        public bool requiresRestart;
+
+        public bool AllowsScenario(string scenarioProfile)
+        {
+            if (scenarios == null || scenarios.Length == 0) return true;
+            for (int i = 0; i < scenarios.Length; i++)
+                if (string.Equals(scenarios[i], scenarioProfile, StringComparison.Ordinal)) return true;
+            return false;
+        }
+    }
+
+    [Serializable]
+    public sealed class RagdollTuningParameterRegistry
+    {
+        public List<RagdollTuningParameterDescriptor> parameters = new();
+
+        public RagdollTuningParameterRegistry() { }
+
+        public RagdollTuningParameterRegistry(IList<RagdollTuningParameterDescriptor> descriptors)
+        {
+            if (descriptors != null)
+                for (int i = 0; i < descriptors.Count; i++) parameters.Add(descriptors[i]);
+        }
+
+        public RagdollTuningParameterDescriptor Find(string name)
+        {
+            if (parameters == null) return null;
+            for (int i = 0; i < parameters.Count; i++)
+                if (parameters[i] != null && string.Equals(parameters[i].name, name, StringComparison.Ordinal)) return parameters[i];
+            return null;
+        }
+
+        public string ValidateBaseline(string scenarioProfile, string name, float value)
+        {
+            RagdollTuningParameterDescriptor descriptor = Find(name);
+            if (descriptor == null) return "parameter_not_registered";
+            if (!IsFinite(value)) return "baseline_value_non_finite";
+            if (!DescriptorIsValid(descriptor)) return "parameter_descriptor_invalid";
+            if (!descriptor.AllowsScenario(scenarioProfile)) return "parameter_scenario_not_allowed";
+            if (value < descriptor.minimum || value > descriptor.maximum) return "baseline_value_out_of_range";
+            if (!OnStep(descriptor, value)) return "baseline_value_off_step";
+            return null;
+        }
+
+        public string ValidateCandidate(string scenarioProfile, string name, float baselineValue, float candidateValue)
+        {
+            RagdollTuningParameterDescriptor descriptor = Find(name);
+            if (descriptor == null) return "parameter_not_registered";
+            if (!descriptor.runtimeWritable) return "parameter_not_runtime_writable";
+            if (descriptor.requiresRestart) return "parameter_requires_restart";
+            if (!IsFinite(baselineValue) || !IsFinite(candidateValue)) return "candidate_value_non_finite";
+            if (!DescriptorIsValid(descriptor)) return "parameter_descriptor_invalid";
+            if (!descriptor.AllowsScenario(scenarioProfile)) return "parameter_scenario_not_allowed";
+            if (candidateValue < descriptor.minimum || candidateValue > descriptor.maximum) return "candidate_value_out_of_range";
+            if (!OnStep(descriptor, candidateValue)) return "candidate_value_off_step";
+            if (Mathf.Abs(candidateValue - baselineValue) > descriptor.safeDelta + 0.000001f)
+                return "candidate_delta_exceeds_safe_limit";
+            return null;
+        }
+
+        static bool DescriptorIsValid(RagdollTuningParameterDescriptor descriptor)
+        {
+            return !string.IsNullOrWhiteSpace(descriptor.name)
+                && IsFinite(descriptor.minimum) && IsFinite(descriptor.maximum)
+                && IsFinite(descriptor.safeDelta) && IsFinite(descriptor.step)
+                && descriptor.minimum <= descriptor.maximum
+                && descriptor.safeDelta > 0f && descriptor.step > 0f;
+        }
+
+        static bool OnStep(RagdollTuningParameterDescriptor descriptor, float value)
+        {
+            float index = (value - descriptor.minimum) / descriptor.step;
+            return Mathf.Abs(index - Mathf.Round(index)) <= 0.0001f;
+        }
+
+        static bool IsFinite(float value)
+        {
+            return !float.IsNaN(value) && !float.IsInfinity(value);
+        }
+    }
+
+    public interface IRagdollTuningParameterStore
+    {
+        bool TryRead(string name, out float value);
+        bool TryWrite(string name, float value);
+    }
+
+    public interface IRagdollTuningScenarioRunner
+    {
+        EvaluationReport Run(RagdollTuningRunBinding binding);
+    }
+
+    [Serializable]
+    public sealed class RagdollTuningExecutionResult
+    {
+        public bool valid;
+        public bool persistedPair;
+        public bool restored;
+        public bool promoted;
+        public string reason = "unavailable";
+        public RagdollTuningDecision decision;
+        public RagdollTuningDecision promotionDecision;
+        public EvaluationReport baselineReport;
+        public EvaluationReport candidateReport;
+        public RagdollTuningArtifactManifest baselineArtifact;
+        public RagdollTuningArtifactManifest candidateArtifact;
+        public BalanceComparisonReport comparison;
+    }
+
+    [Serializable]
     public sealed class RagdollTuningDecision
     {
         public string decision = "invalid";
@@ -38,13 +160,17 @@ namespace Hairibar.Ragdoll.RagdollLab
     [Serializable]
     public sealed class RagdollTuningExperiment
     {
+        public string tuningSessionId;
         public string experimentId;
         public string parameterName;
         public float baselineValue;
         public float candidateValue;
         public string baselineRunId;
         public string candidateRunId;
+        public string baselineConfigurationFingerprint;
+        public string candidateConfigurationFingerprint;
         public string scenarioProfile;
+        public bool promoted;
         public string state = "active";
         public string decision = "pending";
         public string decisionStage = "unavailable";
@@ -58,9 +184,12 @@ namespace Hairibar.Ragdoll.RagdollLab
     [Serializable]
     public sealed class RagdollTuningSession
     {
+        public string schemaVersion = RagdollTuningArtifactSchema.SessionVersion;
         public string sessionId;
         public string scenarioProfile;
+        public string artifactRoot;
         public string baselineFingerprint;
+        public string baselineRunId;
         public int maxExperiments;
         public int startedExperiments;
         public bool candidateActive;
@@ -69,6 +198,7 @@ namespace Hairibar.Ragdoll.RagdollLab
         public string lastReason = "unavailable";
         public List<RagdollTuningParameterValue> baseline = new();
         public List<RagdollTuningExperiment> experiments = new();
+        public RagdollTuningParameterRegistry parameterRegistry;
     }
 
     /// <summary>
@@ -84,7 +214,9 @@ namespace Hairibar.Ragdoll.RagdollLab
             string sessionId,
             string scenarioProfile,
             IList<RagdollTuningParameterValue> baseline,
-            int maxExperiments)
+            int maxExperiments,
+            RagdollTuningParameterRegistry parameterRegistry = null,
+            string artifactRoot = null)
         {
             RequireText(sessionId, "sessionId");
             RequireText(scenarioProfile, "scenarioProfile");
@@ -103,6 +235,12 @@ namespace Hairibar.Ragdoll.RagdollLab
                     throw new ArgumentException("baseline parameter values must be finite", "baseline");
                 if (Find(copied, value.name) != null)
                     throw new ArgumentException("baseline parameter names must be unique: " + value.name, "baseline");
+                if (parameterRegistry != null)
+                {
+                    string registryReason = parameterRegistry.ValidateBaseline(scenarioProfile, value.name, value.value);
+                    if (registryReason != null)
+                        throw new ArgumentException(registryReason + ": " + value.name, "baseline");
+                }
                 copied.Add(new RagdollTuningParameterValue(value.name, value.value));
             }
 
@@ -111,9 +249,11 @@ namespace Hairibar.Ragdoll.RagdollLab
             {
                 sessionId = sessionId,
                 scenarioProfile = scenarioProfile,
+                artifactRoot = artifactRoot,
                 baseline = copied,
                 baselineFingerprint = Fingerprint(copied),
                 maxExperiments = maxExperiments,
+                parameterRegistry = parameterRegistry,
                 lastReason = "baseline_captured"
             };
         }
@@ -191,14 +331,26 @@ namespace Hairibar.Ragdoll.RagdollLab
             if (changedCount != 1)
                 return Invalid(session, changedCount == 0 ? "candidate_value_unchanged" : "multiple_parameters_changed", experimentId);
 
+            if (session.parameterRegistry != null)
+            {
+                string registryReason = session.parameterRegistry.ValidateCandidate(
+                    session.scenarioProfile, changed.name, Find(session.baseline, changed.name).value, changed.value);
+                if (registryReason != null) return Invalid(session, registryReason, experimentId);
+            }
+
+            candidateByName.Sort((left, right) => string.CompareOrdinal(left.name, right.name));
+
             var experiment = new RagdollTuningExperiment
             {
+                tuningSessionId = session.sessionId,
                 experimentId = experimentId,
                 parameterName = changed.name,
                 baselineValue = Find(session.baseline, changed.name).value,
                 candidateValue = changed.value,
                 baselineRunId = baselineRunId,
                 candidateRunId = candidateRunId,
+                baselineConfigurationFingerprint = session.baselineFingerprint,
+                candidateConfigurationFingerprint = Fingerprint(candidateByName),
                 scenarioProfile = session.scenarioProfile
             };
             if (session.experiments == null)
@@ -261,6 +413,44 @@ namespace Hairibar.Ragdoll.RagdollLab
             return Evaluate(session, experiment, comparison);
         }
 
+        public static RagdollTuningDecision PromoteAcceptedCandidate(
+            RagdollTuningSession session,
+            RagdollTuningExperiment experiment)
+        {
+            if (session == null || experiment == null)
+                return Invalid(session, "experiment_missing", experiment?.experimentId);
+            if (!Contains(session, experiment))
+                return Invalid(session, "experiment_not_in_session", experiment.experimentId);
+            if (string.Equals(experiment.state, "promoted", StringComparison.Ordinal))
+                return ExistingDecision(session, experiment);
+            if (!string.Equals(experiment.state, "accepted", StringComparison.Ordinal)
+                || !experiment.promotionEligible
+                || !session.candidateActive
+                || !string.Equals(session.activeExperimentId, experiment.experimentId, StringComparison.Ordinal))
+                return Invalid(session, "candidate_not_promotion_eligible", experiment.experimentId);
+
+            RagdollTuningParameterValue baseline = Find(session.baseline, experiment.parameterName);
+            if (baseline == null)
+                return Invalid(session, "baseline_parameter_missing", experiment.experimentId);
+            baseline.value = experiment.candidateValue;
+            session.baseline.Sort((left, right) => string.CompareOrdinal(left.name, right.name));
+            session.baselineFingerprint = Fingerprint(session.baseline);
+            session.baselineRunId = experiment.candidateRunId;
+            experiment.state = "promoted";
+            experiment.decision = "promoted";
+            experiment.decisionStage = "promotion";
+            experiment.decisionReason = "accepted_candidate_promoted";
+            experiment.promotionEligible = false;
+            experiment.rollbackRequired = false;
+            experiment.candidateActive = false;
+            experiment.promoted = true;
+            session.candidateActive = false;
+            session.activeExperimentId = null;
+            session.lastDecision = experiment.decision;
+            session.lastReason = experiment.decisionReason;
+            return Decision(experiment, experiment.decision, experiment.decisionStage, experiment.decisionReason, true, false, false);
+        }
+
         public static RagdollTuningDecision Rollback(
             RagdollTuningSession session,
             RagdollTuningExperiment experiment,
@@ -271,6 +461,8 @@ namespace Hairibar.Ragdoll.RagdollLab
             if (!Contains(session, experiment))
                 return Invalid(session, "experiment_not_in_session", experiment.experimentId);
             if (string.Equals(experiment.state, "rolled_back", StringComparison.Ordinal))
+                return ExistingDecision(session, experiment);
+            if (string.Equals(experiment.state, "promoted", StringComparison.Ordinal))
                 return ExistingDecision(session, experiment);
 
             string rollbackReason = string.IsNullOrWhiteSpace(reason) ? "operator_requested_rollback" : reason;
@@ -295,6 +487,16 @@ namespace Hairibar.Ragdoll.RagdollLab
             return comparison != null
                 && comparison.profileAvailable
                 && comparison.setupMatched
+                && comparison.provenanceAvailable
+                && string.Equals(comparison.tuningSessionId, experiment.tuningSessionId, StringComparison.Ordinal)
+                && string.Equals(comparison.experimentId, experiment.experimentId, StringComparison.Ordinal)
+                && string.Equals(comparison.baselineRunId, experiment.baselineRunId, StringComparison.Ordinal)
+                && string.Equals(comparison.candidateRunId, experiment.candidateRunId, StringComparison.Ordinal)
+                && string.Equals(comparison.baselineConfigurationFingerprint, experiment.baselineConfigurationFingerprint, StringComparison.Ordinal)
+                && string.Equals(comparison.candidateConfigurationFingerprint, experiment.candidateConfigurationFingerprint, StringComparison.Ordinal)
+                && string.Equals(comparison.treatmentParameter, experiment.parameterName, StringComparison.Ordinal)
+                && comparison.treatmentValueAvailable
+                && Approximately(comparison.treatmentValue, experiment.candidateValue)
                 && string.Equals(session.scenarioProfile, experiment.scenarioProfile, StringComparison.Ordinal)
                 && string.Equals(session.scenarioProfile, comparison.scenarioProfile, StringComparison.Ordinal)
                 && (string.Equals(comparison.decision, "accept", StringComparison.Ordinal)
@@ -310,6 +512,15 @@ namespace Hairibar.Ragdoll.RagdollLab
             BalanceComparisonReport comparison)
         {
             if (comparison == null) return "comparison_missing";
+            if (!comparison.provenanceAvailable) return "comparison_provenance_missing";
+            if (!string.Equals(comparison.tuningSessionId, experiment.tuningSessionId, StringComparison.Ordinal)) return "tuning_session_id_mismatch";
+            if (!string.Equals(comparison.experimentId, experiment.experimentId, StringComparison.Ordinal)) return "experiment_id_mismatch";
+            if (!string.Equals(comparison.baselineRunId, experiment.baselineRunId, StringComparison.Ordinal)) return "baseline_run_id_mismatch";
+            if (!string.Equals(comparison.candidateRunId, experiment.candidateRunId, StringComparison.Ordinal)) return "candidate_run_id_mismatch";
+            if (!string.Equals(comparison.baselineConfigurationFingerprint, experiment.baselineConfigurationFingerprint, StringComparison.Ordinal)) return "baseline_configuration_fingerprint_mismatch";
+            if (!string.Equals(comparison.candidateConfigurationFingerprint, experiment.candidateConfigurationFingerprint, StringComparison.Ordinal)) return "candidate_configuration_fingerprint_mismatch";
+            if (!string.Equals(comparison.treatmentParameter, experiment.parameterName, StringComparison.Ordinal)) return "treatment_parameter_mismatch";
+            if (!comparison.treatmentValueAvailable || !Approximately(comparison.treatmentValue, experiment.candidateValue)) return "treatment_value_mismatch";
             if (!comparison.profileAvailable) return "comparison_profile_unavailable";
             if (!comparison.setupMatched) return "paired_setup_mismatch";
             if (!string.Equals(session.scenarioProfile, comparison.scenarioProfile, StringComparison.Ordinal)) return "scenario_profile_mismatch";
@@ -421,15 +632,28 @@ namespace Hairibar.Ragdoll.RagdollLab
             return true;
         }
 
-        static string Fingerprint(IList<RagdollTuningParameterValue> values)
+        static bool Approximately(float left, float right)
         {
+            return IsFinite(left) && IsFinite(right) && Mathf.Abs(left - right) <= 0.000001f;
+        }
+
+        public static string ConfigurationFingerprint(IList<RagdollTuningParameterValue> values)
+        {
+            if (values == null) return string.Empty;
+            var sorted = CopyParameters(values);
+            sorted.Sort((left, right) => string.CompareOrdinal(left?.name, right?.name));
             var builder = new StringBuilder();
-            for (int i = 0; i < values.Count; i++)
+            for (int i = 0; i < sorted.Count; i++)
             {
                 if (i > 0) builder.Append('|');
-                builder.Append(values[i].name).Append('=').Append(values[i].value.ToString("R", CultureInfo.InvariantCulture));
+                builder.Append(sorted[i]?.name).Append('=').Append(sorted[i]?.value.ToString("R", CultureInfo.InvariantCulture));
             }
             return builder.ToString();
+        }
+
+        static string Fingerprint(IList<RagdollTuningParameterValue> values)
+        {
+            return ConfigurationFingerprint(values);
         }
 
         static void RequireText(string value, string parameterName)
@@ -441,6 +665,292 @@ namespace Hairibar.Ragdoll.RagdollLab
         static bool IsFinite(float value)
         {
             return !float.IsNaN(value) && !float.IsInfinity(value);
+        }
+    }
+
+    /// <summary>
+    /// Applies one registered candidate through injected adapters, then restores
+    /// or explicitly promotes it. It owns orchestration, not project settings.
+    /// </summary>
+    public static class RagdollTuningExecutor
+    {
+        /// <summary>
+        /// Evaluates an already completed baseline/candidate pair through the
+        /// same artifact transport and planner used by live execution. This is
+        /// the asynchronous Unity hand-off: it does not apply parameters,
+        /// start PlayMode or promote a candidate.
+        /// </summary>
+        public static RagdollTuningExecutionResult EvaluatePersistedPair(
+            RagdollTuningSession session,
+            RagdollTuningExperiment experiment,
+            IRagdollTuningArtifactTransport artifactTransport,
+            RagdollLabThresholds thresholds = null)
+        {
+            var result = new RagdollTuningExecutionResult { persistedPair = true };
+            if (session == null || experiment == null)
+                return Failure(result, "experiment_missing");
+            if (session.experiments == null || !session.experiments.Contains(experiment))
+                return Failure(result, "experiment_not_in_session");
+            if (!string.Equals(experiment.state, "active", StringComparison.Ordinal))
+                return Failure(result, "experiment_not_active");
+            if (artifactTransport == null)
+                return FailPersistedPair(result, session, experiment, "artifact_transport_missing");
+
+            RagdollTuningRunBinding baselineBinding = Binding(session, experiment, "baseline");
+            if (!TryReadArtifact(artifactTransport, baselineBinding, null,
+                out result.baselineReport, out result.baselineArtifact, out string reason))
+                return FailPersistedPair(result, session, experiment, reason);
+
+            RagdollTuningRunBinding candidateBinding = Binding(session, experiment, "candidate");
+            if (!TryReadArtifact(artifactTransport, candidateBinding, null,
+                out result.candidateReport, out result.candidateArtifact, out reason))
+                return FailPersistedPair(result, session, experiment, reason);
+
+            result.decision = RagdollTuningPlanner.Evaluate(
+                session, experiment, result.baselineReport, result.candidateReport, thresholds);
+            result.comparison = experiment.comparison;
+            result.valid = result.decision != null && result.decision.valid;
+            result.reason = result.decision?.reason ?? "decision_missing";
+            return result;
+        }
+
+        public static RagdollTuningExecutionResult Execute(
+            RagdollTuningSession session,
+            RagdollTuningExperiment experiment,
+            IRagdollTuningParameterStore parameterStore,
+            IRagdollTuningScenarioRunner scenarioRunner,
+            bool promoteAcceptedCandidate = true,
+            RagdollLabThresholds thresholds = null,
+            IRagdollTuningArtifactTransport artifactTransport = null)
+        {
+            var result = new RagdollTuningExecutionResult();
+            if (session == null || experiment == null)
+                return Failure(result, "experiment_missing");
+            if (session.experiments == null || !session.experiments.Contains(experiment))
+                return Failure(result, "experiment_not_in_session");
+            if (!string.Equals(experiment.state, "active", StringComparison.Ordinal))
+                return Failure(result, "experiment_not_active");
+            if (parameterStore == null) return FailAndRollback(result, session, experiment, "parameter_store_missing");
+            if (scenarioRunner == null) return FailAndRollback(result, session, experiment, "scenario_runner_missing");
+            if (session.parameterRegistry == null) return FailAndRollback(result, session, experiment, "parameter_registry_missing");
+
+            string registryReason = session.parameterRegistry.ValidateCandidate(
+                session.scenarioProfile, experiment.parameterName, experiment.baselineValue, experiment.candidateValue);
+            if (registryReason != null) return FailAndRollback(result, session, experiment, registryReason);
+
+            string baselineStateReason = VerifyBaselineState(session, parameterStore);
+            if (baselineStateReason != null) return FailAndRollback(result, session, experiment, baselineStateReason);
+
+            bool writeAttempted = false;
+            try
+            {
+                RagdollTuningRunBinding baselineBinding = Binding(session, experiment, "baseline");
+                result.baselineReport = scenarioRunner.Run(baselineBinding);
+                string reportReason = MetadataMismatch(result.baselineReport?.metadata, baselineBinding);
+                if (reportReason != null) return FailAndRollback(result, session, experiment, reportReason);
+                if (!TryReadArtifact(artifactTransport, baselineBinding, result.baselineReport,
+                    out result.baselineReport, out result.baselineArtifact, out reportReason))
+                    return FailAndRollback(result, session, experiment, reportReason);
+
+                writeAttempted = true;
+                if (!parameterStore.TryWrite(experiment.parameterName, experiment.candidateValue))
+                    return FailAndRestore(result, session, experiment, parameterStore, writeAttempted, "candidate_apply_failed");
+                if (!parameterStore.TryRead(experiment.parameterName, out float appliedValue)
+                    || !Approximately(appliedValue, experiment.candidateValue))
+                    return FailAndRestore(result, session, experiment, parameterStore, writeAttempted, "candidate_readback_mismatch");
+
+                RagdollTuningRunBinding candidateBinding = Binding(session, experiment, "candidate");
+                result.candidateReport = scenarioRunner.Run(candidateBinding);
+                reportReason = MetadataMismatch(result.candidateReport?.metadata, candidateBinding);
+                if (reportReason != null)
+                    return FailAndRestore(result, session, experiment, parameterStore, writeAttempted, reportReason);
+                if (!TryReadArtifact(artifactTransport, candidateBinding, result.candidateReport,
+                    out result.candidateReport, out result.candidateArtifact, out reportReason))
+                    return FailAndRestore(result, session, experiment, parameterStore, writeAttempted, reportReason);
+
+                result.decision = RagdollTuningPlanner.Evaluate(
+                    session, experiment, result.baselineReport, result.candidateReport, thresholds);
+                result.comparison = experiment.comparison;
+                if (string.Equals(result.decision.decision, "accepted", StringComparison.Ordinal)
+                    && promoteAcceptedCandidate)
+                {
+                    result.promotionDecision = RagdollTuningPlanner.PromoteAcceptedCandidate(session, experiment);
+                    if (!string.Equals(result.promotionDecision.decision, "promoted", StringComparison.Ordinal))
+                        return FailAndRestore(result, session, experiment, parameterStore, writeAttempted, "promotion_failed");
+                    result.valid = true;
+                    result.promoted = true;
+                    result.reason = "accepted_candidate_promoted";
+                    return result;
+                }
+
+                bool restored = Restore(parameterStore, experiment.parameterName, experiment.baselineValue);
+                result.restored = restored;
+                result.valid = result.decision != null && !string.Equals(result.decision.decision, "invalid", StringComparison.Ordinal);
+                result.reason = result.decision?.reason ?? "decision_missing";
+                if (!restored)
+                {
+                    result.valid = false;
+                    result.reason = "restore_failed";
+                }
+                return result;
+            }
+            catch (Exception exception)
+            {
+                return FailAndRestore(result, session, experiment, parameterStore, writeAttempted,
+                    "scenario_execution_failed:" + exception.GetType().Name);
+            }
+        }
+
+        static RagdollTuningExecutionResult FailAndRollback(
+            RagdollTuningExecutionResult result,
+            RagdollTuningSession session,
+            RagdollTuningExperiment experiment,
+            string reason)
+        {
+            result.decision = RagdollTuningPlanner.Rollback(session, experiment, reason);
+            result.valid = false;
+            result.reason = reason;
+            return result;
+        }
+
+        static RagdollTuningExecutionResult FailAndRestore(
+            RagdollTuningExecutionResult result,
+            RagdollTuningSession session,
+            RagdollTuningExperiment experiment,
+            IRagdollTuningParameterStore parameterStore,
+            bool restoreRequired,
+            string reason)
+        {
+            result.decision = RagdollTuningPlanner.Rollback(session, experiment, reason);
+            result.valid = false;
+            result.reason = reason;
+            if (restoreRequired)
+            {
+                result.restored = Restore(parameterStore, experiment.parameterName, experiment.baselineValue);
+                if (!result.restored) result.reason = "restore_failed";
+            }
+            return result;
+        }
+
+        static RagdollTuningExecutionResult Failure(RagdollTuningExecutionResult result, string reason)
+        {
+            result.valid = false;
+            result.reason = reason;
+            return result;
+        }
+
+        static RagdollTuningExecutionResult FailPersistedPair(
+            RagdollTuningExecutionResult result,
+            RagdollTuningSession session,
+            RagdollTuningExperiment experiment,
+            string reason)
+        {
+            result.decision = RagdollTuningPlanner.Rollback(session, experiment,
+                string.IsNullOrWhiteSpace(reason) ? "persisted_pair_invalid" : reason);
+            result.valid = false;
+            result.reason = reason;
+            return result;
+        }
+
+        static string VerifyBaselineState(RagdollTuningSession session, IRagdollTuningParameterStore parameterStore)
+        {
+            if (session.baseline == null) return "baseline_missing";
+            for (int i = 0; i < session.baseline.Count; i++)
+            {
+                RagdollTuningParameterValue expected = session.baseline[i];
+                if (expected == null || !parameterStore.TryRead(expected.name, out float actual))
+                    return "baseline_parameter_unavailable";
+                if (!Approximately(actual, expected.value)) return "baseline_configuration_mismatch";
+            }
+            return null;
+        }
+
+        static RagdollTuningRunBinding Binding(
+            RagdollTuningSession session,
+            RagdollTuningExperiment experiment,
+            string role)
+        {
+            bool candidate = string.Equals(role, "candidate", StringComparison.Ordinal);
+            return new RagdollTuningRunBinding
+            {
+                sessionId = session.sessionId,
+                experimentId = experiment.experimentId,
+                runId = candidate ? experiment.candidateRunId : experiment.baselineRunId,
+                runRole = role,
+                configurationFingerprint = candidate
+                    ? experiment.candidateConfigurationFingerprint
+                    : experiment.baselineConfigurationFingerprint,
+                artifactDirectory = RagdollTuningFileArtifactTransport.RunDirectory(
+                    session.artifactRoot, candidate ? experiment.candidateRunId : experiment.baselineRunId),
+                baselineConfigurationFingerprint = experiment.baselineConfigurationFingerprint,
+                treatmentParameter = experiment.parameterName,
+                treatmentValueAvailable = true,
+                treatmentValue = candidate ? experiment.candidateValue : experiment.baselineValue
+            };
+        }
+
+        static string MetadataMismatch(RagdollLabMetadata metadata, RagdollTuningRunBinding binding)
+        {
+            if (metadata == null) return "report_metadata_missing";
+            if (!string.Equals(metadata.tuningSessionId, binding.sessionId, StringComparison.Ordinal)) return "tuning_session_id_mismatch";
+            if (!string.Equals(metadata.experimentId, binding.experimentId, StringComparison.Ordinal)) return "experiment_id_mismatch";
+            if (!string.Equals(metadata.runId, binding.runId, StringComparison.Ordinal)) return "run_id_mismatch";
+            if (!string.Equals(metadata.runRole, binding.runRole, StringComparison.Ordinal)) return "run_role_mismatch";
+            if (!string.Equals(metadata.configurationFingerprint, binding.configurationFingerprint, StringComparison.Ordinal))
+                return binding.runRole == "candidate" ? "candidate_configuration_fingerprint_mismatch" : "baseline_configuration_fingerprint_mismatch";
+            if (!string.Equals(metadata.baselineConfigurationFingerprint, binding.baselineConfigurationFingerprint, StringComparison.Ordinal))
+                return "baseline_configuration_fingerprint_mismatch";
+            if (!string.Equals(metadata.treatmentParameter, binding.treatmentParameter, StringComparison.Ordinal)) return "treatment_parameter_mismatch";
+            if (!metadata.treatmentValueAvailable || !Approximately(metadata.treatmentValue, binding.treatmentValue)) return "treatment_value_mismatch";
+            return null;
+        }
+
+        static bool Restore(IRagdollTuningParameterStore parameterStore, string name, float value)
+        {
+            if (parameterStore == null || !parameterStore.TryWrite(name, value)) return false;
+            return parameterStore.TryRead(name, out float restored) && Approximately(restored, value);
+        }
+
+        static bool Approximately(float left, float right)
+        {
+            return !float.IsNaN(left) && !float.IsInfinity(left)
+                && !float.IsNaN(right) && !float.IsInfinity(right)
+                && Mathf.Abs(left - right) <= 0.000001f;
+        }
+
+        static bool TryReadArtifact(
+            IRagdollTuningArtifactTransport transport,
+            RagdollTuningRunBinding binding,
+            EvaluationReport runnerReport,
+            out EvaluationReport report,
+            out RagdollTuningArtifactManifest manifest,
+            out string reason)
+        {
+            report = runnerReport;
+            manifest = null;
+            reason = null;
+            if (transport == null) return true;
+            if (string.IsNullOrWhiteSpace(binding?.artifactDirectory))
+            {
+                reason = "artifact_directory_missing";
+                return false;
+            }
+            if (!transport.TryRead(binding.artifactDirectory, binding, out report, out manifest, out reason))
+                return false;
+            if (report == null)
+            {
+                reason = "artifact_report_missing";
+                return false;
+            }
+            string metadataReason = MetadataMismatch(report.metadata, binding);
+            if (metadataReason != null)
+            {
+                reason = metadataReason;
+                report = null;
+                manifest = null;
+                return false;
+            }
+            return true;
         }
     }
 }

@@ -57,6 +57,7 @@ namespace Hairibar.Ragdoll.RagdollLab
             public TargetPoseTelemetry first;
             public readonly List<float> targetPhysicsDistances = new();
             public readonly List<float> targetPhysicsAngularErrors = new();
+            public readonly List<float> targetPhysicsVelocityErrors = new();
             public readonly List<float> targetLinearSpeeds = new();
             public readonly List<float> targetAngularSpeeds = new();
             public readonly List<float> physicsLinearSpeeds = new();
@@ -99,6 +100,9 @@ namespace Hairibar.Ragdoll.RagdollLab
                     AddFinite(targetLinearSpeeds, sample.targetLinearVelocity.ToVector3().magnitude);
                     AddFinite(targetAngularSpeeds, sample.targetAngularVelocity.ToVector3().magnitude);
                 }
+                if (sample.targetVelocityAvailable && sample.physicsVelocityAvailable)
+                    AddFinite(targetPhysicsVelocityErrors,
+                        (sample.targetLinearVelocity.ToVector3() - sample.physicsLinearVelocity.ToVector3()).magnitude);
                 if (sample.targetAccelerationAvailable)
                 {
                     AddFinite(targetLinearAccelerations, sample.targetLinearAcceleration.ToVector3().magnitude);
@@ -152,6 +156,7 @@ namespace Hairibar.Ragdoll.RagdollLab
                     sampleCount = sampleCount,
                     targetPhysicsDistance = Summary("TargetPhysicsDistance", "m", targetPhysicsDistances, 1f, "animated-pair target and physics transforms", "pair position tracking"),
                     targetPhysicsAngularError = Summary("TargetPhysicsAngularError", "deg", targetPhysicsAngularErrors, 1f, "animated-pair target and physics rotations", "pair rotation tracking"),
+                    targetPhysicsVelocityError = Summary("TargetPhysicsVelocityError", "m/s", targetPhysicsVelocityErrors, 1f, "animated-pair target and physics linear velocities", "pair velocity tracking"),
                     targetLinearSpeed = Summary("TargetLinearSpeed", "m/s", targetLinearSpeeds, 1f, "AnimatedPair target pose samples", "target motion whole"),
                     targetAngularSpeed = Summary("TargetAngularSpeed", "rad/s", targetAngularSpeeds, 1f, "AnimatedPair target pose samples", "target rotational motion"),
                     physicsLinearSpeed = Summary("PhysicsLinearSpeed", "m/s", physicsLinearSpeeds, 1f, "exact linked Rigidbody samples", "physics motion"),
@@ -192,7 +197,7 @@ namespace Hairibar.Ragdoll.RagdollLab
                 this.timeoutSeconds = Mathf.Max(0f, timeoutSeconds);
             }
 
-            public void Add(int frameIndex, PhysicsFrame frame)
+            public void Add(int frameIndex, PhysicsFrame frame, float currentContactDuration)
             {
                 StaggerFrameTelemetry stagger = frame.stagger;
                 BalanceFrameTelemetry balance = frame.balance;
@@ -216,7 +221,7 @@ namespace Hairibar.Ragdoll.RagdollLab
                     if (stagger.replantObserved && report.replantFrame < 0)
                     {
                         report.replantFrame = frameIndex;
-                        report.replantContactDuration = SelectedFootContactDuration(frame.feet, stagger.swingFoot);
+                        report.replantContactDuration = currentContactDuration;
                     }
                 }
                 if (balance != null && balance.hasSignedSupportMargin
@@ -241,17 +246,29 @@ namespace Hairibar.Ragdoll.RagdollLab
             {
                 report.phaseSamples = phases.ToArray();
                 if (report.unpinnedObserved) report.terminalOutcome = "Unpinned";
-                else if (report.replantFrame >= 0 && !string.Equals(report.finalPuppetState, "Unpinned", StringComparison.OrdinalIgnoreCase))
-                    report.terminalOutcome = "Recovered";
                 else if (phases.Contains("Failed")) report.terminalOutcome = "Failed";
                 else if (report.lastSimulationTime - report.firstSimulationTime >= timeoutSeconds)
                 {
                     report.terminalOutcome = "TimedOut";
                     report.invalidReason = "stagger_episode_timeout";
                 }
+                else if (report.replantFrame >= 0 && HasValidTerminalRecoveryState(report))
+                    report.terminalOutcome = "Recovered";
                 else report.terminalOutcome = "Incomplete";
                 if (!hasMargin) report.minimumSignedSupportMargin = 0f;
                 return report;
+            }
+
+            static bool HasValidTerminalRecoveryState(StaggerEpisodeReport value)
+            {
+                bool returnedToPuppet = !string.IsNullOrEmpty(value.finalPuppetState)
+                    && value.finalPuppetState.IndexOf("Puppet", StringComparison.OrdinalIgnoreCase) >= 0
+                    && !string.Equals(value.finalPuppetState, "Unpinned", StringComparison.OrdinalIgnoreCase);
+                bool terminalBalanceIsValid = !string.IsNullOrEmpty(value.terminalBalanceState)
+                    && !string.Equals(value.terminalBalanceState, "Unavailable", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(value.terminalBalanceState, "RequiresStep", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(value.terminalBalanceState, "Unrecoverable", StringComparison.OrdinalIgnoreCase);
+                return returnedToPuppet && terminalBalanceIsValid;
             }
         }
 
@@ -291,6 +308,13 @@ namespace Hairibar.Ragdoll.RagdollLab
                 {
                     report.balanceTelemetryAvailable = true;
                     report.balanceSampleCount++;
+                    if (balance.hasCapturePoint)
+                    {
+                        if (RagdollLabMath.IsFinite(balance.capturePoint.ToVector3()))
+                            report.capturePointSampleCount++;
+                        else
+                            report.capturePointNonFiniteSampleCount++;
+                    }
                     if (string.Equals(balance.state, "RequiresStep", StringComparison.Ordinal))
                     {
                         report.requiresStepFrameCount++;
@@ -484,9 +508,12 @@ namespace Hairibar.Ragdoll.RagdollLab
             if (frames == null || frames.Count == 0) return Array.Empty<StaggerEpisodeReport>();
             var byId = new Dictionary<string, StaggerEpisodeAccumulator>();
             var order = new List<StaggerEpisodeAccumulator>();
+            var stanceStartTimes = new Dictionary<string, float>();
             for (int i = 0; i < frames.Count; i++)
             {
-                string id = frames[i].stagger?.episodeId;
+                PhysicsFrame frame = frames[i];
+                string id = frame.stagger?.episodeId;
+                float currentContactDuration = CurrentFootContactDuration(frame, frame.stagger?.swingFoot, stanceStartTimes);
                 if (string.IsNullOrEmpty(id)) continue;
                 if (!byId.TryGetValue(id, out StaggerEpisodeAccumulator accumulator))
                 {
@@ -495,23 +522,54 @@ namespace Hairibar.Ragdoll.RagdollLab
                     order.Add(accumulator);
                     accumulator.report.episodeId = id;
                 }
-                accumulator.Add(i, frames[i]);
+                accumulator.Add(i, frame, currentContactDuration);
             }
             var reports = new StaggerEpisodeReport[order.Count];
             for (int i = 0; i < order.Count; i++) reports[i] = order[i].Finish();
             return reports;
         }
 
-        static float SelectedFootContactDuration(FootTelemetry[] feet, string swingFoot)
+        static float CurrentFootContactDuration(
+            PhysicsFrame frame, string swingFoot, Dictionary<string, float> stanceStartTimes)
         {
-            if (feet == null || string.IsNullOrEmpty(swingFoot)) return 0f;
-            for (int i = 0; i < feet.Length; i++)
+            if (frame?.feet == null)
             {
-                FootTelemetry foot = feet[i];
-                if (foot == null || foot.name.IndexOf(swingFoot, StringComparison.OrdinalIgnoreCase) < 0) continue;
-                return Mathf.Max(0f, foot.contactDuration);
+                stanceStartTimes.Clear();
+                return 0f;
             }
-            return 0f;
+            float currentTime = RagdollLabMath.IsFinite(frame.simulationTime) ? frame.simulationTime : 0f;
+            float sampleDuration = RagdollLabMath.IsFinite(frame.fixedDeltaTime)
+                ? Mathf.Max(0f, frame.fixedDeltaTime) : 0f;
+            float selectedDuration = 0f;
+            // FootTelemetry.contactDuration is cumulative across the capture.
+            // Reconstruct the contiguous stance interval from frame boundaries.
+            var observedIds = new HashSet<string>();
+            for (int i = 0; i < frame.feet.Length; i++)
+            {
+                FootTelemetry foot = frame.feet[i];
+                if (foot == null) continue;
+                string id = !string.IsNullOrEmpty(foot.id) ? foot.id : foot.name;
+                if (string.IsNullOrEmpty(id)) continue;
+                observedIds.Add(id);
+                if (!foot.stance)
+                {
+                    stanceStartTimes.Remove(id);
+                    continue;
+                }
+                if (!stanceStartTimes.TryGetValue(id, out float startTime) || currentTime < startTime)
+                    stanceStartTimes[id] = currentTime;
+                float duration = Mathf.Max(0f, currentTime - stanceStartTimes[id]) + sampleDuration;
+                if (!string.IsNullOrEmpty(swingFoot)
+                    && !string.IsNullOrEmpty(foot.name)
+                    && (foot.name.IndexOf(swingFoot, StringComparison.OrdinalIgnoreCase) >= 0
+                        || swingFoot.IndexOf(foot.name, StringComparison.OrdinalIgnoreCase) >= 0))
+                    selectedDuration = Mathf.Max(selectedDuration, duration);
+            }
+            var missingIds = new List<string>();
+            foreach (string id in stanceStartTimes.Keys)
+                if (!observedIds.Contains(id)) missingIds.Add(id);
+            for (int i = 0; i < missingIds.Count; i++) stanceStartTimes.Remove(missingIds[i]);
+            return selectedDuration;
         }
 
         public static DiagnosticsReport Diagnose(ScenarioReport report, RagdollLabThresholds thresholds = null)
@@ -524,9 +582,14 @@ namespace Hairibar.Ragdoll.RagdollLab
             result.profileAvailable = profile.available;
             if (!profile.available)
                 result.unavailableReasons.Add("scenario_profile_unavailable:" + (string.IsNullOrEmpty(report.name) ? "missing" : report.name));
-            else if (IsRecoveryProfile(profile.id) && !report.balanceTelemetryAvailable)
+            else
+            {
+                List<string> missingSignals = RagdollLabScenarioSignalCatalog.MissingRequiredSignals(profile, report, "report");
+                result.unavailableReasons.AddRange(missingSignals);
+            }
+            if (profile.available && IsRecoveryProfile(profile.id) && !report.balanceTelemetryAvailable)
                 result.unavailableReasons.Add("balance_telemetry_unavailable");
-            else if (IsRecoveryProfile(profile.id) && report.balanceSampleCount > 0
+            else if (profile.available && IsRecoveryProfile(profile.id) && report.balanceSampleCount > 0
                 && !report.signedSupportMarginAvailable)
                 result.unavailableReasons.Add("signed_support_margin_unavailable");
             if (report.joints != null) for (int i = 0; i < report.joints.Length; i++)

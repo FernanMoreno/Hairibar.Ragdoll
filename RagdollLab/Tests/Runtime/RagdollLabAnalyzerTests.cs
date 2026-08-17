@@ -496,6 +496,53 @@ namespace Hairibar.Ragdoll.RagdollLab.Tests
         }
 
         [Test]
+        public void FailedStaggerEpisodeIsNotReportedAsRecoveredAfterReplant()
+        {
+            var frames = new List<PhysicsFrame>
+            {
+                BalanceFrame(0, "RagdollBipedStaggerBehaviour", "RequiresStep", -0.1f,
+                    new StaggerFrameTelemetry { sourceAvailable = true, episodeId = "episode-failed", phase = "LiftOff", swingFoot = "Right", swingFootAvailable = true, stepCount = 1, liftOffObserved = true }),
+                BalanceFrame(1, "RagdollBipedStaggerBehaviour", "RequiresStep", -0.05f,
+                    new StaggerFrameTelemetry { sourceAvailable = true, episodeId = "episode-failed", phase = "Replant", swingFoot = "Right", swingFootAvailable = true, stepCount = 1, replantObserved = true }),
+                BalanceFrame(2, "RagdollBipedStaggerBehaviour", "Stable", 0.05f,
+                    new StaggerFrameTelemetry { sourceAvailable = true, episodeId = "episode-failed", phase = "Failed", swingFoot = "Right", swingFootAvailable = true, stepCount = 1 })
+            };
+            for (int i = 0; i < frames.Count; i++)
+                frames[i].character = new CharacterTelemetry { puppetState = "Puppet" };
+
+            ScenarioReport report = RagdollLabAnalyzer.Analyze(frames, 1.8f, 70f, 9.81f);
+
+            Assert.That(report.staggerEpisodes, Has.Length.EqualTo(1));
+            Assert.That(report.staggerEpisodes[0].replantFrame, Is.EqualTo(1));
+            Assert.That(report.staggerEpisodes[0].terminalOutcome, Is.EqualTo("Failed"));
+            Assert.That(report.failedStaggerEpisodeCount, Is.EqualTo(1));
+            Assert.That(report.recoveredStaggerEpisodeCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void ReplantContactDurationUsesCurrentStanceIntervalNotAccumulatedDuration()
+        {
+            var frames = new List<PhysicsFrame>
+            {
+                BalanceFrame(0, "RagdollBipedStaggerBehaviour", "RequiresStep", -0.1f,
+                    new StaggerFrameTelemetry { sourceAvailable = true, episodeId = "episode-contact", phase = "Swing", swingFoot = "Right", swingFootAvailable = true, stepCount = 1 }),
+                BalanceFrame(1, "RagdollBipedStaggerBehaviour", "RequiresStep", -0.05f,
+                    new StaggerFrameTelemetry { sourceAvailable = true, episodeId = "episode-contact", phase = "Replant", swingFoot = "Right", swingFootAvailable = true, stepCount = 1, replantObserved = true })
+            };
+            frames[0].simulationTime = 2f;
+            frames[1].simulationTime = 2.02f;
+            frames[0].feet = new[] { new FootTelemetry { id = "right-foot", name = "RightFoot", stance = false, contactDuration = 2.02f } };
+            frames[1].feet = new[] { new FootTelemetry { id = "right-foot", name = "RightFoot", stance = true, contactDuration = 2.04f } };
+            for (int i = 0; i < frames.Count; i++)
+                frames[i].character = new CharacterTelemetry { puppetState = "Puppet" };
+
+            ScenarioReport report = RagdollLabAnalyzer.Analyze(frames, 1.8f, 70f, 9.81f);
+
+            Assert.That(report.staggerEpisodes, Has.Length.EqualTo(1));
+            Assert.That(report.staggerEpisodes[0].replantContactDuration, Is.EqualTo(0.02f).Within(0.0001f));
+        }
+
+        [Test]
         public void NonGroundSelectedFootContactDoesNotCountAsReplant()
         {
             ScenarioReport report = RagdollLabAnalyzer.Analyze(new List<PhysicsFrame>

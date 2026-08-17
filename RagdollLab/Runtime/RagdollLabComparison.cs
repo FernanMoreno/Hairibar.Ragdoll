@@ -10,6 +10,12 @@ namespace Hairibar.Ragdoll.RagdollLab
         {
             ScenarioProfile profile = RagdollLabScenarioProfiles.Resolve(current?.metadata?.scenario ?? current?.scenarioReport?.name);
             var result = new ComparisonReport { currentRunId = current?.metadata?.runId, baselineRunId = baseline?.metadata?.runId, baselineFound = baseline != null,
+                tuningSessionId = current?.metadata?.tuningSessionId, experimentId = current?.metadata?.experimentId,
+                configurationFingerprint = current?.metadata?.configurationFingerprint,
+                baselineConfigurationFingerprint = current?.metadata?.baselineConfigurationFingerprint,
+                treatmentParameter = current?.metadata?.treatmentParameter,
+                treatmentValueAvailable = current?.metadata?.treatmentValueAvailable ?? false,
+                treatmentValue = current?.metadata?.treatmentValue ?? 0f,
                 scenarioProfile = profile.id, profileAvailable = profile.available };
             if (!profile.available)
             {
@@ -25,9 +31,22 @@ namespace Hairibar.Ragdoll.RagdollLab
                 result.rejectionReasons.Add(result.invalidReason);
                 return result;
             }
+            List<string> legacyMissingSignals = RagdollLabScenarioSignalCatalog.MissingRequiredSignals(profile, current.scenarioReport, "current");
+            legacyMissingSignals.AddRange(RagdollLabScenarioSignalCatalog.MissingRequiredSignals(profile, baseline.scenarioReport, "baseline"));
+            if (legacyMissingSignals.Count > 0)
+            {
+                result.decision = "invalid";
+                result.invalidReason = "required_signals_missing";
+                result.rejectionReasons.Add(result.invalidReason);
+                result.rejectionReasons.AddRange(legacyMissingSignals);
+                return result;
+            }
             Add(result, "KineticEnergy.mean", "J", current.scenarioReport.kineticEnergy.mean, baseline.scenarioReport.kineticEnergy.mean, false);
             Add(result, "CenterOfMassSpeed.mean", "m/s", current.scenarioReport.centerOfMassSpeed.mean, baseline.scenarioReport.centerOfMassSpeed.mean, true);
-            Add(result, "ContactImpulse.p95", "N*s", current.scenarioReport.contactImpulse.p95, baseline.scenarioReport.contactImpulse.p95, true);
+            if (current.scenarioReport.contactImpulse != null && baseline.scenarioReport.contactImpulse != null
+                && RagdollLabMath.IsFinite(current.scenarioReport.contactImpulse.p95)
+                && RagdollLabMath.IsFinite(baseline.scenarioReport.contactImpulse.p95))
+                Add(result, "ContactImpulse.p95", "N*s", current.scenarioReport.contactImpulse.p95, baseline.scenarioReport.contactImpulse.p95, true);
             Add(result, "PenetrationDepth.max", "m", current.scenarioReport.penetration.max, baseline.scenarioReport.penetration.max, true);
             Add(result, "FootSlipSpeed.mean", "m/s", current.scenarioReport.footSlipSpeed.mean, baseline.scenarioReport.footSlipSpeed.mean, true);
             for (int i = 0; i < result.metrics.Count; i++)
@@ -72,6 +91,8 @@ namespace Hairibar.Ragdoll.RagdollLab
                 return Invalid(result, "baseline_or_candidate_missing");
             if (baseline.metadata == null || candidate.metadata == null)
                 return Invalid(result, "metadata_missing");
+            if (!PopulateProvenance(result, baseline.metadata, candidate.metadata))
+                return Invalid(result, "provenance_mismatch");
             ScenarioProfile baselineProfile = RagdollLabScenarioProfiles.Resolve(baseline.metadata.scenario);
             ScenarioProfile candidateProfile = RagdollLabScenarioProfiles.Resolve(candidate.metadata.scenario);
             if (!baselineProfile.available || !candidateProfile.available)
@@ -88,26 +109,34 @@ namespace Hairibar.Ragdoll.RagdollLab
                 return Invalid(result, "non_finite_run");
             if (baseline.scenarioReport == null || candidate.scenarioReport == null)
                 return Invalid(result, "scenario_report_missing");
+            List<string> missingSignals = RagdollLabScenarioSignalCatalog.MissingRequiredSignals(
+                candidateProfile, baseline.scenarioReport, "baseline");
+            missingSignals.AddRange(RagdollLabScenarioSignalCatalog.MissingRequiredSignals(
+                candidateProfile, candidate.scenarioReport, "candidate"));
+            if (missingSignals.Count > 0)
+                return Invalid(result, "required_signals_missing", missingSignals);
             if (!Approximately(baseline.scenarioReport.durationSeconds, candidate.scenarioReport.durationSeconds, 0.0001f))
                 return Invalid(result, "duration_mismatch");
-            if (!baseline.scenarioReport.balanceTelemetryAvailable
-                || !candidate.scenarioReport.balanceTelemetryAvailable)
-                return Invalid(result, "balance_telemetry_missing");
-            if (!HasRequiredComparisonMetrics(baseline.scenarioReport)
-                || !HasRequiredComparisonMetrics(candidate.scenarioReport))
-                return Invalid(result, "required_metrics_missing");
 
             result.setupMatched = true;
             ScenarioReport before = baseline.scenarioReport;
             ScenarioReport after = candidate.scenarioReport;
-            Add(result.stabilityMetrics, "SignedSupportMargin.minimum", "m",
-                after.minimumSignedSupportMargin, before.minimumSignedSupportMargin, false);
-            Add(result.stabilityMetrics, "CenterOfMassSpeed.mean", "m/s",
-                after.centerOfMassSpeed.mean, before.centerOfMassSpeed.mean, true);
-            Add(result.stabilityMetrics, "RecoveryTime.seconds", "s",
-                after.recoveryTimeSeconds, before.recoveryTimeSeconds, true);
-            Add(result.stabilityMetrics, "FallenFrameCount.count", "frames",
-                after.fallenFrameCount, before.fallenFrameCount, true);
+            if (RagdollLabScenarioSignalCatalog.IsAvailable(RagdollLabScenarioSignalIds.SignedSupportMargin, before)
+                && RagdollLabScenarioSignalCatalog.IsAvailable(RagdollLabScenarioSignalIds.SignedSupportMargin, after))
+                Add(result.stabilityMetrics, "SignedSupportMargin.minimum", "m",
+                    after.minimumSignedSupportMargin, before.minimumSignedSupportMargin, false);
+            if (RagdollLabScenarioSignalCatalog.IsAvailable(RagdollLabScenarioSignalIds.CenterOfMassSpeed, before)
+                && RagdollLabScenarioSignalCatalog.IsAvailable(RagdollLabScenarioSignalIds.CenterOfMassSpeed, after))
+                Add(result.stabilityMetrics, "CenterOfMassSpeed.mean", "m/s",
+                    after.centerOfMassSpeed.mean, before.centerOfMassSpeed.mean, true);
+            if (RagdollLabScenarioSignalCatalog.IsAvailable(RagdollLabScenarioSignalIds.RecoveryTime, before)
+                && RagdollLabScenarioSignalCatalog.IsAvailable(RagdollLabScenarioSignalIds.RecoveryTime, after))
+                Add(result.stabilityMetrics, "RecoveryTime.seconds", "s",
+                    after.recoveryTimeSeconds, before.recoveryTimeSeconds, true);
+            if (RagdollLabScenarioSignalCatalog.IsAvailable(RagdollLabScenarioSignalIds.FallenFrames, before)
+                && RagdollLabScenarioSignalCatalog.IsAvailable(RagdollLabScenarioSignalIds.FallenFrames, after))
+                Add(result.stabilityMetrics, "FallenFrameCount.count", "frames",
+                    after.fallenFrameCount, before.fallenFrameCount, true);
             ApplyScenarioExpectations(result.stabilityMetrics, candidateProfile, thresholds);
 
             Add(result.safetyMetrics, "PenetrationDepth.max", "m",
@@ -174,7 +203,7 @@ namespace Hairibar.Ragdoll.RagdollLab
             }
         }
 
-        static BalanceComparisonReport Invalid(BalanceComparisonReport result, string reason)
+        static BalanceComparisonReport Invalid(BalanceComparisonReport result, string reason, List<string> details = null)
         {
             result.decision = "invalid";
             result.invalidReason = reason;
@@ -182,46 +211,88 @@ namespace Hairibar.Ragdoll.RagdollLab
             result.safetyGuardsPassed = false;
             if (result.rejectionReasons == null) result.rejectionReasons = new List<string>();
             result.rejectionReasons.Add(reason);
+            if (details != null) result.rejectionReasons.AddRange(details);
             return result;
         }
 
         static bool SetupsMatch(RagdollLabMetadata baseline, RagdollLabMetadata candidate)
         {
-            if (!string.Equals(baseline.captureRoot, candidate.captureRoot, System.StringComparison.Ordinal)) return false;
-            if (baseline.seed != candidate.seed) return false;
-            if (!string.Equals(baseline.pushDescriptor, candidate.pushDescriptor, System.StringComparison.Ordinal)) return false;
-            if (!string.Equals(baseline.initialConditionFingerprint, candidate.initialConditionFingerprint, System.StringComparison.Ordinal)) return false;
-            if (!Approximately(baseline.fixedDeltaTime, candidate.fixedDeltaTime, 0.000001f)) return false;
-            if (!Approximately(baseline.gravityMagnitude, candidate.gravityMagnitude, 0.0001f)) return false;
-            if (!Approximately(baseline.characterHeight, candidate.characterHeight, 0.0001f)) return false;
-            return Approximately(baseline.totalMass, candidate.totalMass, 0.0001f);
+            string mismatch = SetupMismatchReason(baseline, candidate);
+            if (mismatch == null) return true;
+            Debug.LogWarning("[RagdollLab] paired setup mismatch: " + mismatch);
+            return false;
+        }
+
+        static string SetupMismatchReason(RagdollLabMetadata baseline, RagdollLabMetadata candidate)
+        {
+            if (!string.Equals(baseline.captureRoot, candidate.captureRoot, System.StringComparison.Ordinal)) return "captureRoot";
+            if (baseline.seed != candidate.seed) return "seed";
+            if (!OptionalTextEqual(baseline.pushDescriptor, candidate.pushDescriptor)) return "pushDescriptor";
+            if (!OptionalTextEqual(baseline.initialConditionFingerprint, candidate.initialConditionFingerprint)) return "initialConditionFingerprint";
+            if (!Approximately(baseline.fixedDeltaTime, candidate.fixedDeltaTime, 0.000001f)) return "fixedDeltaTime";
+            if (!Approximately(baseline.gravityMagnitude, candidate.gravityMagnitude, 0.0001f)) return "gravityMagnitude";
+            if (!Approximately(baseline.characterHeight, candidate.characterHeight, 0.0001f)) return "characterHeight";
+            if (!Approximately(baseline.totalMass, candidate.totalMass, 0.0001f)) return "totalMass";
+            return null;
+        }
+
+        static bool OptionalTextEqual(string left, string right)
+        {
+            return string.Equals(left ?? string.Empty, right ?? string.Empty, System.StringComparison.Ordinal);
+        }
+
+        static bool PopulateProvenance(
+            BalanceComparisonReport result,
+            RagdollLabMetadata baseline,
+            RagdollLabMetadata candidate)
+        {
+            bool baselineHasProvenance = HasProvenance(baseline);
+            bool candidateHasProvenance = HasProvenance(candidate);
+            if (!baselineHasProvenance && !candidateHasProvenance)
+                return true;
+            if (!baselineHasProvenance || !candidateHasProvenance)
+                return false;
+            if (string.IsNullOrWhiteSpace(baseline.tuningSessionId)
+                || !string.Equals(baseline.tuningSessionId, candidate.tuningSessionId, System.StringComparison.Ordinal)) return false;
+            if (string.IsNullOrWhiteSpace(baseline.experimentId)
+                || !string.Equals(baseline.experimentId, candidate.experimentId, System.StringComparison.Ordinal)) return false;
+            if (!string.Equals(baseline.runRole, "baseline", System.StringComparison.Ordinal)
+                || !string.Equals(candidate.runRole, "candidate", System.StringComparison.Ordinal)) return false;
+            if (string.IsNullOrWhiteSpace(baseline.runId) || string.IsNullOrWhiteSpace(candidate.runId)) return false;
+            if (string.IsNullOrWhiteSpace(baseline.configurationFingerprint)
+                || string.IsNullOrWhiteSpace(candidate.configurationFingerprint)) return false;
+            if (!string.Equals(baseline.baselineConfigurationFingerprint, baseline.configurationFingerprint, System.StringComparison.Ordinal)) return false;
+            if (!string.Equals(candidate.baselineConfigurationFingerprint, baseline.configurationFingerprint, System.StringComparison.Ordinal)) return false;
+            if (string.IsNullOrWhiteSpace(baseline.treatmentParameter)
+                || !string.Equals(baseline.treatmentParameter, candidate.treatmentParameter, System.StringComparison.Ordinal)) return false;
+            if (!baseline.treatmentValueAvailable || !candidate.treatmentValueAvailable
+                || !RagdollLabMath.IsFinite(baseline.treatmentValue) || !RagdollLabMath.IsFinite(candidate.treatmentValue)) return false;
+
+            result.tuningSessionId = candidate.tuningSessionId;
+            result.experimentId = candidate.experimentId;
+            result.baselineConfigurationFingerprint = baseline.configurationFingerprint;
+            result.candidateConfigurationFingerprint = candidate.configurationFingerprint;
+            result.treatmentParameter = candidate.treatmentParameter;
+            result.treatmentValueAvailable = true;
+            result.treatmentValue = candidate.treatmentValue;
+            result.provenanceAvailable = true;
+            return true;
+        }
+
+        static bool HasProvenance(RagdollLabMetadata metadata)
+        {
+            return metadata != null
+                && (!string.IsNullOrWhiteSpace(metadata.tuningSessionId)
+                    || !string.IsNullOrWhiteSpace(metadata.experimentId)
+                    || !string.IsNullOrWhiteSpace(metadata.configurationFingerprint)
+                    || !string.IsNullOrWhiteSpace(metadata.treatmentParameter)
+                    || !string.Equals(metadata.runRole, "none", System.StringComparison.Ordinal));
         }
 
         static bool Approximately(float left, float right, float tolerance)
         {
             return RagdollLabMath.IsFinite(left) && RagdollLabMath.IsFinite(right)
                 && Mathf.Abs(left - right) <= tolerance;
-        }
-
-        static bool HasRequiredComparisonMetrics(ScenarioReport report)
-        {
-            return report != null
-                && report.kineticEnergy != null
-                && report.centerOfMassSpeed != null
-                && report.penetration != null
-                && report.footSlipSpeed != null
-                && report.signedSupportMarginAvailable
-                && MetricsAreFinite(report.kineticEnergy, report.centerOfMassSpeed, report.penetration, report.footSlipSpeed);
-        }
-
-        static bool MetricsAreFinite(params MetricSummary[] metrics)
-        {
-            for (int i = 0; i < metrics.Length; i++)
-            {
-                MetricSummary metric = metrics[i];
-                if (metric == null || !RagdollLabMath.IsFinite(metric.mean) || !RagdollLabMath.IsFinite(metric.max)) return false;
-            }
-            return true;
         }
 
         static void AddSafetyGuards(

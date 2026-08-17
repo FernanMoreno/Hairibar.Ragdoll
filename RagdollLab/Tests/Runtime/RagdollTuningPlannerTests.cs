@@ -104,7 +104,7 @@ namespace Hairibar.Ragdoll.RagdollLab.Tests
         {
             RagdollTuningSession session = CreateSession(2);
             Start(session, "safety");
-            BalanceComparisonReport comparison = Comparison("accept", safetyPassed: false);
+            BalanceComparisonReport comparison = Comparison(session.experiments[0], "accept", safetyPassed: false);
             comparison.safetyGuards.Add("candidate_foot_slip_increased");
 
             RagdollTuningDecision result = RagdollTuningPlanner.Evaluate(session, session.experiments[0], comparison);
@@ -121,7 +121,7 @@ namespace Hairibar.Ragdoll.RagdollLab.Tests
             RagdollTuningSession session = CreateSession(2);
             Start(session, "accepted");
             RagdollTuningDecision result = RagdollTuningPlanner.Evaluate(
-                session, session.experiments[0], Comparison("accept", safetyPassed: true));
+                session, session.experiments[0], Comparison(session.experiments[0], "accept", safetyPassed: true));
 
             Assert.That(result.decision, Is.EqualTo("accepted"));
             Assert.That(result.stage, Is.EqualTo("stability"));
@@ -136,8 +136,8 @@ namespace Hairibar.Ragdoll.RagdollLab.Tests
             RagdollTuningSession session = CreateSession(2);
             Start(session, "neutral");
             RagdollTuningExperiment experiment = session.experiments[0];
-            RagdollTuningDecision first = RagdollTuningPlanner.Evaluate(session, experiment, Comparison("neutral", true));
-            RagdollTuningDecision second = RagdollTuningPlanner.Evaluate(session, experiment, Comparison("accept", true));
+            RagdollTuningDecision first = RagdollTuningPlanner.Evaluate(session, experiment, Comparison(experiment, "neutral", true));
+            RagdollTuningDecision second = RagdollTuningPlanner.Evaluate(session, experiment, Comparison(experiment, "accept", true));
 
             Assert.That(first.decision, Is.EqualTo("neutral"));
             Assert.That(first.stage, Is.EqualTo("stability"));
@@ -153,7 +153,7 @@ namespace Hairibar.Ragdoll.RagdollLab.Tests
             RagdollTuningSession session = CreateSession(2);
             Start(session, "rollback");
             RagdollTuningExperiment experiment = session.experiments[0];
-            RagdollTuningPlanner.Evaluate(session, experiment, Comparison("accept", true));
+            RagdollTuningPlanner.Evaluate(session, experiment, Comparison(experiment, "accept", true));
 
             RagdollTuningDecision first = RagdollTuningPlanner.Rollback(session, experiment, "operator_cancelled");
             RagdollTuningDecision second = RagdollTuningPlanner.Rollback(session, experiment, "different_reason");
@@ -167,13 +167,192 @@ namespace Hairibar.Ragdoll.RagdollLab.Tests
             Assert.That(session.candidateActive, Is.False);
         }
 
-        static RagdollTuningSession CreateSession(int budget)
+        [Test]
+        public void ProvenanceMismatchRollsBackBeforeSafetyScoring()
+        {
+            RagdollTuningSession session = CreateSession(2);
+            Start(session, "provenance");
+            RagdollTuningExperiment experiment = session.experiments[0];
+            BalanceComparisonReport comparison = Comparison(experiment, "accept", true);
+            comparison.candidateRunId = "wrong-run";
+
+            RagdollTuningDecision result = RagdollTuningPlanner.Evaluate(session, experiment, comparison);
+
+            Assert.That(result.decision, Is.EqualTo("invalid"));
+            Assert.That(result.stage, Is.EqualTo("structural"));
+            Assert.That(result.reason, Is.EqualTo("candidate_run_id_mismatch"));
+            Assert.That(session.candidateActive, Is.False);
+        }
+
+        [Test]
+        public void AcceptedCandidateCanBePromotedAndNextExperimentStarts()
+        {
+            RagdollTuningSession session = CreateSession(3);
+            Start(session, "promote-1");
+            RagdollTuningExperiment first = session.experiments[0];
+            RagdollTuningPlanner.Evaluate(session, first, Comparison(first, "accept", true));
+
+            RagdollTuningDecision promoted = RagdollTuningPlanner.PromoteAcceptedCandidate(session, first);
+
+            Assert.That(promoted.decision, Is.EqualTo("promoted"));
+            Assert.That(session.baselineFingerprint, Is.EqualTo("muscle=0.4|pin=0.8"));
+            Assert.That(session.baseline.Find(value => value.name == "pin").value, Is.EqualTo(0.8f));
+            Assert.That(session.candidateActive, Is.False);
+            Assert.That(first.state, Is.EqualTo("promoted"));
+            Assert.That(RagdollTuningPlanner.PromoteAcceptedCandidate(session, first).decision, Is.EqualTo("promoted"));
+
+            RagdollTuningDecision second = RagdollTuningPlanner.BeginSingleVariableExperiment(
+                session, "promote-2", "pin", 0.9f, "baseline-2", "candidate-2");
+
+            Assert.That(second.decision, Is.EqualTo("started"));
+            Assert.That(session.experiments, Has.Count.EqualTo(2));
+            Assert.That(session.experiments[1].baselineValue, Is.EqualTo(0.8f));
+        }
+
+        [Test]
+        public void RegistryRejectsUnsafeAndIneligibleCandidatesBeforeUnity()
+        {
+            RagdollTuningParameterRegistry registry = Registry();
+            RagdollTuningSession session = CreateSession(3, registry);
+
+            RagdollTuningDecision tooFar = RagdollTuningPlanner.BeginSingleVariableExperiment(
+                session, "too-far", "pin", 1.0f, "b", "c");
+            Assert.That(tooFar.reason, Is.EqualTo("candidate_delta_exceeds_safe_limit"));
+
+            RagdollTuningSession nonWritable = RagdollTuningPlanner.CreateSession("session", "Balancer",
+                new List<RagdollTuningParameterValue> { new("locked", 0.5f) }, 1,
+                new RagdollTuningParameterRegistry(new List<RagdollTuningParameterDescriptor>
+                {
+                    Descriptor("locked", 0f, 1f, 1f, 0.1f, runtimeWritable: false)
+                }));
+            RagdollTuningDecision locked = RagdollTuningPlanner.BeginSingleVariableExperiment(
+                nonWritable, "locked", "locked", 0.6f, "b", "c");
+            Assert.That(locked.reason, Is.EqualTo("parameter_not_runtime_writable"));
+
+            RagdollTuningSession restartOnly = RagdollTuningPlanner.CreateSession("session", "Balancer",
+                new List<RagdollTuningParameterValue> { new("restart", 0.5f) }, 1,
+                new RagdollTuningParameterRegistry(new List<RagdollTuningParameterDescriptor>
+                {
+                    new RagdollTuningParameterDescriptor
+                    {
+                        name = "restart", minimum = 0f, maximum = 1f, safeDelta = 1f,
+                        step = 0.1f, requiresRestart = true, scenarios = new[] { "Balancer" }
+                    }
+                }));
+            RagdollTuningDecision restart = RagdollTuningPlanner.BeginSingleVariableExperiment(
+                restartOnly, "restart", "restart", 0.6f, "b", "c");
+            Assert.That(restart.reason, Is.EqualTo("parameter_requires_restart"));
+
+            Assert.That(() => RagdollTuningPlanner.CreateSession("session", "GetUp",
+                new List<RagdollTuningParameterValue> { new("pin", 0.7f) }, 1, registry),
+                Throws.ArgumentException.With.Message.Contains("parameter_scenario_not_allowed"));
+        }
+
+        [Test]
+        public void ExecutorRestoresRejectedCandidateAndPromotesAcceptedCandidate()
+        {
+            RagdollTuningSession acceptedSession = CreateSession(2, Registry());
+            Start(acceptedSession, "execute-accepted");
+            var acceptedStore = new FakeStore(0.7f, 0.4f);
+            var acceptedRunner = new FakeRunner();
+
+            RagdollTuningExecutionResult accepted = RagdollTuningExecutor.Execute(
+                acceptedSession, acceptedSession.experiments[0], acceptedStore, acceptedRunner, promoteAcceptedCandidate: true);
+
+            Assert.That(accepted.valid, Is.True);
+            Assert.That(accepted.promoted, Is.True);
+            Assert.That(accepted.restored, Is.False);
+            Assert.That(acceptedStore.Values["pin"], Is.EqualTo(0.8f));
+            Assert.That(acceptedSession.baselineFingerprint, Is.EqualTo("muscle=0.4|pin=0.8"));
+            Assert.That(acceptedRunner.Bindings, Has.Count.EqualTo(2));
+            Assert.That(acceptedRunner.Bindings[0].runRole, Is.EqualTo("baseline"));
+            Assert.That(acceptedRunner.Bindings[1].runRole, Is.EqualTo("candidate"));
+
+            RagdollTuningSession rejectedSession = CreateSession(2, Registry());
+            Start(rejectedSession, "execute-rejected");
+            var rejectedStore = new FakeStore(0.7f, 0.4f);
+            var rejectedRunner = new FakeRunner { RejectCandidate = true };
+
+            RagdollTuningExecutionResult rejected = RagdollTuningExecutor.Execute(
+                rejectedSession, rejectedSession.experiments[0], rejectedStore, rejectedRunner, promoteAcceptedCandidate: true);
+
+            Assert.That(rejected.valid, Is.True);
+            Assert.That(rejected.restored, Is.True);
+            Assert.That(rejected.promoted, Is.False);
+            Assert.That(rejectedStore.Values["pin"], Is.EqualTo(0.7f));
+            Assert.That(rejectedSession.experiments[0].state, Is.EqualTo("rolled_back"));
+        }
+
+        [Test]
+        public void ExecutorRejectsRunnerProvenanceAndRestoresCandidate()
+        {
+            RagdollTuningSession session = CreateSession(2, Registry());
+            Start(session, "execute-provenance");
+            var store = new FakeStore(0.7f, 0.4f);
+            var runner = new FakeRunner { CorruptCandidateFingerprint = true };
+
+            RagdollTuningExecutionResult result = RagdollTuningExecutor.Execute(
+                session, session.experiments[0], store, runner, promoteAcceptedCandidate: true);
+
+            Assert.That(result.valid, Is.False);
+            Assert.That(result.reason, Is.EqualTo("candidate_configuration_fingerprint_mismatch"));
+            Assert.That(result.restored, Is.True);
+            Assert.That(store.Values["pin"], Is.EqualTo(0.7f));
+        }
+
+        [Test]
+        public void ExecutorUsesPersistedTransportReportAndExposesVerifiedManifests()
+        {
+            RagdollTuningSession session = CreateSession(2, Registry(), "artifacts");
+            Start(session, "execute-artifact");
+            var store = new FakeStore(0.7f, 0.4f);
+            var runner = new FakeRunner();
+            var transport = new FakeTransport();
+
+            RagdollTuningExecutionResult result = RagdollTuningExecutor.Execute(
+                session, session.experiments[0], store, runner, promoteAcceptedCandidate: false,
+                artifactTransport: transport);
+
+            Assert.That(result.valid, Is.True);
+            Assert.That(result.restored, Is.True);
+            Assert.That(result.baselineArtifact, Is.Not.Null);
+            Assert.That(result.candidateArtifact, Is.Not.Null);
+            Assert.That(transport.Bindings, Has.Count.EqualTo(2));
+            Assert.That(transport.Bindings[0].artifactDirectory, Does.EndWith("execute-artifact-baseline"));
+            Assert.That(store.Values["pin"], Is.EqualTo(0.7f));
+        }
+
+        [Test]
+        public void ExecutorEvaluatesPersistedPairThroughPlannerWithoutApplyingOrPromoting()
+        {
+            RagdollTuningSession session = CreateSession(1, Registry(), "/artifacts");
+            Start(session, "persisted-experiment");
+            RagdollTuningExperiment experiment = session.experiments[0];
+            var transport = new FakeTransport();
+
+            RagdollTuningExecutionResult result = RagdollTuningExecutor.EvaluatePersistedPair(
+                session, experiment, transport);
+
+            Assert.That(result.persistedPair, Is.True);
+            Assert.That(result.valid, Is.True);
+            Assert.That(result.decision.decision, Is.EqualTo("accepted"));
+            Assert.That(result.baselineReport, Is.Not.Null);
+            Assert.That(result.candidateReport, Is.Not.Null);
+            Assert.That(result.baselineArtifact, Is.Not.Null);
+            Assert.That(result.candidateArtifact, Is.Not.Null);
+            Assert.That(result.restored, Is.False);
+            Assert.That(result.promoted, Is.False);
+            Assert.That(session.candidateActive, Is.True);
+            Assert.That(transport.Bindings, Has.Count.EqualTo(2));
+        }
+
+        static RagdollTuningSession CreateSession(int budget, RagdollTuningParameterRegistry registry = null, string artifactRoot = null)
         {
             return RagdollTuningPlanner.CreateSession("session", "Balancer", new List<RagdollTuningParameterValue>
             {
                 new("pin", 0.7f),
                 new("muscle", 0.4f)
-            }, budget);
+            }, budget, registry, artifactRoot);
         }
 
         static void Start(RagdollTuningSession session, string id)
@@ -183,14 +362,24 @@ namespace Hairibar.Ragdoll.RagdollLab.Tests
             Assert.That(result.decision, Is.EqualTo("started"));
         }
 
-        static BalanceComparisonReport Comparison(string decision, bool safetyPassed)
+        static BalanceComparisonReport Comparison(RagdollTuningExperiment experiment, string decision, bool safetyPassed)
         {
             var report = new BalanceComparisonReport
             {
                 decision = decision,
+                tuningSessionId = experiment.tuningSessionId,
+                experimentId = experiment.experimentId,
+                provenanceAvailable = true,
                 scenarioProfile = "Balancer",
                 profileAvailable = true,
                 setupMatched = true,
+                baselineRunId = experiment.baselineRunId,
+                candidateRunId = experiment.candidateRunId,
+                baselineConfigurationFingerprint = experiment.baselineConfigurationFingerprint,
+                candidateConfigurationFingerprint = experiment.candidateConfigurationFingerprint,
+                treatmentParameter = experiment.parameterName,
+                treatmentValueAvailable = true,
+                treatmentValue = experiment.candidateValue,
                 safetyGuardsPassed = safetyPassed,
                 stabilityMetrics = new List<ComparisonMetric>
                 {
@@ -205,6 +394,141 @@ namespace Hairibar.Ragdoll.RagdollLab.Tests
                 rejectionReasons = new List<string>()
             };
             return report;
+        }
+
+        static RagdollTuningParameterRegistry Registry()
+        {
+            return new RagdollTuningParameterRegistry(new List<RagdollTuningParameterDescriptor>
+            {
+                Descriptor("pin", 0f, 1f, 0.2f, 0.1f),
+                Descriptor("muscle", 0f, 1f, 0.5f, 0.1f)
+            });
+        }
+
+        static RagdollTuningParameterDescriptor Descriptor(string name, float minimum, float maximum,
+            float safeDelta, float step, bool runtimeWritable = true)
+        {
+            return new RagdollTuningParameterDescriptor
+            {
+                name = name,
+                minimum = minimum,
+                maximum = maximum,
+                safeDelta = safeDelta,
+                step = step,
+                runtimeWritable = runtimeWritable,
+                scenarios = new[] { "Balancer" }
+            };
+        }
+
+        sealed class FakeStore : IRagdollTuningParameterStore
+        {
+            public readonly Dictionary<string, float> Values = new();
+            public FakeStore(float pin, float muscle)
+            {
+                Values["pin"] = pin;
+                Values["muscle"] = muscle;
+            }
+
+            public bool TryRead(string name, out float value) => Values.TryGetValue(name, out value);
+            public bool TryWrite(string name, float value)
+            {
+                if (!Values.ContainsKey(name)) return false;
+                Values[name] = value;
+                return true;
+            }
+        }
+
+        sealed class FakeRunner : IRagdollTuningScenarioRunner
+        {
+            public readonly List<RagdollTuningRunBinding> Bindings = new();
+            public bool RejectCandidate;
+            public bool CorruptCandidateFingerprint;
+
+            public EvaluationReport Run(RagdollTuningRunBinding binding)
+            {
+                Bindings.Add(binding);
+                string fingerprint = CorruptCandidateFingerprint && binding.runRole == "candidate"
+                    ? "wrong-fingerprint" : binding.configurationFingerprint;
+                bool candidate = binding.runRole == "candidate";
+                return new EvaluationReport
+                {
+                    metadata = new RagdollLabMetadata
+                    {
+                        runId = binding.runId,
+                        scenario = "Balancer",
+                        scenarioProfile = "Balancer",
+                        tuningSessionId = binding.sessionId,
+                        experimentId = binding.experimentId,
+                        runRole = binding.runRole,
+                        configurationFingerprint = fingerprint,
+                        baselineConfigurationFingerprint = binding.baselineConfigurationFingerprint,
+                        treatmentParameter = binding.treatmentParameter,
+                        treatmentValueAvailable = binding.treatmentValueAvailable,
+                        treatmentValue = binding.treatmentValue,
+                        fixedDeltaTime = 0.02f,
+                        gravityMagnitude = 9.81f,
+                        characterHeight = 1.8f,
+                        totalMass = 70f,
+                        captureRoot = "rig",
+                        initialConditionFingerprint = "same-pose"
+                    },
+                    completed = true,
+                    finiteData = true,
+                    scenarioReport = Scenario(candidate && RejectCandidate ? -0.2f : candidate ? -0.1f : -0.2f,
+                        candidate && RejectCandidate ? 0.5f : 0.01f)
+                };
+            }
+
+            static ScenarioReport Scenario(float margin, float footSlip)
+            {
+                return new ScenarioReport
+                {
+                    name = "Balancer",
+                    frameCount = 1,
+                    durationSeconds = 1f,
+                    balanceTelemetryAvailable = true,
+                    signedSupportMarginAvailable = true,
+                    minimumSignedSupportMargin = margin,
+                    centerOfMassSpeed = Metric("CenterOfMassSpeed", "m/s", margin < -0.15f ? 0.4f : 0.3f),
+                    recoveryTimeSeconds = margin < -0.15f ? 1f : 0.8f,
+                    kineticEnergy = Metric("KineticEnergy", "J", 10f),
+                    penetration = Metric("PenetrationDepth", "m", 0f),
+                    footSlipSpeed = Metric("FootSlipSpeed", "m/s", footSlip),
+                    staggerEpisodes = Array.Empty<StaggerEpisodeReport>()
+                };
+            }
+
+            static MetricSummary Metric(string name, string unit, float value)
+            {
+                return new MetricSummary { name = name, unit = unit, count = 1, current = value,
+                    mean = value, rms = value, p95 = value, max = value };
+            }
+        }
+
+        sealed class FakeTransport : IRagdollTuningArtifactTransport
+        {
+            public readonly List<RagdollTuningRunBinding> Bindings = new();
+
+            public bool TryRead(string directory, RagdollTuningRunBinding expected,
+                out EvaluationReport report, out RagdollTuningArtifactManifest manifest, out string reason)
+            {
+                Bindings.Add(expected);
+                report = new FakeRunner().Run(expected);
+                manifest = new RagdollTuningArtifactManifest
+                {
+                    sessionId = expected.sessionId,
+                    experimentId = expected.experimentId,
+                    runId = expected.runId,
+                    runRole = expected.runRole,
+                    configurationFingerprint = expected.configurationFingerprint,
+                    baselineConfigurationFingerprint = expected.baselineConfigurationFingerprint,
+                    treatmentParameter = expected.treatmentParameter,
+                    treatmentValueAvailable = expected.treatmentValueAvailable,
+                    treatmentValue = expected.treatmentValue
+                };
+                reason = null;
+                return true;
+            }
         }
 
         static ComparisonMetric Metric(string name, float current, float baseline)

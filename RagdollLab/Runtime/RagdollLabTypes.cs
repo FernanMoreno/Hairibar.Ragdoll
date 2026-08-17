@@ -6,7 +6,7 @@ namespace Hairibar.Ragdoll.RagdollLab
 {
     public static class RagdollLabSchema
     {
-        public const string Version = "1.5.0";
+        public const string Version = "1.6.0";
     }
 
     [Serializable] public struct Vector3Data
@@ -42,6 +42,57 @@ namespace Hairibar.Ragdoll.RagdollLab
         public bool balancerEnabled;
         public string initialConditionFingerprint;
         public string pushDescriptor;
+        public string tuningSessionId;
+        public string experimentId;
+        public string runRole = "none";
+        public string configurationFingerprint;
+        public string baselineConfigurationFingerprint;
+        public string treatmentParameter;
+        public bool treatmentValueAvailable;
+        public float treatmentValue;
+    }
+
+    [Serializable] public sealed class RagdollTuningRunBinding
+    {
+        public string sessionId;
+        public string experimentId;
+        public string runId;
+        public string runRole = "none";
+        public string artifactDirectory;
+        public string configurationFingerprint;
+        public string baselineConfigurationFingerprint;
+        public string treatmentParameter;
+        public bool treatmentValueAvailable;
+        public float treatmentValue;
+    }
+
+    public static class RagdollTuningArtifactSchema
+    {
+        public const string Version = "1.0.0";
+        public const string SessionVersion = "1.0.0";
+        public const string SessionFileName = "tuning-session.json";
+        public const string ManifestFileName = "tuning-manifest.json";
+        public const string EvaluationFileName = "evaluation.json";
+        public const string BalanceComparisonFileName = "balance-comparison.json";
+    }
+
+    [Serializable] public sealed class RagdollTuningArtifactManifest
+    {
+        public string schemaVersion = RagdollTuningArtifactSchema.Version;
+        public string sessionId;
+        public string experimentId;
+        public string runId;
+        public string runRole = "none";
+        public string configurationFingerprint;
+        public string baselineConfigurationFingerprint;
+        public string treatmentParameter;
+        public bool treatmentValueAvailable;
+        public float treatmentValue;
+        public string evaluationFile = RagdollTuningArtifactSchema.EvaluationFileName;
+        public string evaluationSha256;
+        public string balanceComparisonFile = RagdollTuningArtifactSchema.BalanceComparisonFileName;
+        public string balanceComparisonSha256;
+        public string publishedUtc;
     }
 
     [Serializable] public sealed class BodyTelemetry
@@ -318,11 +369,19 @@ namespace Hairibar.Ragdoll.RagdollLab
         public int recoveredStaggerEpisodeCount;
         public int failedStaggerEpisodeCount;
         public int unpinnedStaggerEpisodeCount;
+        public int capturePointSampleCount;
+        public int capturePointNonFiniteSampleCount;
         public int supportSampleCount;
         public int supportLossFrameCount;
         public float maximumSignedSupportMargin;
         public float recoveryOvershootMeters;
         public float firstRequiresStepSimulationTime = -1f;
+        public bool recoveryCompletionAvailable;
+        public bool recoveryCompleted;
+        public bool taskCompletionAvailable;
+        public bool taskCompleted;
+        public bool propLifecycleCompletionAvailable;
+        public bool propLifecycleCompleted;
         public JointReport[] joints;
         public bool animatedPairSourceAvailable;
         public int animatedPairCount;
@@ -343,6 +402,7 @@ namespace Hairibar.Ragdoll.RagdollLab
         public int sampleCount;
         public MetricSummary targetPhysicsDistance;
         public MetricSummary targetPhysicsAngularError;
+        public MetricSummary targetPhysicsVelocityError;
         public MetricSummary targetLinearSpeed;
         public MetricSummary targetAngularSpeed;
         public MetricSummary physicsLinearSpeed;
@@ -397,6 +457,11 @@ namespace Hairibar.Ragdoll.RagdollLab
     {
         public string schemaVersion = RagdollLabSchema.Version;
         public string currentRunId, baselineRunId;
+        public string tuningSessionId, experimentId;
+        public string configurationFingerprint, baselineConfigurationFingerprint;
+        public string treatmentParameter;
+        public bool treatmentValueAvailable;
+        public float treatmentValue;
         public bool baselineFound;
         public List<ComparisonMetric> metrics = new();
         public List<string> regressionGuards = new();
@@ -413,7 +478,14 @@ namespace Hairibar.Ragdoll.RagdollLab
         public string schemaVersion = RagdollLabSchema.Version;
         public string decision = "invalid";
         public string invalidReason;
+        public string tuningSessionId;
+        public string experimentId;
         public string baselineRunId, candidateRunId;
+        public string baselineConfigurationFingerprint, candidateConfigurationFingerprint;
+        public string treatmentParameter;
+        public bool treatmentValueAvailable;
+        public float treatmentValue;
+        public bool provenanceAvailable;
         public string scenarioProfile = RagdollLabScenarioProfiles.UnavailableId;
         public bool profileAvailable;
         public bool setupMatched;

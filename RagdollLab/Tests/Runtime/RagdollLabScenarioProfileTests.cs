@@ -53,5 +53,48 @@ namespace Hairibar.Ragdoll.RagdollLab.Tests
                 Assert.That(profile.requiredSignals, Is.Not.Null.And.Not.Empty, names[i]);
             }
         }
+
+        [Test]
+        public void RequiredSignalsUseStableCanonicalIdsInsteadOfDisplayText()
+        {
+            ScenarioProfile stagger = RagdollLabScenarioProfiles.Resolve("Stagger");
+
+            Assert.That(stagger.requiredSignals, Does.Contain(RagdollLabScenarioSignalIds.StaggerReplant));
+            Assert.That(stagger.requiredSignals, Does.Contain(RagdollLabScenarioSignalIds.StaggerTerminalOutcome));
+            Assert.That(stagger.requiredSignals, Does.Not.Contain("replant"));
+        }
+
+        [Test]
+        public void SignalCatalogDescribesSourceAndFalsifierForEveryCanonicalSignal()
+        {
+            string[] ids =
+            {
+                RagdollLabScenarioSignalIds.KineticEnergy,
+                RagdollLabScenarioSignalIds.CenterOfMassSpeed,
+                RagdollLabScenarioSignalIds.SignedSupportMargin,
+                RagdollLabScenarioSignalIds.CapturePoint,
+                RagdollLabScenarioSignalIds.RecoveryTime,
+                RagdollLabScenarioSignalIds.FallenFrames,
+                RagdollLabScenarioSignalIds.RecoveryCompletion,
+                RagdollLabScenarioSignalIds.TrackingPoseError,
+                RagdollLabScenarioSignalIds.TrackingVelocityError,
+                RagdollLabScenarioSignalIds.LocomotionTaskCompletion,
+                RagdollLabScenarioSignalIds.FootSlip,
+                RagdollLabScenarioSignalIds.ContactPenetration,
+                RagdollLabScenarioSignalIds.StaggerReplant,
+                RagdollLabScenarioSignalIds.StaggerTerminalOutcome,
+                RagdollLabScenarioSignalIds.PropLifecycleCompletion
+            };
+
+            for (int i = 0; i < ids.Length; i++)
+            {
+                ScenarioSignalDescriptor descriptor = RagdollLabScenarioSignalCatalog.Describe(ids[i]);
+                Assert.That(descriptor, Is.Not.Null, ids[i]);
+                Assert.That(descriptor.source, Is.Not.Empty, ids[i]);
+                Assert.That(descriptor.availabilityMinimum, Is.Not.Empty, ids[i]);
+                Assert.That(descriptor.finiteRule, Is.Not.Empty, ids[i]);
+                Assert.That(descriptor.falsifier, Is.Not.Empty, ids[i]);
+            }
+        }
     }
 }

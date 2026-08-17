@@ -88,6 +88,54 @@ namespace Hairibar.Ragdoll.RagdollLab.Tests
             }
         }
 
+        [Test]
+        public void RecorderArtifactsPreserveTuningRunBinding()
+        {
+            GameObject root = new GameObject("TuningBindingRoot");
+            string outputDirectory = "Temp/RagdollLabTuningBinding-" + Guid.NewGuid().ToString("N");
+            RagdollTelemetryRecorder recorder = null;
+            try
+            {
+                recorder = root.AddComponent<RagdollTelemetryRecorder>();
+                recorder.CaptureOnStart = false;
+                recorder.ScenarioName = "Balancer";
+                recorder.OutputDirectory = outputDirectory;
+                recorder.ConfigureTracking(root.transform);
+                recorder.ConfigureTuningRun(new RagdollTuningRunBinding
+                {
+                    sessionId = "session",
+                    experimentId = "experiment",
+                    runId = "candidate-run",
+                    runRole = "candidate",
+                    configurationFingerprint = "candidate-config",
+                    baselineConfigurationFingerprint = "baseline-config",
+                    treatmentParameter = "pin",
+                    treatmentValueAvailable = true,
+                    treatmentValue = 0.8f
+                });
+                recorder.Begin();
+                recorder.ManualCaptureStep(0f);
+                recorder.End();
+
+                string evaluation = File.ReadAllText(Path.Combine(recorder.OutputPath, "evaluation.json"));
+                string manifest = File.ReadAllText(Path.Combine(recorder.OutputPath, RagdollTuningArtifactSchema.ManifestFileName));
+                Assert.That(evaluation, Does.Contain("\"experimentId\": \"experiment\""));
+                Assert.That(evaluation, Does.Contain("\"runRole\": \"candidate\""));
+                Assert.That(evaluation, Does.Contain("\"configurationFingerprint\": \"candidate-config\""));
+                Assert.That(evaluation, Does.Contain("\"treatmentParameter\": \"pin\""));
+                Assert.That(manifest, Does.Contain("\"runId\": \"candidate-run\""));
+                Assert.That(manifest, Does.Contain("\"evaluationSha256\""));
+                Assert.That(manifest, Does.Contain("\"balanceComparisonSha256\""));
+            }
+            finally
+            {
+                if (recorder != null && recorder.IsCapturing) recorder.End();
+                string path = recorder?.OutputPath;
+                if (!string.IsNullOrEmpty(path) && Directory.Exists(path)) Directory.Delete(path, true);
+                UnityEngine.Object.DestroyImmediate(root);
+            }
+        }
+
         [UnityTest]
         public IEnumerator RecorderCapturesEveryInitializedAnimatedPairIncludingNonHumanoidPairs()
         {
