@@ -1435,6 +1435,10 @@ namespace Hairibar.Ragdoll.Animation.Tests
             target.transform.rotation = supportRotation;
             TargetAnimator = target.AddComponent<Animator>();
             TargetAnimator.runtimeAnimatorController = stepController;
+            // The target has no renderer in this physics-only fixture. Keep
+            // its authored clip advancing even when the full runner has no
+            // visible target for Unity's default renderer-based culling.
+            TargetAnimator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
             GameObject leftTarget = new GameObject("foot_l");
             leftTarget.transform.SetParent(target.transform, false);
             leftTarget.transform.localPosition = new Vector3(footCenterX - footOffsetX, -1f, 0f);
