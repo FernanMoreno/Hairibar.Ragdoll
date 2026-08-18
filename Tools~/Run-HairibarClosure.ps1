@@ -35,7 +35,10 @@ if ([string]::IsNullOrWhiteSpace($ragdollDependency) -or
 }
 $dependencyPath = $ragdollDependency.Substring(5)
 if (-not [System.IO.Path]::IsPathRooted($dependencyPath)) {
-    $dependencyPath = Join-Path $ProjectPath $dependencyPath
+    # Unity resolves local package paths relative to Packages/manifest.json.
+    # Resolving from the project root points file:../../../ dependencies one
+    # directory too high on this certification host.
+    $dependencyPath = Join-Path (Split-Path -Parent $manifestPath) $dependencyPath
 }
 $dependencyPath = [System.IO.Path]::GetFullPath($dependencyPath)
 if (-not [string]::Equals($dependencyPath, $packageRoot,
@@ -47,11 +50,25 @@ if (-not ($projectManifest.testables -contains 'com.hairibar.ragdoll')) {
 }
 $assetsRoot = Join-Path $ProjectPath 'Assets'
 if (Test-Path -LiteralPath $assetsRoot -PathType Container) {
+    # TutorialInfo is Unity's template readme and is not consumer gameplay
+    # code. Keep the certification check strict for every other Assets path.
+    $allowedCodeRoots = @(
+        (Join-Path $assetsRoot '__HairibarCertification'),
+        (Join-Path $assetsRoot 'Samples'),
+        (Join-Path $assetsRoot 'TutorialInfo')
+    ) | ForEach-Object {
+        [System.IO.Path]::GetFullPath($_).TrimEnd('\')
+    }
     $foreignCode = Get-ChildItem -LiteralPath $assetsRoot -Recurse -File |
         Where-Object {
+            $fullPath = [System.IO.Path]::GetFullPath($_.FullName)
+            $underAllowedRoot = $allowedCodeRoots | Where-Object {
+                $fullPath.StartsWith(
+                    $_ + [System.IO.Path]::DirectorySeparatorChar,
+                    [System.StringComparison]::OrdinalIgnoreCase)
+            }
             $_.Extension -in @('.cs', '.asmdef', '.asmref', '.dll') -and
-            $_.FullName -notlike (Join-Path $assetsRoot '__HairibarCertification\*') -and
-            $_.FullName -notlike (Join-Path $assetsRoot 'Samples\*')
+            -not $underAllowedRoot
         }
     if ($foreignCode) {
         throw "Certification project is not clean; consumer code exists under Assets: $($foreignCode[0].FullName)"
@@ -96,6 +113,7 @@ try {
 $runArtifacts = @(
     'run-context.json',
     'editmode-results.xml',
+    'editmode-batches',
     'playmode-results.xml',
     'build-manifest.json',
     'windows-player-result.json',
@@ -110,6 +128,9 @@ foreach ($artifactName in $runArtifacts) {
     $artifactPath = Join-Path $OutputRoot $artifactName
     if (Test-Path -LiteralPath $artifactPath -PathType Leaf) {
         Remove-Item -LiteralPath $artifactPath -Force
+    }
+    elseif (Test-Path -LiteralPath $artifactPath -PathType Container) {
+        Remove-Item -LiteralPath $artifactPath -Recurse -Force
     }
 }
 
@@ -128,13 +149,16 @@ function Invoke-UnityStage {
         [string]$Name,
 
         [Parameter(Mandatory = $true)]
-        [string[]]$Arguments
+        [string[]]$Arguments,
+
+        [int]$TimeoutSeconds = 1800
     )
 
     $logPath = Join-Path $OutputRoot ($Name + '.log')
     $allArguments = @(
         '-batchmode',
         '-nographics',
+        '-accept-apiupdate',
         '-projectPath', $ProjectPath,
         '-logFile', $logPath
     ) + $Arguments
@@ -160,7 +184,15 @@ function Invoke-UnityStage {
     # WaitForExit observes only the Editor process. Start-Process -Wait also waits
     # for Unity's persistent licensing descendant on Windows and can deadlock the
     # certification coordinator after an otherwise successful batch stage.
-    $unityProcess.WaitForExit()
+    if (-not $unityProcess.WaitForExit($TimeoutSeconds * 1000)) {
+        $null = $unityProcess.CloseMainWindow()
+        Start-Sleep -Seconds 3
+        $stillRunning = Get-Process -Id $unityProcess.Id -ErrorAction SilentlyContinue
+        if ($stillRunning) {
+            Stop-Process -Id $unityProcess.Id -Force
+        }
+        throw "Hairibar closure stage '$Name' exceeded its ${TimeoutSeconds}s timeout. Log: $logPath"
+    }
     if ($unityProcess.ExitCode -ne 0) {
         throw "Hairibar closure stage '$Name' failed with exit code $($unityProcess.ExitCode). Log: $logPath"
     }
@@ -168,6 +200,101 @@ function Invoke-UnityStage {
         '(?i)(com\.hairibar\.ragdoll|Hairibar[._-]Ragdoll).*(warning|error)\s+CS\d+|(warning|error)\s+CS\d+.*(com\.hairibar\.ragdoll|Hairibar[._-]Ragdoll)'
     if ($ownedCompilerDiagnostics) {
         throw "Hairibar closure stage '$Name' emitted owned compiler diagnostics. Log: $logPath"
+    }
+}
+
+function Read-NUnitRun {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Unity did not produce the NUnit artifact: $Path"
+    }
+    try {
+        [xml]$document = Get-Content -LiteralPath $Path -Raw
+    }
+    catch {
+        throw "Unity produced malformed NUnit XML: $Path"
+    }
+    $run = $document.SelectSingleNode('/test-run')
+    if ($null -eq $run) {
+        throw "NUnit artifact has no test-run root: $Path"
+    }
+    $cases = @($run.SelectNodes('.//test-case'))
+    if ($cases.Count -eq 0) {
+        throw "NUnit artifact contains no test cases: $Path"
+    }
+    $nonPassing = @($cases | Where-Object { $_.result -ne 'Passed' })
+    if ([int]$run.failed -ne 0 -or
+        [int]$run.skipped -ne 0 -or
+        [int]$run.inconclusive -ne 0 -or
+        [int]$run.warnings -ne 0 -or
+        $nonPassing.Count -ne 0) {
+        throw "EditMode batch did not pass completely: $Path"
+    }
+    return $run
+}
+
+function Merge-NUnitRuns {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$Paths,
+
+        [Parameter(Mandatory = $true)]
+        [string]$OutputPath
+    )
+
+    $document = New-Object System.Xml.XmlDocument
+    $declaration = $document.CreateXmlDeclaration('1.0', 'utf-8', $null)
+    $null = $document.AppendChild($declaration)
+    $run = $document.CreateElement('test-run')
+    $suite = $document.CreateElement('test-suite')
+    $suite.SetAttribute('name', 'Hairibar EditMode batches')
+    $suite.SetAttribute('fullname', 'Hairibar EditMode batches')
+    $suite.SetAttribute('result', 'Passed')
+    $suite.SetAttribute('type', 'Assembly')
+    $null = $run.AppendChild($suite)
+
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]'
+    $total = 0
+    foreach ($path in $Paths) {
+        $source = New-Object System.Xml.XmlDocument
+        $source.Load($path)
+        foreach ($testCase in @($source.SelectNodes('/test-run//test-case'))) {
+            $fullName = [string]$testCase.fullname
+            if ([string]::IsNullOrWhiteSpace($fullName)) {
+                $fullName = [string]$testCase.name
+            }
+            if (-not $seen.Add($fullName)) {
+                throw "Duplicate NUnit test case across EditMode batches: $fullName"
+            }
+            $null = $suite.AppendChild($document.ImportNode($testCase, $true))
+            $total++
+        }
+    }
+    if ($total -eq 0) {
+        throw 'EditMode batch aggregation produced no NUnit test cases.'
+    }
+
+    $run.SetAttribute('result', 'Passed')
+    $run.SetAttribute('total', [string]$total)
+    $run.SetAttribute('passed', [string]$total)
+    $run.SetAttribute('failed', '0')
+    $run.SetAttribute('skipped', '0')
+    $run.SetAttribute('inconclusive', '0')
+    $run.SetAttribute('warnings', '0')
+    $null = $document.AppendChild($run)
+    $settings = New-Object System.Xml.XmlWriterSettings
+    $settings.Indent = $true
+    $settings.Encoding = New-Object System.Text.UTF8Encoding($false)
+    $writer = [System.Xml.XmlWriter]::Create($OutputPath, $settings)
+    try {
+        $document.Save($writer)
+    }
+    finally {
+        $writer.Dispose()
     }
 }
 
@@ -183,11 +310,49 @@ Invoke-UnityStage -Name '02-build-and-player' -Arguments @(
     'Hairibar.Ragdoll.Animation.Editor.HairibarCertification.RunClosure'
 )
 
-Invoke-UnityStage -Name '03-editmode' -Arguments @(
-    '-runTests',
-    '-testPlatform', 'EditMode',
-    '-testResults', $env:HAIRIBAR_EDITMODE_RESULTS
+$editModeBatchRoot = Join-Path $OutputRoot 'editmode-batches'
+[System.IO.Directory]::CreateDirectory($editModeBatchRoot) | Out-Null
+$editModeTestClasses = @(
+    'RagdollDefinitionBindingsEditorTests',
+    'RagdollAuthoringCapabilityEditorTests',
+    'RagdollAuthoredRigEditorTests',
+    'RagdollBakerClosureEditorTests',
+    'RagdollBakerCurveReductionTests',
+    'RagdollBakerPolicyTests',
+    'RagdollBipedStaggerAnimatorLayerEditorTests',
+    'RagdollCapabilityCatalogTests',
+    'RagdollClosureManifestEditorTests',
+    'RagdollClosurePipelineEditorTests',
+    'RagdollDualRigSetupWindowTests',
+    'RagdollEvidenceArtifactValidatorsTests',
+    'RagdollHumanoidCapabilityDirectEditorTests',
+    'RagdollHumanoidCertificationTests',
+    'HairibarCertificationContinuationTests',
+    'RagdollLiveAuthoringTests',
+    'RagdollTargetPoseVisualizerEditorTests'
 )
+$editModeBatchResults = @()
+for ($index = 0; $index -lt $editModeTestClasses.Count; $index++) {
+    $testClass = $editModeTestClasses[$index]
+    $batchName = '{0:D2}-{1}' -f ($index + 1), $testClass
+    $batchResults = Join-Path $editModeBatchRoot ($batchName + '.xml')
+    $batchTimeout = if ($testClass -eq 'RagdollClosurePipelineEditorTests') {
+        900
+    }
+    else {
+        300
+    }
+    Invoke-UnityStage -Name ('03-editmode-' + $batchName) -TimeoutSeconds $batchTimeout -Arguments @(
+        '-runTests',
+        '-testPlatform', 'EditMode',
+        '-testFilter', $testClass,
+        '-testResults', $batchResults
+    )
+    $null = Read-NUnitRun -Path $batchResults
+    $editModeBatchResults += $batchResults
+}
+Merge-NUnitRuns -Paths $editModeBatchResults -OutputPath $env:HAIRIBAR_EDITMODE_RESULTS
+$null = Read-NUnitRun -Path $env:HAIRIBAR_EDITMODE_RESULTS
 
 Invoke-UnityStage -Name '04-playmode' -Arguments @(
     '-runTests',

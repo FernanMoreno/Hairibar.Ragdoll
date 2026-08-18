@@ -23,7 +23,6 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
         {
             if (root) Object.DestroyImmediate(root);
             if (AssetDatabase.IsValidFolder(Folder)) AssetDatabase.DeleteAsset(Folder);
-            AssetDatabase.Refresh();
         }
 
         [Test]

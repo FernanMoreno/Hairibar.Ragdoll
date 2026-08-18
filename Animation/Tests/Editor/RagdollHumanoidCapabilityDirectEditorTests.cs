@@ -41,7 +41,6 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
             owned.Clear();
             if (AssetDatabase.IsValidFolder(OutputRoot))
                 AssetDatabase.DeleteAsset(OutputRoot);
-            AssetDatabase.Refresh();
         }
 
         [Test]

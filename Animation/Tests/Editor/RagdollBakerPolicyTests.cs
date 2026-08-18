@@ -270,7 +270,6 @@ namespace Hairibar.Ragdoll.Animation.Editor.Tests
                 if (replacement) Object.DestroyImmediate(replacement);
                 if (addition) Object.DestroyImmediate(addition);
                 AssetDatabase.DeleteAsset(folder);
-                AssetDatabase.Refresh();
             }
         }
     }
